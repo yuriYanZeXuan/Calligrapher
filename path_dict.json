@@ -1,0 +1,9 @@
+{
+    "cli_save_dir": "./cli_exps/",
+    "gradio_save_dir": "./gradio_exps/",
+    "gradio_temp_dir": "./gradio_tmp",
+    "data_dir": "path/to/Calligrapher_bench_testing",
+    "base_model_path": "path/to/FLUX.1-Fill-dev",
+    "image_encoder_path": "google/siglip-so400m-patch14-384",
+    "calligrapher_path": "path/to/calligrapher.bin"
+}

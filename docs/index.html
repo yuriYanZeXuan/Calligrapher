@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calligrapher: Freestyle - Text Image Customization</title>
+  <link rel="icon" href="./static/images/icon.jpg">
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/index.js"></script>
+</head>
+<body>
+
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-1 publication-title">Calligrapher: </h1>
+          <h1 class="title is-1 publication-title">Freestyle Text Image Customization</h1>
+
+        <div class="column has-text-centered">
+          <div class="publication-links">
+            <!-- Video Link. -->
+            <span class="link-block">
+              <a href="https://youtu.be/FLSPphkylQE"
+                 class="external-link button is-normal is-rounded is-dark">
+                <span class="icon">
+                    <i class="fab fa-youtube"></i>
+                </span>
+                <span>Video</span>
+              </a>
+            </span>
+            <!-- Code Link. -->
+            <span class="link-block">
+              <a href="https://github.com/Calligrapher2025/Calligrapher"
+                 class="external-link button is-normal is-rounded is-dark">
+                <span class="icon">
+                    <i class="fab fa-github"></i>
+                </span>
+                <span>Code</span>
+                </a>
+            </span>
+            <!-- Dataset Link. -->
+            <span class="link-block">
+              <a href="https://huggingface.co/Calligrapher2025/Calligrapher"
+                 class="external-link button is-normal is-rounded is-dark">
+                <span class="icon">
+                    <i class="far fa-images"></i>
+                </span>
+                <span>Model & Data</span>
+                </a>
+            </span>
+
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  
+</section>
+
+<section class="hero teaser">
+  <div class="container is-max-desktop">
+    <div class="hero-body">
+      <img src="./static/images/teaser.jpg" alt="Teaser Image" style="width: 100%;" />
+      <h2 class="subtitle has-text-centered teaser-subtitle">
+        Photorealistic text image customization results produced by our proposed
+        <span><strong>Calligrapher</strong>,</span> which allows users to perform customization with
+        diverse stylized images and text prompts.
+      </h2>
+    </div>
+  </div>
+</section>
+
+
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <!-- Abstract. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Abstract</h2>
+        <div class="content has-text-justified">
+
+          <p>
+            We introduce Calligrapher, a novel diffusion-based framework that innovatively integrates advanced text customization with artistic typography for digital calligraphy and design applications. Addressing the challenges of precise style control and data dependency in typographic customization, our framework incorporates three key technical contributions. First, we develop a self-distillation mechanism that leverages the pre-trained text-to-image generative model itself alongside the large language model to automatically construct a style-centric typography benchmark. Second, we introduce a localized style injection framework via a trainable style encoder, which comprises both Qformer and linear layers, to extract robust style features from reference images. An in-context generation mechanism is also employed to directly embed reference images into the denoising process, further enhancing the refined alignment of target styles. Extensive quantitative and qualitative evaluations across diverse fonts and design contexts confirm Calligrapher's accurate reproduction of intricate stylistic details and precise glyph positioning. By automating high-quality, visually consistent typography, Calligrapher surpasses traditional models, empowering creative practitioners in digital art, branding, and contextual typographic design.
+          </p>
+
+        </div>
+      </div>
+    </div>
+    <!--/ Abstract. -->
+
+    <!-- Paper video. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3" style="margin-bottom: 1.5rem;">Demo Video</h2>
+        <div class="publication-video">
+          <iframe src="https://www.youtube.com/embed/FLSPphkylQE"
+              frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+        </div>
+      </div>
+    </div>
+    <!--/ Paper video. -->
+  </div>
+</section>
+
+<section class="hero framework">
+  <div class="container is-max-desktop">
+    <div class="hero-body">
+      <h1 class="title is-2 has-text-centered" style="margin-bottom: 2rem;">
+        Framework
+      </h1>
+      <div style="overflow: hidden; border-radius: 10px;">
+        <img src="./static/images/framework.jpg"
+             alt="Framework Diagram"
+             style="width: 100%; height: auto; object-fit: cover;" />
+      </div>
+
+
+      <div class="content has-text-justified">
+
+        <p>
+          Training framework of <strong>Calligrapher</strong>, demonstrating the integration of localized style injection and diffusion-based learning. The framework
+processes masked images through a Variational Auto-Encoder (VAE) to obtain latent representations, concatenated with mask and noise latents. A style
+encoder comprising a visual encoder, Qformer, and linear layers is designed to extract style-related features from the reference style image, while text
+embeddings (e.g., "gic" in the case) modulate the denoising transformer. In the denoising block, style attention predicted from the style features replaces the
+original cross-attention, injecting style embeddings with the denoiser's query to enable granular typographic control in the latent space. The
+model is optimized under the flow-matching learning objective with the self-distillation typography dataset.
+        </p>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<section class="section">
+  <div class="container is-max-desktop">
+
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+         <h2 class="title is-3">Application</h2>
+        <div class="content has-text-justified">
+          <p>
+            Qualitative results of Calligrapher under various settings. We demonstrate text customization results respectively under settings of (a) self-reference, (b) cross-reference, and (c) non-text reference. Reference-based image generation results are also incorporated in (d).
+          </p>
+        </div>
+        <div style="overflow: hidden; border-radius: 10px;" class="content has-text-centered">
+          <img src="./static/images/application.jpg"
+               alt="Ablation Study Results"
+               style="width: 100%; height: auto; object-fit: cover;" />
+        </div>
+
+        <h2 class="title is-3">Gallery</h2>
+
+        <div style="overflow: hidden; border-radius: 10px;" class="content has-text-centered">
+          <img src="./static/images/self_custom.jpg"
+               alt="Ablation Study Results"
+               style="width: 100%; height: auto; object-fit: cover;" />
+          <p class="image-caption">
+            Self-reference text image customization results.
+          </p>
+        </div>
+
+        <div style="overflow: hidden; border-radius: 10px;" class="content has-text-centered">
+          <img src="./static/images/cross_custom.jpg"
+               alt="Ablation Study Results"
+               style="width: 100%; height: auto; object-fit: cover;" />
+          <p class="image-caption">
+            Cross-reference text image customization results.
+          </p>
+        </div>
+
+        <div style="overflow: hidden; border-radius: 10px;" class="content has-text-centered">
+          <img src="./static/images/non-text.jpg"
+               alt="Ablation Study Results"
+               style="width: 100%; height: auto; object-fit: cover;" />
+          <p class="image-caption">
+            Non-text reference text image customization results.
+          </p>
+        </div>
+
+
+      </div>
+</div>
+
+  </div>
+</section>
+
+
+<footer class="footer">
+  <div class="container">
+    <div class="content has-text-centered">
+      <a class="icon-link" href="https://github.com/Calligrapher2025/Calligrapher" disabled="">
+        <svg class="svg-inline--fa fa-github fa-w-16" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="github" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512" data-fa-i2svg=""><path fill="currentColor" d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"></path></svg><!-- <i class="fab fa-github"></i> Font Awesome fontawesome.com -->
+      </a>
+    </div>
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content">
+          <p>
+            This website is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative
+            Commons Attribution-ShareAlike 4.0 International License</a>.
+          </p>
+          <p>
+            This means you are free to borrow the <a href="https://github.com/nerfies/nerfies.github.io">source code</a> of this website,
+            we just ask that you link back to this page in the footer.
+            Please remember to remove the analytics code included in the header of the website which
+            you do not want on your website.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
+

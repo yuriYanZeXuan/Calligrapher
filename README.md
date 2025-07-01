@@ -69,9 +69,9 @@ Or manually download from:
 [SigLIP](https://huggingface.co/google/siglip-so400m-patch14-384),
 and [Calligrapher](https://huggingface.co/Calligrapher2025/Calligrapher).
 
-The Calligrapher repository contains:
-- `calligrapher.bin`: Model weights
-- `Calligrapher_bench_testing/`: Test dataset with examples for both self customization and cross customization scenarios. Additional reference images could also be found in the directory.
+The Calligrapher repository hosted on Huggingface contains:
+- `calligrapher.bin`: Model weights.
+- `Calligrapher_bench_testing.zip`: Test dataset with examples for both self-reference customization and cross-reference customization scenarios. Additional reference images could also be found in it.
 
 ## Model Usage
 
@@ -128,12 +128,12 @@ Below is a preview of the Gradio demo interfaces:
 
 We provide two python scripts for two text image customization modes:
 
-1. Self Customization:
+1. Self-reference Customization:
 ```bash
 python infer_calligrapher_self_custom.py
 ```
 
-2. Cross Customization:
+2. Cross-reference Customization:
 ```bash
 python infer_calligrapher_cross_custom.py
 ```

@@ -8,6 +8,13 @@
 
 **Figure:** Photorealistic text image customization results produced by our proposed Calligrapher, which allows users to perform customization with diverse stylized images and text prompts.
 
+
+<div align=center>
+<img src="./docs/static/images/multilingual_samples.png" width=900px>
+</div>
+
+**Figure:** Multilingual freestyle text customization results. Tested languages and text: Chinese (你好朋友/夏天来了), Korean (서예가), and Japanese (ナルト).
+
 <div align=center>
 
 ## 🔗 **Links & Resources**

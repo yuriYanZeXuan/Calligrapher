@@ -5,5 +5,6 @@
     "data_dir": "path/to/Calligrapher_bench_testing",
     "base_model_path": "path/to/FLUX.1-Fill-dev",
     "image_encoder_path": "google/siglip-so400m-patch14-384",
-    "calligrapher_path": "path/to/calligrapher.bin"
+    "calligrapher_path": "path/to/calligrapher.bin",
+    "textflux_path": "path/to/textflux-lora/pytorch_lora_weights.safetensors"
 }

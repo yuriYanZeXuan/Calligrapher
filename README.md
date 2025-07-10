@@ -8,13 +8,6 @@
 
 **Figure:** Photorealistic text image customization results produced by our proposed Calligrapher, which allows users to perform customization with diverse stylized images and text prompts.
 
-
-<div align=center>
-<img src="./docs/static/images/multilingual_samples.png" width=900px>
-</div>
-
-**Figure:** Multilingual freestyle text customization results. Tested languages and text: Chinese (你好朋友/夏天来了), Korean (서예가), and Japanese (ナルト).
-
 <div align=center>
 
 ## 🔗 **Links & Resources**
@@ -111,25 +104,39 @@ python gradio_demo_upload_mask.py
 
 This version includes pre-configured examples (e.g., at the bottom of the page) and is recommended for users to first understand how to use the model.
 
-Below is a preview of the Gradio demo interfaces:
+Below is a preview of the two aforementioned Gradio demo interfaces:
 
 <div align=center>
 <img src="./docs/static/images/gradio_preview.png" width=900px>
 </div>
 
+
+
+3. Version supporting multilingual text customization such as Chinese which supported by [TextFLUX](https://github.com/yyyyyxie/textflux). To use this gradio demo, first download [TextFLUX weights](https://huggingface.co/yyyyyxie/textflux-lora/blob/main/pytorch_lora_weights.safetensors) and configure the "textflux_path" entry in "path_dict.json". Then download [the font resource](https://github.com/yyyyyxie/textflux/blob/main/resource/font/Arial-Unicode-Regular.ttf) to "./resources/" then run:
+```bash
+python gradio_demo_multilingual.py
+```
+
+
+Multilingual freestyle text customization results are shown in the below figure, where tested languages and text are: Chinese (你好朋友/夏天来了), Korean (서예가), and Japanese (ナルト).
+<div align=center>
+<img src="./docs/static/images/multilingual_samples.png" width=900px>
+</div>
+
 **✨User Tips:**
+1. **Quality of multilingual generation.** The implementation strategy combines Calligrapher with the fine-tuned base model (textflux) without additional fine-tuning, please temper expectations regarding output quality.
 
-1. **Speed vs Quality Trade-off.** Use fewer steps (e.g., 10-step which takes ~4s/image on a single A6000 GPU) for faster generation, but quality may be lower.
+2. **Speed vs Quality Trade-off.** Use fewer steps (e.g., 10-step which takes ~4s/image on a single A6000 GPU) for faster generation, but quality may be lower.
 
-2. **Inpaint Position Freedom.** Inpainting positions are flexible - they don't necessarily need to match the original text locations in the input image.
+3. **Inpaint Position Freedom.** Inpainting positions are flexible - they don't necessarily need to match the original text locations in the input image.
 
-3. **Iterative Editing.** Drag outputs from the gallery to the Image Editing Panel (clean the Editing Panel first) for quick refinements.
+4. **Iterative Editing.** Drag outputs from the gallery to the Image Editing Panel (clean the Editing Panel first) for quick refinements.
 
-4. **Mask Optimization.** Adjust mask size/aspect ratio to match your desired content. The model tends to fill the masks, and harmonizes the generation with background in terms of color and lighting.
+5. **Mask Optimization.** Adjust mask size/aspect ratio to match your desired content. The model tends to fill the masks, and harmonizes the generation with background in terms of color and lighting.
 
-5. **Reference Image Tip.** White-background references improve style consistency - the encoder also considers background context of the given reference image.
+6. **Reference Image Tip.** White-background references improve style consistency - the encoder also considers background context of the given reference image.
 
-6. **Resolution Balance.** Very high-resolution generation sometimes triggers spelling errors. 512/768px are recommended considering the model is trained under the resolution of 512.
+7. **Resolution Balance.** Very high-resolution generation sometimes triggers spelling errors. 512/768px are recommended considering the model is trained under the resolution of 512.
 
 ### 3. Batch Testing (CLI)
 
@@ -146,6 +153,7 @@ python infer_calligrapher_cross_custom.py
 ```
 
 ## Additional Results
+
 
 <div align=center>
 <img src="./docs/static/images/application.jpg" width=900px>

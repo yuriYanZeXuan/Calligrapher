@@ -9,6 +9,12 @@
 **Figure:** Photorealistic text image customization results produced by our proposed Calligrapher, which allows users to perform customization with diverse stylized images and text prompts.
 
 <div align=center>
+<img src="./docs/static/images/multilingual_samples.png" width=900px>
+</div>
+
+**Figure:** Multilingual freestyle text customization results are shown in the below figure, where tested languages and text are: Chinese (你好朋友/夏天来了), Korean (서예가), and Japanese (ナルト).
+
+<div align=center>
 
 ## 🔗 **Links & Resources**
 
@@ -118,10 +124,6 @@ python gradio_demo_multilingual.py
 ```
 
 
-Multilingual freestyle text customization results are shown in the below figure, where tested languages and text are: Chinese (你好朋友/夏天来了), Korean (서예가), and Japanese (ナルト).
-<div align=center>
-<img src="./docs/static/images/multilingual_samples.png" width=900px>
-</div>
 
 **✨User Tips:**
 1. **Quality of multilingual generation.** The implementation strategy combines Calligrapher with the fine-tuned base model (textflux) without additional fine-tuning, please temper expectations regarding output quality.

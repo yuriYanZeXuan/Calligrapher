@@ -21,6 +21,8 @@
 **[**[**📄 Project Page**](https://calligrapher2025.github.io/Calligrapher/)**]**
 **[**[**🎥 Video**](https://youtu.be/FLSPphkylQE)**]**
 **[**[**📦 Model & Data**](https://huggingface.co/Calligrapher2025/Calligrapher)**]**
+**[**[**🤗 Demo**](https://huggingface.co/spaces/Calligrapher2025/Calligrapher)**]**
+**[**[**Demo2**](https://huggingface.co/spaces/SahilCarterr/Calligrapher)**]**
 
 </div>
 

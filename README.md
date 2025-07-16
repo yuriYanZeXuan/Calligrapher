@@ -120,7 +120,7 @@ Below is a preview of the two aforementioned Gradio demo interfaces:
 
 
 
-3. Version supporting multilingual text customization such as Chinese which supported by [TextFLUX](https://github.com/yyyyyxie/textflux). To use this gradio demo, first download [TextFLUX weights](https://huggingface.co/yyyyyxie/textflux-lora/blob/main/pytorch_lora_weights.safetensors) and configure the "textflux_path" entry in "path_dict.json". Then download [the font resource](https://github.com/yyyyyxie/textflux/blob/main/resource/font/Arial-Unicode-Regular.ttf) to "./resources/" and run:
+3. Version supporting multilingual text customization such as Chinese, which is supported by [TextFLUX](https://github.com/yyyyyxie/textflux). To use this gradio demo, first download [TextFLUX weights](https://huggingface.co/yyyyyxie/textflux-lora/blob/main/pytorch_lora_weights.safetensors) and configure the "textflux_path" entry in "path_dict.json". Then download [the font resource](https://github.com/yyyyyxie/textflux/blob/main/resource/font/Arial-Unicode-Regular.ttf) to "./resources/" and run:
 ```bash
 python gradio_demo_multilingual.py
 ```

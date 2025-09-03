@@ -18,7 +18,7 @@
 
 ## 🔗 **Links & Resources**
 
-**[**[**📄 Project Page**](https://calligrapher2025.github.io/Calligrapher/)**]**
+**[**[**📄 Project Page**](https://ezioby.github.io/Calligrapher/)**]**
 **[**[**🎥 Video**](https://youtu.be/FLSPphkylQE)**]**
 **[**[**📦 Model & Data**](https://huggingface.co/Calligrapher2025/Calligrapher)**]**
 **[**[**🤗 Hugging Face Demo**](https://huggingface.co/spaces/Calligrapher2025/Calligrapher)**]**

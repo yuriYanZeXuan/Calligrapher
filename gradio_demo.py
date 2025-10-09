@@ -82,7 +82,7 @@ def process_and_generate(editor_component, reference_image, prompt, height, widt
         source_with_context.paste(source_image, (0, reference_context.size[1]))
         # Concat the zero mask on the top of the mask image.
         mask_with_context = Image.new(mask_image.mode,
-                                      (mask_image.size[0], reference_context.size[1] + mask_image.size[0]), color=0)
+            (mask_image.size[0], reference_context.size[1] + mask_image.size[0]), color=0)
         mask_with_context.paste(mask_image, (0, reference_context.size[1]))
 
         source_image = source_with_context

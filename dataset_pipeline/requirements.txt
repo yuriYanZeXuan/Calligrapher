@@ -1,0 +1,6 @@
+openai
+easyocr
+torch
+torchvision
+Pillow
+requests

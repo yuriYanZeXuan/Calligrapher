@@ -104,10 +104,16 @@ def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:
 
         ocr_result_obj = result[0]
         
-        # The OCRResult object contains detected polygons and recognized texts
-        # in separate lists. We zip them together.
-        boxes = ocr_result_obj.json['dt_polys']
-        texts = ocr_result_obj.json['rec_texts']
+        # The OCRResult object contains the result in a json attribute,
+        # which is a dict with a 'res' key.
+        json_res = ocr_result_obj.json
+        if not json_res or 'res' not in json_res:
+             print("PaddleOCR result JSON is empty or does not contain a 'res' key.")
+             return ocr_results
+
+        res_data = json_res['res']
+        boxes = res_data.get('dt_polys', [])
+        texts = res_data.get('rec_texts', [])
 
         for box, text in zip(boxes, texts):
             # box is a list of 4 points

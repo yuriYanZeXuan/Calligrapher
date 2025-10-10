@@ -121,12 +121,12 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    # Ensure OPENAI_API_KEY is set if VLM is to be run
-    if args.run_vlm and not os.environ.get("OPENAI_API_KEY"):
+    # Ensure API_KEY is set if VLM is to be run
+    if args.run_vlm and not os.environ.get("API_KEY"):
         print("="*50)
-        print("!!! WARNING: OPENAI_API_KEY is not set. VLM evaluations will be skipped. !!!")
+        print("!!! WARNING: API_KEY is not set. VLM evaluations will be skipped. !!!")
         print("Please set it to your OpenAI API key to run VLM evaluation.")
-        print("Example: export OPENAI_API_KEY='sk-...'")
+        print("Example: export API_KEY='sk-...'")
         print("="*50)
         args.run_vlm = False
 

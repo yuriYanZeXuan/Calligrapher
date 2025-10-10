@@ -13,7 +13,7 @@ from eval.utils import load_images_for_evaluation
 class OCREvaluator:
     def __init__(self, lang='en'):
         print("Initializing PaddleOCR...")
-        self.ocr = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
+        self.ocr = PaddleOCR(use_angle_cls=True, lang=lang)
         print("PaddleOCR initialized.")
 
     def calculate_ocr_accuracy(self, image: Image.Image, ground_truth_text: str):

@@ -7,10 +7,10 @@ import os
 def parse_generated_filename(filename):
     """
     Parses the generated filename to extract metadata.
-    Example filename: result_0_test1_The_text_is_Calligrapher_12345678.png
+    Example filename: result_0_test1_The_text_is_Calligrapher._12345678.png
     """
-    # Use a regex that is robust to prompts containing numbers
-    match = re.search(r'result_\d+_(test\d+)_([a-zA-Z0-9_]+)_(\d+)\.png', os.path.basename(filename))
+    # Use a more robust, non-greedy regex to capture the prompt, which may contain special characters.
+    match = re.search(r'result_\d+_(test\d+)_(.*?)_(\d+)\.png', os.path.basename(filename))
     if not match:
         return None
 

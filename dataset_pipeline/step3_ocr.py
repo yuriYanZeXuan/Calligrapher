@@ -1,5 +1,6 @@
 import os
 import easyocr
+from paddleocr import PaddleOCR
 from typing import List, Tuple
 import config
 
@@ -10,6 +11,22 @@ try:
 except Exception as e:
     print(f"Error initializing EasyOCR reader: {e}")
     reader = None
+
+try:
+    # Map languages for PaddleOCR. 'ch' model supports both Chinese and English.
+    paddle_lang = 'ch' if 'ch_sim' in config.OCR_LANGUAGES else 'en'
+    paddle_reader = PaddleOCR(
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+        lang=paddle_lang, 
+        show_log=False
+    )
+    print("PaddleOCR reader initialized successfully.")
+except Exception as e:
+    print(f"Error initializing PaddleOCR reader: {e}")
+    paddle_reader = None
+
 
 def ocr_image(image_path: str) -> List[Tuple[List[int], str]]:
     """
@@ -39,11 +56,12 @@ def ocr_image(image_path: str) -> List[Tuple[List[int], str]]:
         ocr_results = []
         for (bbox, text, prob) in result:
             # bbox is a list of 4 points, convert to [min_x, min_y, max_x, max_y]
-            (top_left, top_right, bottom_right, bottom_left) = bbox
-            min_x = int(min(top_left[0], bottom_left[0]))
-            min_y = int(min(top_left[1], top_right[1]))
-            max_x = int(max(top_right[0], bottom_right[0]))
-            max_y = int(max(bottom_left[1], bottom_right[1]))
+            xs = [p[0] for p in bbox]
+            ys = [p[1] for p in bbox]
+            min_x = int(min(xs))
+            min_y = int(min(ys))
+            max_x = int(max(xs))
+            max_y = int(max(ys))
             
             # Format required by some models might be just top-left and bottom-right points
             # (X1, Y1, X2, Y2)
@@ -56,14 +74,72 @@ def ocr_image(image_path: str) -> List[Tuple[List[int], str]]:
         print(f"An error occurred during OCR: {e}")
         return []
 
+def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:
+    """
+    Performs OCR on an image using PaddleOCR to find text and bounding boxes.
+
+    Args:
+        image_path (str): The path to the image file.
+
+    Returns:
+        A list of tuples, where each tuple contains the bounding box and the recognized text.
+        Returns an empty list if OCR fails or no text is found.
+    """
+    if not paddle_reader:
+        print("PaddleOCR reader is not available.")
+        return []
+        
+    if not os.path.exists(image_path):
+        print(f"Error: Image file not found at {image_path}")
+        return []
+
+    try:
+        print(f"Performing OCR with PaddleOCR on {image_path}")
+        result = paddle_reader.predict(input=image_path)
+        
+        ocr_results = []
+        # The result of predict is a list containing one OCRResult object for the image
+        if not result or not result[0]:
+            print("PaddleOCR found 0 text block(s).")
+            return ocr_results
+
+        res_list = result[0]
+        
+        # res_list is iterable, yielding each detected line
+        for line in res_list:
+            # line format is (box, (text, score))
+            box = line[0]
+            text = line[1][0]
+            
+            xs = [p[0] for p in box]
+            ys = [p[1] for p in box]
+            min_x, min_y = int(min(xs)), int(min(ys))
+            max_x, max_y = int(max(xs)), int(max(ys))
+            
+            formatted_bbox = [min_x, min_y, max_x, max_y]
+            ocr_results.append((formatted_bbox, text))
+        
+        print(f"PaddleOCR found {len(ocr_results)} text block(s).")
+        return ocr_results
+    except Exception as e:
+        print(f"An error occurred during PaddleOCR: {e}")
+        return []
+
 if __name__ == '__main__':
     # Example usage: You need to have an image file for this to work.
     # Let's assume 'generated_dataset/generated_image.png' exists from step1.
     example_image_path = os.path.join(config.OUTPUT_DIR, "generated_image.png")
     if os.path.exists(example_image_path):
+        print("\n--- Testing EasyOCR ---")
         results = ocr_image(example_image_path)
         if results:
             for bbox, text in results:
+                print(f"Text: '{text}', BBox: {bbox}")
+
+        print("\n--- Testing PaddleOCR ---")
+        paddle_results = ocr_image_paddle(example_image_path)
+        if paddle_results:
+            for bbox, text in paddle_results:
                 print(f"Text: '{text}', BBox: {bbox}")
     else:
         print(f"Example image not found at '{example_image_path}'. Please run step1_generate_image.py first.")

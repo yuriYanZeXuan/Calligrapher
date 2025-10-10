@@ -76,12 +76,10 @@ def main():
     # Create output directory if it doesn't exist
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     
-    # List of instructions to process
-    instructions = [
-        "A sign that says 'Hello World' in a futuristic font.",
-        "Graffiti of the word 'ART' on a brick wall, vibrant colors.",
-        "The word 'Typography' written in a classic, elegant script."
-    ]
+    # Read instructions from the file
+    instructions_file = os.path.join(os.path.dirname(__file__), 'instructions.txt')
+    with open(instructions_file, 'r', encoding='utf-8') as f:
+        instructions = [line.strip() for line in f if line.strip()]
     
     for instruction in instructions:
         create_dataset_entry(instruction)

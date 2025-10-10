@@ -2,9 +2,9 @@
     "cli_save_dir": "./cli_exps/",
     "gradio_save_dir": "./gradio_exps/",
     "gradio_temp_dir": "./gradio_tmp",
-    "data_dir": "path/to/Calligrapher_bench_testing",
-    "base_model_path": "path/to/FLUX.1-Fill-dev",
-    "image_encoder_path": "google/siglip-so400m-patch14-384",
-    "calligrapher_path": "path/to/calligrapher.bin",
-    "textflux_path": "path/to/textflux-lora/pytorch_lora_weights.safetensors"
+    "data_dir": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing",
+    "base_model_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill",
+    "image_encoder_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip",
+    "calligrapher_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/calligrapher/calligrapher.bin",
+    "textflux_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/textflux-lora/pytorch_lora_weights.safetensors"
 }

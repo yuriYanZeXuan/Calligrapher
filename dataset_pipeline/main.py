@@ -4,7 +4,7 @@ import uuid
 import config
 from step1_generate_image import generate_image
 from step2_simplify_prompt import simplify_prompt
-from step3_ocr import ocr_image
+from step3_ocr import ocr_image,ocr_image_paddle
 
 def create_dataset_entry(human_written_instruction: str):
     """
@@ -32,7 +32,7 @@ def create_dataset_entry(human_written_instruction: str):
         return
 
     # === Step 3: OCR ===
-    ocr_results = ocr_image(image_path)
+    ocr_results = ocr_image_paddle(image_path)
     if not ocr_results:
         print("--- Pipeline failed at Step 3: OCR ---")
         # Decide if you want to keep images where OCR failed. For now, we'll discard.

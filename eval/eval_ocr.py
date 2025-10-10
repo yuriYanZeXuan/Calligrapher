@@ -33,7 +33,9 @@ class OCREvaluator:
         img_np = np.array(image.convert('RGB'))
 
         # Ocr the image
-        result = self.ocr.ocr(img_np, cls=False)
+        # The 'cls' parameter is not accepted by the predict method in some versions.
+        # The behavior is controlled by 'use_angle_cls' during initialization.
+        result = self.ocr.ocr(img_np)
 
         recognized_text_parts = []
         if result and result[0]:

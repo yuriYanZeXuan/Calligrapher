@@ -106,9 +106,9 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run full evaluation suite for Calligrapher.")
-    parser.add_argument("--generated_dir", type=str, required=True, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/cli_exps/2025-10-10-17-12-59_self",
+    parser.add_argument("--generated_dir", type=str, required=False, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/cli_exps/2025-10-10-17-12-59_self",
                         help="Directory containing the generated images from inference.")
-    parser.add_argument("--benchmark_dir", type=str, required=True, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing",
+    parser.add_argument("--benchmark_dir", type=str, required=False, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing",
                         help="Directory of the benchmark dataset (e.g., Calligrapher_bench_testing).")
     parser.add_argument("--output_csv", type=str, default="evaluation_results.csv",
                         help="Path to save the detailed CSV results.")

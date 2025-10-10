@@ -104,19 +104,12 @@ def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:
 
         ocr_result_obj = result[0]
         
-        # The OCRResult object contains the detected text lines.
-        # We access them through its `data` attribute.
-        if not hasattr(ocr_result_obj, 'data'):
-             print("PaddleOCR result object does not have a 'data' attribute.")
-             return ocr_results
-        
-        ocr_lines = ocr_result_obj.data
+        # The OCRResult object contains detected polygons and recognized texts
+        # in separate lists. We zip them together.
+        boxes = ocr_result_obj.json['dt_polys']
+        texts = ocr_result_obj.json['rec_texts']
 
-        for line in ocr_lines:
-            # line format is (box, (text, score))
-            box = line[0]
-            text = line[1][0]
-            
+        for box, text in zip(boxes, texts):
             # box is a list of 4 points
             xs = [p[0] for p in box]
             ys = [p[1] for p in box]

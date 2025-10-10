@@ -13,7 +13,9 @@ from eval.utils import load_images_for_evaluation
 class OCREvaluator:
     def __init__(self, lang='en'):
         print("Initializing PaddleOCR...")
-        self.ocr = PaddleOCR(use_angle_cls=True, lang=lang)
+        # Aligned with step3_ocr.py which uses use_textline_orientation=False.
+        # use_angle_cls=False ensures consistent behavior during evaluation.
+        self.ocr = PaddleOCR(use_angle_cls=False, lang=lang)
         print("PaddleOCR initialized.")
 
     def calculate_ocr_accuracy(self, image: Image.Image, ground_truth_text: str):
@@ -31,7 +33,7 @@ class OCREvaluator:
         img_np = np.array(image.convert('RGB'))
 
         # Ocr the image
-        result = self.ocr.ocr(img_np, cls=True)
+        result = self.ocr.ocr(img_np, cls=False)
 
         recognized_text_parts = []
         if result and result[0]:

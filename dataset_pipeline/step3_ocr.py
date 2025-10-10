@@ -19,8 +19,7 @@ try:
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
-        lang=paddle_lang, 
-        show_log=False
+        lang=paddle_lang
     )
     print("PaddleOCR reader initialized successfully.")
 except Exception as e:
@@ -103,14 +102,15 @@ def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:
             print("PaddleOCR found 0 text block(s).")
             return ocr_results
 
-        res_list = result[0]
+        ocr_result_obj = result[0]
         
-        # res_list is iterable, yielding each detected line
-        for line in res_list:
-            # line format is (box, (text, score))
-            box = line[0]
-            text = line[1][0]
-            
+        # The OCRResult object contains detected polygons and recognized texts
+        # in separate lists. We zip them together.
+        boxes = ocr_result_obj.dt_polys
+        texts = ocr_result_obj.rec_texts
+
+        for box, text in zip(boxes, texts):
+            # box is a list of 4 points
             xs = [p[0] for p in box]
             ys = [p[1] for p in box]
             min_x, min_y = int(min(xs)), int(min(ys))

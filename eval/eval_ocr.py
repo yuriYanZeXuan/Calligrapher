@@ -61,8 +61,8 @@ def main():
     """
     # --- IMPORTANT ---
     # Change these paths to your local paths
-    generated_image_path = "/path/to/your/generated/images/result_0_test1_The_text_is_Calligrapher_12345678.png"
-    benchmark_dir = "/Users/yanzexuan/code/dataset/Calligrapher_bench_testing"
+    generated_image_path = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/cli_exps/2025-10-10-17-12-59_self/result_40_test1_The_text_is_BRAVE._801648887.png"
+    benchmark_dir = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
     # -----------------
     
     if not os.path.exists(generated_image_path) or not os.path.exists(benchmark_dir):

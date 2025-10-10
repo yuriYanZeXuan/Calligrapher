@@ -133,16 +133,16 @@ def main():
     # --- IMPORTANT ---
     # Change these paths to your local paths
     # This should be the folder where your `infer_calligrapher_self_custom.py` saves results
-    generated_images_dir = "/path/to/your/generated/images/" 
+    generated_images_dir = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/cli_exps/2025-10-10-17-12-59_self" 
     # This is the original benchmark dataset folder
-    benchmark_dir = "/Users/yanzexuan/code/dataset/Calligrapher_bench_testing"
+    benchmark_dir = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
     # -----------------
     
     # For FID, the "real" images are the source images, and masks are in the same dir
     real_images_dir = benchmark_dir
     mask_dir = benchmark_dir
     
-    if generated_images_dir == "/path/to/your/generated/images/" or not os.path.exists(generated_images_dir):
+    if not os.path.exists(generated_images_dir):
         print("="*50)
         print("!!! PLEASE UPDATE THE PLACEHOLDER PATHS IN `eval_fid.py` main function !!!")
         print(f"Path checked: {generated_images_dir}")

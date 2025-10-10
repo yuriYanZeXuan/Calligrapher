@@ -14,12 +14,15 @@ from eval.utils import load_images_for_evaluation
 
 class VLMEvaluator:
     def __init__(self, model="gpt-4o"):
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = os.environ.get("API_KEY")
         if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set.")
-        self.client = OpenAI(api_key=api_key)
+            raise ValueError("API_KEY environment variable not set.")
+        self.client = OpenAI(
+            base_url="http://35.220.164.252:3888/v1",
+            api_key=api_key
+        )
         self.model = model
-        print(f"VLM Evaluator initialized with model: {self.model}")
+        print(f"VLM Evaluator initialized with model: {self.model} at custom base URL.")
 
     def _encode_image(self, image: Image.Image):
         from io import BytesIO
@@ -122,20 +125,20 @@ class VLMEvaluator:
 def main():
     """
     Example usage of the VLMEvaluator.
-    You MUST set the OPENAI_API_KEY environment variable to run this.
+    You MUST set the API_KEY environment variable to run this.
     """
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not os.environ.get("API_KEY"):
         print("="*50)
-        print("!!! ERROR: OPENAI_API_KEY environment variable is not set. !!!")
-        print("Please set it to your OpenAI API key to run this evaluation.")
-        print("Example: export OPENAI_API_KEY='sk-...'")
+        print("!!! ERROR: API_KEY environment variable is not set. !!!")
+        print("Please set it to your API key to run this evaluation.")
+        print("Example: export API_KEY='your-key'")
         print("="*50)
         return
         
     # --- IMPORTANT ---
     # Change these paths to your local paths
-    generated_image_path = "/path/to/your/generated/images/result_0_test1_The_text_is_Calligrapher_12345678.png"
-    benchmark_dir = "/Users/yanzexuan/code/dataset/Calligrapher_bench_testing"
+    generated_image_path = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/cli_exps/2025-10-10-17-12-59_self/result_40_test1_The_text_is_BRAVE._801648887.png"
+    benchmark_dir = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
     # -----------------
     
     if not os.path.exists(generated_image_path) or not os.path.exists(benchmark_dir):

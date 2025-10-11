@@ -154,11 +154,11 @@ class TextDiffuser2Inpainter:
                 
                 latents = self.scheduler.step(noisy_residual, t, latents).prev_sample
 
-        # 4. Decode and save image (Removed incorrect blending step)
+        # 4. Decode and save image
         latents = 1 / self.vae.config.scaling_factor * latents
         image = self.vae.decode(latents, return_dict=False)[0]
         image = (image / 2 + 0.5).clamp(0, 1)
-        image = image.cpu().permute(0, 2, 3, 1).numpy()[0]
+        image = image.detach().cpu().permute(0, 2, 3, 1).numpy()[0]
         image = Image.fromarray((image * 255).round().astype("uint8"))
         
         image.save(output_path)

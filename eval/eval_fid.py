@@ -7,6 +7,7 @@ from torchvision.models import inception_v3, Inception_V3_Weights
 from torchvision import transforms
 import os
 import sys
+import re
 
 # Add the parent directory to the path to import utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,17 +29,29 @@ class MaskedImageDataset(Dataset):
         # Determine corresponding mask path
         metadata = parse_generated_filename(img_path)
         if not metadata:
-            # Fallback for real images if naming is different, assuming same basename
-            base_name = os.path.basename(img_path).replace('.png', '_mask.png')
-            mask_path = os.path.join(self.mask_dir, base_name)
+            # Fallback for real images (e.g., test1_source.png)
+            # We need to extract the 'test_id' part (e.g., 'test1')
+            base_name = os.path.basename(img_path)
+            match = re.match(r'(test\d+)_', base_name)
+            if match:
+                ref_id = match.group(1)
+                mask_path = os.path.join(self.mask_dir, f"{ref_id}_mask.png")
+            else:
+                # If it doesn't match, we can't find the mask. Set to None.
+                mask_path = None
         else:
             mask_path = os.path.join(self.mask_dir, f"{metadata['ref_id']}_mask.png")
 
         try:
             image = Image.open(img_path).convert("RGB")
-            mask = Image.open(mask_path).convert("L")
+            # Handle case where mask_path could not be determined
+            if mask_path and os.path.exists(mask_path):
+                mask = Image.open(mask_path).convert("L")
+            else:
+                print(f"Warning: Mask not found for {img_path}. Skipping masking.")
+                mask = Image.new('L', image.size, 255) # White mask = no masking
         except FileNotFoundError:
-            print(f"Warning: Mask not found for {img_path}. Skipping masking.")
+            print(f"Warning: Mask file not found at {mask_path} for {img_path}. Skipping masking.")
             mask = Image.new('L', image.size, 255) # White mask = no masking
 
         # Apply mask: black out unmasked area

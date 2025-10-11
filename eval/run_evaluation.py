@@ -16,18 +16,21 @@ from utils import load_images_for_evaluation, parse_generated_filename
 
 
 def main(args):
+    metrics = args.metrics
+    print(f"Running evaluations for: {', '.join(metrics)}")
+
     # --- Initialize Evaluators ---
-    print("Initializing all evaluators...")
-    ocr_evaluator = OCREvaluator()
-    dino_evaluator = DinoV2Evaluator(device=args.device)
+    print("Initializing selected evaluators...")
+    ocr_evaluator = OCREvaluator() if 'ocr' in metrics else None
+    dino_evaluator = DinoV2Evaluator(device=args.device) if 'dino' in metrics else None
     vlm_evaluator = None
-    if args.run_vlm:
+    if 'vlm' in metrics:
         try:
             vlm_evaluator = VLMEvaluator()
         except ValueError as e:
             print(f"Could not initialize VLM Evaluator: {e}")
             print("Skipping VLM evaluations.")
-            args.run_vlm = False
+            metrics.remove('vlm')
     
     # --- Find Generated Images ---
     generated_images = [os.path.join(args.generated_dir, f) for f in os.listdir(args.generated_dir) if f.startswith('result_') and f.endswith('.png')]
@@ -53,20 +56,19 @@ def main(args):
         }
 
         # OCR Accuracy
-        result_row['ocr_accuracy'] = ocr_evaluator.calculate_ocr_accuracy(gen_img, metadata['prompt'])
+        if ocr_evaluator:
+            result_row['ocr_accuracy'] = ocr_evaluator.calculate_ocr_accuracy(gen_img, metadata['prompt'])
         
         # DINO Similarity
-        result_row['dino_similarity'] = dino_evaluator.calculate_similarity(gen_img, ref_img, mask_img)
+        if dino_evaluator:
+            result_row['dino_similarity'] = dino_evaluator.calculate_similarity(gen_img, ref_img, mask_img)
         
         # VLM Scores
-        if args.run_vlm and vlm_evaluator:
+        if vlm_evaluator:
             aesthetic_score, _ = vlm_evaluator.evaluate_aesthetic(gen_img, ref_img)
             match_score, _ = vlm_evaluator.evaluate_text_image_match(gen_img, metadata['prompt'])
             result_row['vlm_aesthetic_score'] = aesthetic_score
             result_row['vlm_text_match_score'] = match_score
-        else:
-            result_row['vlm_aesthetic_score'] = None
-            result_row['vlm_text_match_score'] = None
 
         results.append(result_row)
         
@@ -77,7 +79,7 @@ def main(args):
 
     # --- Run Distribution-Based Evaluation (FID) ---
     fid_score = None
-    if args.run_fid:
+    if 'fid' in metrics:
         print("\nCalculating Masked FID score (this may take a while)...")
         fid_evaluator = FIDEvaluator(device=args.device)
         # The "real" images for FID are the source images from the benchmark
@@ -110,24 +112,23 @@ if __name__ == '__main__':
                         help="Directory containing the generated images from inference.")
     parser.add_argument("--benchmark_dir", type=str, required=False, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing",
                         help="Directory of the benchmark dataset (e.g., Calligrapher_bench_testing).")
+    parser.add_argument("--metrics", nargs='+', required=True, 
+                        choices=['ocr', 'dino', 'vlm', 'fid'],
+                        help="Select one or more metrics to run (e.g., --metrics ocr fid).")
     parser.add_argument("--output_csv", type=str, default="evaluation_results.csv",
                         help="Path to save the detailed CSV results.")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to run torch models on ('cuda' or 'cpu').")
-    parser.add_argument("--no-vlm", action="store_false", dest="run_vlm",
-                        help="Skip the VLM-based evaluations (Aesthetic and Text-Match).")
-    parser.add_argument("--no-fid", action="store_false", dest="run_fid",
-                        help="Skip the FID evaluation.")
     
     args = parser.parse_args()
     
     # Ensure API_KEY is set if VLM is to be run
-    if args.run_vlm and not os.environ.get("API_KEY"):
+    if 'vlm' in args.metrics and not os.environ.get("API_KEY"):
         print("="*50)
         print("!!! WARNING: API_KEY is not set. VLM evaluations will be skipped. !!!")
-        print("Please set it to your OpenAI API key to run VLM evaluation.")
-        print("Example: export API_KEY='sk-...'")
+        print("Please set it to your API key to run VLM evaluation.")
+        print("Example: export API_KEY='your-key'")
         print("="*50)
-        args.run_vlm = False
+        args.metrics.remove('vlm')
 
     main(args)

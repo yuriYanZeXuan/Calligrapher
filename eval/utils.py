@@ -19,7 +19,12 @@ def parse_generated_filename(filename):
     seed = int(match.group(3))
 
     # Reconstruct the original prompt (this is an approximation)
-    prompt_text = safe_prompt.replace('_', ' ').replace("The text is ", "").strip()
+    raw_prompt = safe_prompt.replace('_', ' ').replace("The text is ", "").strip()
+
+    # The inference script adds a period to the prompt, which is not part of the 
+    # actual ground truth text. We remove it from the end if it exists.
+    # We use rstrip('.') to handle cases where the original text might also end in a period.
+    prompt_text = raw_prompt.rstrip('.')
 
     return {
         'ref_id': ref_id_str,

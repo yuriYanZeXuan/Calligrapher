@@ -86,7 +86,16 @@ def main():
         print("="*50)
         return
 
-    image_paths = sorted(glob.glob(os.path.join(benchmark_dir, "test*_ref.png")))
+    image_paths = glob.glob(os.path.join(benchmark_dir, "test*_ref.png"))
+    
+    # Sort images numerically based on the test number in the filename
+    def get_filenum(path):
+        match = re.search(r'test(\d+)_ref\.png', os.path.basename(path))
+        if match:
+            return int(match.group(1))
+        return -1 # Should not be reached with the current glob
+    
+    image_paths.sort(key=get_filenum)
     
     if not image_paths:
         print(f"No images found matching 'test*_ref.png' in {benchmark_dir}")
@@ -96,20 +105,22 @@ def main():
 
     extractor = ImageTextExtractor()
     
-    extracted_texts = []
+    results = []
     
     for image_path in tqdm(image_paths, desc="Extracting text from images"):
         try:
+            num = get_filenum(image_path)
             image = Image.open(image_path).convert("RGB")
             text = extractor.extract_text(image)
-            extracted_texts.append(text)
+            results.append((num, text))
         except Exception as e:
             print(f"Error processing {image_path}: {e}")
-            extracted_texts.append(f"Error processing {os.path.basename(image_path)}")
+            num = get_filenum(image_path)
+            results.append((num, f"Error processing {os.path.basename(image_path)}"))
 
     with open(output_file, 'w') as f:
-        for text in extracted_texts:
-            f.write(f"{text}\n")
+        for num, text in results:
+            f.write(f"{num}-{text}\n")
             
     print(f"\nExtraction complete. Results saved to {output_file}")
 

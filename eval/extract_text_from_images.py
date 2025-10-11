@@ -35,8 +35,10 @@ class ImageTextExtractor:
         
         prompt = """
         You are an Optical Character Recognition (OCR) expert. Your task is to read the text from the provided image.
-        Please return only the text you see in the image. Do not add any explanation, context, or any other words like "The text is". Just return the raw text.
-        If there is no text, return an empty response.
+        - Identify the main, most prominent text in the image.
+        - If the text is on multiple lines, combine it into a single line, separated by a space.
+        - Ignore any small, secondary text that looks like a watermark, signature, or logo.
+        - Please return only the final, processed text. Do not add any explanation or context. Just return the raw text.
         """
         
         try:
@@ -88,6 +90,9 @@ def main():
 
     image_paths = glob.glob(os.path.join(benchmark_dir, "test*_ref.png"))
     
+    # Filter out "half_ref" images
+    image_paths = [path for path in image_paths if "half_ref" not in os.path.basename(path)]
+
     # Sort images numerically based on the test number in the filename
     def get_filenum(path):
         match = re.search(r'test(\d+)_ref\.png', os.path.basename(path))

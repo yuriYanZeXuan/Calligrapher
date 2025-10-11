@@ -16,3 +16,6 @@
 *.pyzw
 *.pyzwz
 *.pyzwzw
+
+# Ignore font files and directories
+**/font/

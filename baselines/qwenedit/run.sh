@@ -4,7 +4,7 @@
 
 # The model path for Qwen-Image-Edit.
 # You can use the default from Hugging Face or a local path if you have it downloaded.
-MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/QwenEdit2509"
+MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/QwenEdit"
 
 # The editing instruction for the image.
 PROMPT="Edit text to 'World'"

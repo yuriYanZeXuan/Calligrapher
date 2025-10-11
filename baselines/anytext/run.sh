@@ -3,8 +3,7 @@
 # --- Configuration ---
 
 # Path to the directory containing the AnyText2 models.
-# Adjust this path if your models are located elsewhere.
-MODEL_DIR="../../AnyText2/models"
+MODEL_DIR="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/anytext2"
 
 # The general prompt describing the image.
 IMG_PROMPT="A sign on a wooden wall"

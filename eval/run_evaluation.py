@@ -57,7 +57,7 @@ def main(args):
 
         # OCR Accuracy
         if ocr_evaluator:
-            result_row['ocr_accuracy'] = ocr_evaluator.calculate_ocr_accuracy(gen_img, metadata['prompt'])
+            result_row['ocr_accuracy'] = ocr_evaluator.calculate_ocr_accuracy(gen_img, metadata['prompt'], mask=mask_img)
         
         # DINO Similarity
         if dino_evaluator:

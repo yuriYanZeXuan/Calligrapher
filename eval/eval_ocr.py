@@ -18,9 +18,10 @@ class OCREvaluator:
         self.ocr = PaddleOCR(use_textline_orientation=False, lang=lang)
         print("PaddleOCR initialized.")
 
-    def calculate_ocr_accuracy(self, image: Image.Image, ground_truth_text: str):
+    def calculate_ocr_accuracy(self, image: Image.Image, ground_truth_text: str, mask: Image.Image = None):
         """
         Calculates character-level OCR accuracy based on concatenated text.
+        If a mask is provided, the OCR will be performed only on the masked region.
         It compares the recognized text (with all parts concatenated and no spaces)
         against the ground truth text (with spaces removed). This focuses on
         character correctness, ignoring spacing.
@@ -29,8 +30,21 @@ class OCREvaluator:
         # Prepare ground truth: remove spaces and convert to lower case for consistent comparison
         ground_truth_processed = ground_truth_text.replace(" ", "").lower()
 
+        # Apply mask if provided: black out the unmasked area
+        if mask:
+            # Resize mask to match image and ensure it's a binary mask
+            mask_resized = mask.resize(image.size, Image.NEAREST)
+            img_np = np.array(image.convert('RGB'))
+            mask_np = np.array(mask_resized.convert('L'))
+            
+            # Black out the unmasked area
+            img_np[mask_np == 0] = 0
+            image_to_ocr = Image.fromarray(img_np)
+        else:
+            image_to_ocr = image
+
         # Convert PIL Image (RGB) to numpy array and then to BGR for PaddleOCR predict method
-        img_np_rgb = np.array(image.convert('RGB'))
+        img_np_rgb = np.array(image_to_ocr.convert('RGB'))
         img_np_bgr = img_np_rgb[:, :, ::-1]
 
         # Use the 'predict' method, which is the modern standard and aligns with step3_ocr.py
@@ -86,7 +100,7 @@ def main():
         return
 
     # Load images and metadata
-    generated_img, _, _, _, metadata = load_images_for_evaluation(generated_image_path, benchmark_dir)
+    generated_img, _, mask_img, _, metadata = load_images_for_evaluation(generated_image_path, benchmark_dir)
 
     if generated_img is None:
         print("Failed to load images.")
@@ -98,7 +112,8 @@ def main():
 
     # Evaluate
     evaluator = OCREvaluator()
-    accuracy = evaluator.calculate_ocr_accuracy(generated_img, ground_truth)
+    # Pass the mask to the evaluator
+    accuracy = evaluator.calculate_ocr_accuracy(generated_img, ground_truth, mask=mask_img)
 
     print(f"\nOCR Character Accuracy: {accuracy:.4f}")
 

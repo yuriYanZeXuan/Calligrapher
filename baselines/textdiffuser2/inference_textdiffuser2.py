@@ -42,7 +42,7 @@ class TextDiffuser2Inpainter:
         self.text_encoder.resize_token_embeddings(len(self.tokenizer))
         
         self.unet = UNet2DConditionModel.from_pretrained(
-            diffusion_model_path, subfolder="unet"
+            diffusion_model_path, subfolder="unet", in_channels=9
         )
         
         self.vae.to(self.device, dtype=self.weight_dtype)

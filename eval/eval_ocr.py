@@ -13,9 +13,9 @@ from eval.utils import load_images_for_evaluation
 class OCREvaluator:
     def __init__(self, lang='en'):
         print("Initializing PaddleOCR...")
-        # Aligned with step3_ocr.py which uses use_textline_orientation=False.
-        # use_angle_cls=False ensures consistent behavior during evaluation.
-        self.ocr = PaddleOCR(use_angle_cls=False, lang=lang)
+        # Aligned with step3_ocr.py, use_textline_orientation is the modern param.
+        # This resolves the 'use_angle_cls' deprecation warning.
+        self.ocr = PaddleOCR(use_textline_orientation=False, lang=lang)
         print("PaddleOCR initialized.")
 
     def calculate_ocr_accuracy(self, image: Image.Image, ground_truth_text: str):
@@ -29,21 +29,30 @@ class OCREvaluator:
         # Prepare ground truth: remove spaces and convert to lower case for consistent comparison
         ground_truth_processed = ground_truth_text.replace(" ", "").lower()
 
-        # Convert PIL Image to numpy array for PaddleOCR
-        img_np = np.array(image.convert('RGB'))
+        # Convert PIL Image (RGB) to numpy array and then to BGR for PaddleOCR predict method
+        img_np_rgb = np.array(image.convert('RGB'))
+        img_np_bgr = img_np_rgb[:, :, ::-1]
 
-        # Ocr the image
-        # The 'cls' parameter is not accepted by the predict method in some versions.
-        # The behavior is controlled by 'use_angle_cls' during initialization.
-        result = self.ocr.ocr(img_np)
+        # Use the 'predict' method, which is the modern standard and aligns with step3_ocr.py
+        result = self.ocr.predict(img_np_bgr)
 
         recognized_text_parts = []
-        if result and result[0]:
-            # Get all recognized text parts
-            recognized_text_parts = [line[1][0] for line in result[0]]
+        # The result of predict is a list containing one result object for the image
+        if result and result[0] and hasattr(result[0], 'json'):
+            json_res = result[0].json
+            if json_res and 'res' in json_res and json_res['res']:
+                res_data = json_res['res']
+                # rec_texts contains the list of recognized text strings
+                recognized_text_parts = res_data.get('rec_texts', [])
+
+        # --- DEBUG: Print raw and processed text ---
+        print(f"  - Recognized Raw: {recognized_text_parts}")
         
         # Concatenate all parts and process for comparison
         recognized_text_processed = "".join(recognized_text_parts).replace(" ", "").lower()
+        print(f"  - Ground Truth (Processed) : '{ground_truth_processed}'")
+        print(f"  - Recognized Text (Processed): '{recognized_text_processed}'")
+        # --- END DEBUG ---
 
         # Handle cases where ground truth is empty (e.g., prompt was just spaces)
         if not ground_truth_processed:

@@ -134,8 +134,21 @@ class TextDiffuser2Inpainter:
 
         for t in tqdm(self.scheduler.timesteps):
             with torch.no_grad():
-                noise_pred_cond = self.unet(sample=latents, timestep=t, encoder_hidden_states=encoder_hidden_states_cond, feature_mask=feature_mask, masked_feature=masked_feature).sample
-                noise_pred_uncond = self.unet(sample=latents, timestep=t, encoder_hidden_states=encoder_hidden_states_nocond, feature_mask=feature_mask, masked_feature=masked_feature).sample
+                # Correct UNet call for the modified TextDiffuser-2 UNet
+                noise_pred_cond = self.unet(
+                    sample=latents,
+                    timestep=t,
+                    encoder_hidden_states=encoder_hidden_states_cond,
+                    feature_mask=feature_mask,
+                    masked_feature=masked_feature
+                ).sample
+                noise_pred_uncond = self.unet(
+                    sample=latents,
+                    timestep=t,
+                    encoder_hidden_states=encoder_hidden_states_nocond,
+                    feature_mask=feature_mask,
+                    masked_feature=masked_feature
+                ).sample
                 
                 noisy_residual = noise_pred_uncond + cfg_scale * (noise_pred_cond - noise_pred_uncond)
                 

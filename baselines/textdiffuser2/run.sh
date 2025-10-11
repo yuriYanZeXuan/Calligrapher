@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Add the modified diffusers library to the Python path
+export PYTHONPATH=$(pwd)/diffusers_td2/src:$PYTHONPATH
+
 BASE_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/sdv1-5"
 
 DIFFUSION_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/textdiffuser2_inp"

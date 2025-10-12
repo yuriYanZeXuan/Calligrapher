@@ -40,36 +40,11 @@ class TextFluxGenerator:
         pipe.transformer.to(torch.bfloat16)
         return pipe
 
-    def _read_words(self, words_input):
-        if isinstance(words_input, list):
-            return words_input
-        if os.path.exists(words_input):
-            with open(words_input, 'r', encoding='utf-8') as f:
-                return [line.strip() for line in f if line.strip()]
-        return [line.strip() for line in words_input.splitlines() if line.strip()]
-
-    def _generate_prompts(self, words):
-        words_str = ', '.join(f"'{word}'" for word in words)
-        prompt_template = (
-            "The pair of images highlights some white words on a black background, as well as their style on a real-world scene image. "
-            "[IMAGE1] is a template image rendering the text, with the words {words}; "
-            "[IMAGE2] shows the text content {words} naturally and correspondingly integrated into the image."
-        )
-        prompt_2 = prompt_template.format(words=words_str)
-
-        # As seen in the original script, prompt_1 is a more generic version.
-        prompt_1 = (
-            "The pair of images highlights some white words on a black background, as well as their style on a real-world scene image. "
-            "[IMAGE1] is a template image rendering the text, with the words; "
-            "[IMAGE2] shows the text content naturally and correspondingly integrated into the image."
-        )
-        return prompt_1, prompt_2
-
     def generate(
         self,
         image: Image.Image,
         mask_image: Image.Image,
-        words: list,
+        prompt: str,
         seed: int = 42,
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
@@ -86,8 +61,6 @@ class TextFluxGenerator:
         image = image.resize((new_width, new_height))
         mask_image = mask_image.resize((new_width, new_height))
         
-        prompt_1, prompt_2 = self._generate_prompts(words)
-        
         generator = torch.Generator(device=self.device).manual_seed(seed)
         
         result = self.pipe(
@@ -98,8 +71,7 @@ class TextFluxGenerator:
             num_inference_steps=num_inference_steps,
             generator=generator,
             guidance_scale=guidance_scale,
-            prompt=prompt_1,
-            prompt_2=prompt_2,
+            prompt=prompt,
         ).images[0]
         
         result.save(output_path)
@@ -113,7 +85,7 @@ def main():
     parser.add_argument("--lora_path", type=str, default="yyyyyxie/textflux-beta-lora", help="Path to the TextFlux LoRA weights.")
     parser.add_argument("--image_path", type=str, required=True, help="Path to the source image.")
     parser.add_argument("--mask_path", type=str, required=True, help="Path to the mask image.")
-    parser.add_argument("--words_path", type=str, required=True, help="Path to a text file containing the words to inpaint.")
+    parser.add_argument("--prompt", type=str, required=True, help="Prompt text for inpainting.")
     parser.add_argument("--output_path", type=str, default="output/textflux.png", help="Path to save the generated image.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--steps", type=int, default=50, help="Number of inference steps.")
@@ -129,13 +101,10 @@ def main():
     input_image = load_image(args.image_path).convert("RGB")
     mask_image = load_image(args.mask_path).convert("RGB")
     
-    with open(args.words_path, 'r') as f:
-        words = [line.strip() for line in f.readlines() if line.strip()]
-
     generator.generate(
         image=input_image,
         mask_image=mask_image,
-        words=words,
+        prompt=args.prompt,
         seed=args.seed,
         num_inference_steps=args.steps,
         guidance_scale=args.guidance_scale,

@@ -18,7 +18,7 @@ IMAGE_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_t
 MASK_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing/test1_mask.png"
 
 # The text prompt for inpainting.
-PROMPT="A photo of the text 'TextFlux'"
+PROMPT="TextFlux"
 
 # The path where the output image will be saved.
 OUTPUT_PATH="output/textflux_example_test1.png"

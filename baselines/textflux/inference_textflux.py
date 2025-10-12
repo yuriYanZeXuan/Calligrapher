@@ -61,6 +61,20 @@ class TextFluxGenerator:
         image = image.resize((new_width, new_height))
         mask_image = mask_image.resize((new_width, new_height))
         
+        # Reconstruct the specific prompt format required by the TextFlux LoRA.
+        words_str = f"'{prompt}'"
+        prompt_template = (
+            "The pair of images highlights some white words on a black background, as well as their style on a real-world scene image. "
+            "[IMAGE1] is a template image rendering the text, with the words {words}; "
+            "[IMAGE2] shows the text content {words} naturally and correspondingly integrated into the image."
+        )
+        prompt_2 = prompt_template.format(words=words_str)
+        prompt_1 = (
+            "The pair of images highlights some white words on a black background, as well as their style on a real-world scene image. "
+            "[IMAGE1] is a template image rendering the text, with the words; "
+            "[IMAGE2] shows the text content naturally and correspondingly integrated into the image."
+        )
+
         generator = torch.Generator(device=self.device).manual_seed(seed)
         
         result = self.pipe(
@@ -71,7 +85,8 @@ class TextFluxGenerator:
             num_inference_steps=num_inference_steps,
             generator=generator,
             guidance_scale=guidance_scale,
-            prompt=prompt,
+            prompt=prompt_1,
+            prompt_2=prompt_2,
         ).images[0]
         
         result.save(output_path)

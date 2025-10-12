@@ -19,3 +19,4 @@
 
 # Ignore font files and directories
 **/font/
+*.zip

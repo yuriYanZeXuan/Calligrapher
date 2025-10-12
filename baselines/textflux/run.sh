@@ -2,6 +2,9 @@
 
 # --- Configuration ---
 
+# Path to the pipeline model.
+PIPELINE_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill"
+
 # Path to the base transformer model.
 TRANSFORMER_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill/transformer"
 
@@ -42,6 +45,7 @@ fi
 echo "Starting TextFlux inference..."
 
 python inference_textflux.py \
+    --pipeline_path "$PIPELINE_PATH" \
     --transformer_path "$TRANSFORMER_PATH" \
     --lora_path "$LORA_PATH" \
     --image_path "$IMAGE_PATH" \

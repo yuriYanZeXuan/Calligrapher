@@ -6,9 +6,10 @@ from diffusers.utils import load_image
 from diffusers import FluxFillPipeline, FluxTransformer2DModel
 
 class TextFluxGenerator:
-    def __init__(self, transformer_path="black-forest-labs/FLUX.1-Fill-dev/transformer", lora_path="yyyyyxie/textflux-beta-lora", device="cuda"):
+    def __init__(self, pipeline_path="black-forest-labs/FLUX.1-Fill-dev", transformer_path="black-forest-labs/FLUX.1-Fill-dev/transformer", lora_path="yyyyyxie/textflux-beta-lora", device="cuda"):
         print("Initializing TextFlux pipeline...")
         self.device = device
+        self.pipeline_path = pipeline_path
         self.transformer_path = transformer_path
         self.lora_path = lora_path
         self.pipe = self._load_pipeline()
@@ -32,7 +33,7 @@ class TextFluxGenerator:
         )
 
         pipe = FluxFillPipeline.from_pretrained(
-            "black-forest-labs/FLUX.1-Fill-dev",
+            self.pipeline_path,
             transformer=transformer,
             torch_dtype=torch.bfloat16
         ).to(self.device)
@@ -107,6 +108,7 @@ class TextFluxGenerator:
 
 def main():
     parser = argparse.ArgumentParser(description="TextFlux Inference Script")
+    parser.add_argument("--pipeline_path", type=str, default="black-forest-labs/FLUX.1-Fill-dev", help="Path to the pipeline model.")
     parser.add_argument("--transformer_path", type=str, default="black-forest-labs/FLUX.1-Fill-dev/transformer", help="Path to the base transformer model.")
     parser.add_argument("--lora_path", type=str, default="yyyyyxie/textflux-beta-lora", help="Path to the TextFlux LoRA weights.")
     parser.add_argument("--image_path", type=str, required=True, help="Path to the source image.")
@@ -119,6 +121,7 @@ def main():
     args = parser.parse_args()
 
     generator = TextFluxGenerator(
+        pipeline_path=args.pipeline_path,
         transformer_path=args.transformer_path,
         lora_path=args.lora_path
     )

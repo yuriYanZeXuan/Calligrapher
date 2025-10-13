@@ -9,22 +9,25 @@
 
 # -- Paths --
 # Path to the base pretrained model (e.g., a FLUX or Qwen-Edit model from Hugging Face)
-PRETRAINED_MODEL_PATH="/path/to/your/base/model" 
+PRETRAINED_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/QwenEdit" 
 
 # Path to the SigLIP vision model (used by the IP-Adapter)
-SIGLIP_MODEL_PATH="/path/to/your/siglip/model" 
+SIGLIP_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip" 
+
+# Path to the VLM model (e.g., Qwen-VL-Chat) used for reward calculation
+VLM_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B"
 
 # Path to your training dataset directory
 # This directory must contain 'self_bench.txt' and the image triplets.
-TRAIN_DATA_DIR="/Users/yanzexuan/code/dataset/Calligrapher_bench_testing"
+TRAIN_DATA_DIR="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
 
 # Directory where checkpoints and logs will be saved
-OUTPUT_DIR="./output_grpo"
+OUTPUT_DIR="./output_qwen"
 
 # -- Model Selection --
 # Choose the model architecture you are training.
 # Options: "flux" or "qwen"
-MODEL_TYPE="flux"
+MODEL_TYPE="qwen"
 
 # -- Training Mode --
 # Set to "true" to enable GRPO-RL training after warmup steps.
@@ -73,6 +76,7 @@ accelerate launch Calligrapher/train/train.py \
   $( [ "$USE_RL" = true ] && echo "--use_rl" ) \
   --rl_warmup_steps=$RL_WARMUP_STEPS \
   --ocr_weight=$OCR_REWARD_WEIGHT \
-  --vlm_weight=$VLM_REWARD_WEIGHT
+  --vlm_weight=$VLM_REWARD_WEIGHT \
+  --vlm_model_path=$VLM_MODEL_PATH
 
 echo "Training finished."

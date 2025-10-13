@@ -4,10 +4,10 @@ from .ocr import OCRScorer
 from .qwenvl import QwenVLScorer
 
 class RewardCalculator:
-    def __init__(self, device, ocr_weight=0.6, vlm_weight=0.4):
+    def __init__(self, device, ocr_weight=0.6, vlm_weight=0.4, vlm_model_path: str = "Qwen/Qwen2.5-VL"):
         self.device = device
         self.ocr_scorer = OCRScorer(device)
-        self.vlm_scorer = QwenVLScorer(device=device)
+        self.vlm_scorer = QwenVLScorer(model_path=vlm_model_path, device=device)
         self.ocr_weight = ocr_weight
         self.vlm_weight = vlm_weight
 

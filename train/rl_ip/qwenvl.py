@@ -4,7 +4,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from typing import List
 
 class QwenVLScorer:
-    def __init__(self, model_path="Qwen/Qwen-VL-Chat", device="cuda"):
+    def __init__(self, model_path: str, device="cuda"):
         self.device = device
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -12,7 +12,7 @@ class QwenVLScorer:
             device_map="auto", 
             trust_remote_code=True
         ).eval()
-        print("Initialized Qwen-VL-Chat Model.")
+        print(f"Initialized Qwen-VL-Chat Model from: {model_path}")
 
     def score(self, image_pil: Image.Image, prompt: str) -> float:
         """

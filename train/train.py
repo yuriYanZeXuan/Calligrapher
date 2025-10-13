@@ -81,6 +81,7 @@ def parse_args():
     parser.add_argument("--rl_warmup_steps", type=int, default=1000, help="Number of supervised steps before starting RL training.")
     parser.add_argument("--ocr_weight", type=float, default=0.6, help="Weight for OCR reward in RL.")
     parser.add_argument("--vlm_weight", type=float, default=0.4, help="Weight for VLM score in RL.")
+    parser.add_argument("--vlm_model_path", type=str, default="Qwen/Qwen-VL-Chat", help="Path to the VLM model for reward calculation.")
 
 
     # --- Logging ---
@@ -160,7 +161,12 @@ def main():
     # --- RL Setup ---
     if args.use_rl:
         policy = create_policy(transformer, noise_scheduler, args.model_type)
-        reward_calculator = RewardCalculator(accelerator.device, args.ocr_weight, args.vlm_weight)
+        reward_calculator = RewardCalculator(
+            accelerator.device, 
+            args.ocr_weight, 
+            args.vlm_weight, 
+            vlm_model_path=args.vlm_model_path
+        )
         grpo_trainer = GRPOTrainer(policy, accelerator, lr=args.learning_rate)
     else:
         policy, reward_calculator, grpo_trainer = None, None, None

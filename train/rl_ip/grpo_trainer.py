@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from Calligrapher.train.rl_ip.policy import PolicyWrapper
 from Calligrapher.train.rl_ip.reward import RewardCalculator
-from flux_ip.utils import unpack_latents
+from Calligrapher.train.flux_ip.utils import unpack_latents
 
 class GRPOTrainer:
     def __init__(

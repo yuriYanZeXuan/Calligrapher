@@ -3,8 +3,8 @@ import torch.nn as nn
 from typing import Dict
 from tqdm import tqdm
 
-from policy import PolicyWrapper
-from reward import RewardCalculator
+from .policy import PolicyWrapper
+from .reward import RewardCalculator
 from Calligrapher.flux_ip.utils import unpack_latents
 
 class GRPOTrainer:

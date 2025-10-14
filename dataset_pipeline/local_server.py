@@ -17,7 +17,8 @@ import config
 app = FastAPI()
 
 # --- Static Directory for Images ---
-STATIC_DIR = "generated_images"
+# Use the output directory defined in the main config file
+STATIC_DIR = config.OUTPUT_DIR
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount(f"/{STATIC_DIR}", StaticFiles(directory=STATIC_DIR), name="static")
 

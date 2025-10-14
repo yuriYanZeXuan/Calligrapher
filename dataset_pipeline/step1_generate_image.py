@@ -5,26 +5,35 @@ from PIL import Image
 from io import BytesIO
 import config
 
-client = OpenAI(
-    base_url=config.API_BASE_URL,
-    api_key=config.API_KEY
-)
-
-def generate_image(prompt: str, output_path: str) -> bool:
+def generate_image(prompt: str, output_path: str, service: str = "remote") -> bool:
     """
     Generates an image based on a prompt using a T2I model and saves it.
 
     Args:
         prompt (str): The text prompt for image generation.
         output_path (str): The path to save the generated image.
+        service (str): The service to use ('local' or 'remote').
 
     Returns:
         bool: True if the image was generated and saved successfully, False otherwise.
     """
     try:
-        print(f"Generating image with prompt: '{prompt}'")
+        service_config = config.SERVICES[service]
+        
+        # Determine the correct base URL
+        if service == "local":
+            base_url = service_config["api_base_url_image"]
+        else: # remote
+            base_url = service_config["api_base_url"]
+
+        client = OpenAI(
+            base_url=base_url,
+            api_key=service_config["api_key"]
+        )
+
+        print(f"Generating image with prompt: '{prompt}' using '{service}' service at {base_url}.")
         response = client.images.generate(
-            model=config.IMAGE_GEN_MODEL,
+            model=service_config["image_gen_model"],
             prompt=prompt,
             size=config.IMAGE_SIZE,
             response_format="url", # or "b64_json"

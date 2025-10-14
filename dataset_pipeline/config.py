@@ -1,19 +1,40 @@
 import os
 
-# --- API Configuration ---
-# Point this to your local server's address
-API_BASE_URL = "http://127.0.0.1:8000/v1" 
-# This can be any string, as the local server doesn't validate it
-API_KEY = "local-api-key" 
+# --- Service Configuration ---
+# This dictionary holds settings for different services.
+# The active service can be chosen in main.py using the --service flag.
+SERVICES = {
+    "local": {
+        # --- Endpoints for local microservices ---
+        # For a single, multi-GPU server, use 127.0.0.1 for both and assign different ports.
+        "api_base_url_image": "http://127.0.0.1:8000/v1",
+        "api_base_url_llm": "http://127.0.0.1:8001/v1",
+        "api_key": "local-key", # Not used by local server, but required for client
+        
+        # --- API model names (should match what the local server expects) ---
+        "image_gen_model": "qwen-image-edit",
+        "llm_model": "qwen2.5llm",
+        
+        # --- Local model paths (used by local_server.py on startup) ---
+        # Replace these with the actual paths to your downloaded model weights
+        "image_model_path": "Qwen/Qwen-Image", 
+        "llm_model_path": "Qwen/Qwen2.5-7B-Instruct"
+    },
+    "remote": {
+        # --- Single endpoint for remote API ---
+        "api_base_url": "http://35.220.164.252:3888/v1",
+        "api_key": os.environ.get("API_KEY", "your_api_key_here"),
+        
+        # --- Remote model names ---
+        "image_gen_model": "doubao-seedream-4-0-250828",
+        "llm_model": "gpt-4.1",
+    }
+}
 
-# --- Model Configuration ---
-# This should match the model name expected by your local server
-IMAGE_GEN_MODEL = "qwen-image-edit"
+# --- Shared Configuration ---
 IMAGE_SIZE = "1024x1024"
+OUTPUT_DIR = "generated_dataset"
 
-# --- LLaMA V3 Configuration for Step 2 ---
-# (Keep this as is or update if you have a local LLaMA service)
-LLM_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
+# --- Other Steps Configuration ---
+OCR_LANGUAGES = ['ch_sim', 'en'] # For step 3
 
-# --- Directory Configuration for the pipeline ---
-OUTPUT_DIR = "sample_dataset"

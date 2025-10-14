@@ -335,7 +335,11 @@ def main():
                     bsz = latents.shape[0]
                     
                     u = compute_density_for_timestep_sampling(
-                        weighting_scheme=args.weighting_scheme, batch_size=bsz
+                        weighting_scheme=args.weighting_scheme, 
+                        batch_size=bsz,
+                        logit_mean=0.0,
+                        logit_std=1.0,
+                        mode_scale=1.29,
                     )
                     indices = (u * noise_scheduler_copy.config.num_train_timesteps).long()
                     timesteps = noise_scheduler_copy.timesteps[indices].to(device=latents.device)

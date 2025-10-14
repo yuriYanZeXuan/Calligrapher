@@ -1,16 +1,17 @@
 import os
 import json
 import uuid
+import argparse
 import config
 from step1_generate_image import generate_image
 from step2_simplify_prompt import simplify_prompt
 from step3_ocr import ocr_image,ocr_image_paddle
 
-def create_dataset_entry(human_written_instruction: str):
+def create_dataset_entry(human_written_instruction: str, service: str):
     """
     Runs the full pipeline for a single instruction to create a dataset entry.
     """
-    print(f"--- Starting pipeline for instruction: '{human_written_instruction}' ---")
+    print(f"--- Starting pipeline for instruction: '{human_written_instruction}' using '{service}' service ---")
     
     # In a real pipeline, you would have a more sophisticated prompt augmentation step
     augmented_prompt = human_written_instruction 
@@ -20,13 +21,13 @@ def create_dataset_entry(human_written_instruction: str):
     image_filename = f"{unique_id}.png"
     image_path = os.path.join(config.OUTPUT_DIR, image_filename)
     
-    if not generate_image(augmented_prompt, image_path):
+    if not generate_image(augmented_prompt, image_path, service=service):
         print("--- Pipeline failed at Step 1: Image Generation ---")
         return
 
     # === Step 2: Simplify Prompt ===
     # This is the reference text we expect to find in the image.
-    reference_text = simplify_prompt(augmented_prompt)
+    reference_text = simplify_prompt(augmented_prompt, service=service)
     if not reference_text:
         print("--- Pipeline failed at Step 2: Simplify Prompt ---")
         return
@@ -73,6 +74,16 @@ def create_dataset_entry(human_written_instruction: str):
     print(f"--- Pipeline completed successfully. Dataset entry saved to {json_path} ---")
 
 def main():
+    parser = argparse.ArgumentParser(description="Run the dataset generation pipeline.")
+    parser.add_argument(
+        '--service', 
+        type=str, 
+        choices=['local', 'remote'], 
+        default='remote',
+        help="Choose the image generation service to use ('local' or 'remote')."
+    )
+    args = parser.parse_args()
+
     # Create output directory if it doesn't exist
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     
@@ -82,7 +93,7 @@ def main():
         instructions = [line.strip() for line in f if line.strip()]
     
     for instruction in instructions:
-        create_dataset_entry(instruction)
+        create_dataset_entry(instruction, service=args.service)
 
 if __name__ == "__main__":
     main()

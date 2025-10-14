@@ -82,7 +82,7 @@ def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:
 if __name__ == '__main__':
     # Example usage: You need to have an image file for this to work.
     # Let's assume 'generated_dataset/generated_image.png' exists from step1.
-    example_image_path = os.path.join(config.OUTPUT_DIR, "generated_image.png")
+    example_image_path = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/dataset_pipeline/Calligrapher_bench_custom/test1_ref.png"
     if os.path.exists(example_image_path):
         print("\n--- Testing EasyOCR ---")
         # The original ocr_image function is removed, so this part will be removed.

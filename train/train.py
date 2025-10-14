@@ -366,6 +366,7 @@ def main():
                             vae=vae,
                             vae_scale_factor=2 ** len(vae.config.block_out_channels),
                         )
+                        mask_latents = mask_latents.repeat(1, 16, 1, 1)
                         masked_image_latents = torch.cat((masked_image_latents, mask_latents), dim=-1)
                         packed_noisy_latents = pack_latents(noisy_latents)
                         
@@ -385,6 +386,7 @@ def main():
                             vae=vae,
                             vae_scale_factor=2 ** len(vae.config.block_out_channels),
                         )
+                        mask_latents = mask_latents.repeat(1, 16, 1, 1)
                         masked_image_latents = torch.cat((masked_image_latents, mask_latents), dim=-1)
                         packed_noisy_latents = pack_latents(noisy_latents)
                         transformer_hidden_states = torch.cat((packed_noisy_latents, masked_image_latents), dim=-1)

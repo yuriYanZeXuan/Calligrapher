@@ -15,9 +15,11 @@ def get_paddle_reader():
             # Map languages for PaddleOCR. 'ch' model supports both Chinese and English.
             paddle_lang = 'ch' if 'ch_sim' in config.OCR_LANGUAGES else 'en'
             _paddle_reader = PaddleOCR(
-                use_angle_cls=True, # Use default settings which are generally robust
+                # Replace deprecated param with the new one
+                use_textline_orientation=True,
                 lang=paddle_lang,
-                use_doc_orientation_classify=False, # Explicitly disable this
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False # Explicitly disable this
             )
             print("PaddleOCR reader initialized successfully.")
         except Exception as e:

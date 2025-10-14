@@ -60,9 +60,9 @@ def load_vae_and_transformer(args):
     )
     
     if args.model_type == 'flux':
-        # Ensure we are using the official, standard transformer model from diffusers
-        # This model correctly expects packed latents.
-        from diffusers.models import FluxTransformer2DModel as TransformerModel
+        # Import the custom transformer model that supports IP-Adapter (image_emb).
+        # from diffusers.models import FluxTransformer2DModel as TransformerModel
+        from train.flux_ip.transformer_flux_inpainting import FluxTransformer2DModel as TransformerModel
     elif args.model_type == 'qwen':
         from qwen_ip.transformer import QwenTransformer2DModel as TransformerModel
     else:

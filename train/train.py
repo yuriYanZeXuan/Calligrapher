@@ -25,8 +25,8 @@ from diffusers.training_utils import compute_density_for_timestep_sampling, comp
 from tqdm.auto import tqdm
 from transformers import AutoProcessor
 
-from .dataset import SimpleDataset, collate_fn
-from .model import (
+from Calligrapher.train.dataset import SimpleDataset, collate_fn
+from Calligrapher.train.model import (
     load_text_encoders_and_tokenizers,
     load_vae_and_transformer,
     load_image_encoder,
@@ -41,9 +41,9 @@ from .model import (
 #     get_sigmas,
 #     prepare_mask_latents4training,
 # )
-from rl_ip.policy import create_policy
-from rl_ip.reward import RewardCalculator
-from rl_ip.grpo_trainer import GRPOTrainer
+from Calligrapher.train.rl_ip.policy import create_policy
+from Calligrapher.train.rl_ip.reward import RewardCalculator
+from Calligrapher.train.rl_ip.grpo_trainer import GRPOTrainer
 
 logger = get_logger(__name__)
 

@@ -98,6 +98,7 @@ def parse_args():
     # --- Memory/Speed Optimizations ---
     parser.add_argument("--gradient_checkpointing", action="store_true", help="Enable gradient checkpointing.")
     parser.add_argument("--no_rl_reward_model", action="store_true", help="Disable loading the VLM reward model and use random rewards for testing.")
+    parser.add_argument("--use_8bit_adam", action="store_true", help="Use 8-bit AdamW optimizer.")
 
     # --- Logging ---
     parser.add_argument("--report_to", type=str, default="tensorboard")
@@ -205,9 +206,21 @@ def main():
         policy, reward_calculator, grpo_trainer = None, None, None
 
     # --- Optimizer ---
+    if args.use_8bit_adam:
+        try:
+            import bitsandbytes.optim as bnb_optim
+        except ImportError:
+            raise ImportError(
+                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
+            )
+        logger.info("Using 8-bit AdamW optimizer.")
+        optimizer_cls = bnb_optim.AdamW8bit
+    else:
+        optimizer_cls = torch.optim.AdamW
+
     attn_processors = transformer.attn_processors.values()
     params_to_optimize = itertools.chain(image_proj_model.parameters(), *(p.parameters() for p in attn_processors))
-    optimizer = torch.optim.AdamW(params_to_optimize, lr=args.learning_rate)
+    optimizer = optimizer_cls(params_to_optimize, lr=args.learning_rate)
 
     # --- Dataset ---
     train_dataset = SimpleDataset(args, accelerator)

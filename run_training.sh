@@ -39,6 +39,9 @@ USE_RL=true
 # When true, random rewards will be used.
 DISABLE_RL_REWARD_MODEL=true
 
+# Set to "true" to use the 8-bit AdamW optimizer for memory savings.
+USE_8BIT_ADAM=true
+
 
 # --- 2. Training Parameters ---
 
@@ -84,6 +87,7 @@ accelerate launch train/train.py \
   --ocr_weight=$OCR_REWARD_WEIGHT \
   --vlm_weight=$VLM_REWARD_WEIGHT \
   --vlm_model_path=$VLM_MODEL_PATH \
-  $( [ "$DISABLE_RL_REWARD_MODEL" = true ] && echo "--no_rl_reward_model" )
+  $( [ "$DISABLE_RL_REWARD_MODEL" = true ] && echo "--no_rl_reward_model" ) \
+  $( [ "$USE_8BIT_ADAM" = true ] && echo "--use_8bit_adam" )
 
 echo "Training finished."

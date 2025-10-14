@@ -355,6 +355,10 @@ def main():
                     
                     # --- MODEL-SPECIFIC LOGIC ---
                     if args.model_type == 'flux':
+                        # pack_latents function expects specific dimensions
+                        b, c, h, w = noisy_latents.shape
+                        
+                        # Prepare mask and masked image latents
                         mask_latents, masked_image_latents = prepare_mask_latents4training(
                             mask=mask_image,
                             masked_image=masked_image,
@@ -366,15 +370,22 @@ def main():
                             vae=vae,
                             vae_scale_factor=2 ** len(vae.config.block_out_channels),
                         )
-                        mask_latents = mask_latents.repeat(1, 16, 1, 1)
-                        masked_image_latents = torch.cat((masked_image_latents, mask_latents), dim=-1)
-                        packed_noisy_latents = pack_latents(noisy_latents)
                         
-                        transformer_hidden_states = torch.cat((packed_noisy_latents, masked_image_latents), dim=-1)
+                        # Pack the latents
+                        packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w)
+                        packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+                        
+                        # Reshape mask to be compatible for concatenation
+                        mask_latents = mask_latents.reshape(b, -1, 1)
+
+                        transformer_hidden_states = torch.cat(
+                            (packed_noisy_latents, packed_masked_image_latents, mask_latents), dim=-1
+                        )
 
                     elif args.model_type == 'qwen':
                         # NOTE: This is a placeholder for Qwen's data preparation.
                         logger.info("Using placeholder data preparation for Qwen model.", main_process_only=True)
+                        b, c, h, w = noisy_latents.shape
                         mask_latents, masked_image_latents = prepare_mask_latents4training(
                             mask=mask_image,
                             masked_image=masked_image,
@@ -386,10 +397,15 @@ def main():
                             vae=vae,
                             vae_scale_factor=2 ** len(vae.config.block_out_channels),
                         )
-                        mask_latents = mask_latents.repeat(1, 16, 1, 1)
-                        masked_image_latents = torch.cat((masked_image_latents, mask_latents), dim=-1)
-                        packed_noisy_latents = pack_latents(noisy_latents)
-                        transformer_hidden_states = torch.cat((packed_noisy_latents, masked_image_latents), dim=-1)
+                        
+                        packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w)
+                        packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+                        
+                        mask_latents = mask_latents.reshape(b, -1, 1)
+
+                        transformer_hidden_states = torch.cat(
+                            (packed_noisy_latents, packed_masked_image_latents, mask_latents), dim=-1
+                        )
 
 
                     # Get image embeddings

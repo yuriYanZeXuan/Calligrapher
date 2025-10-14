@@ -41,9 +41,12 @@ def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:
         result = paddle_reader.predict(input=image_path)
         json_result = result[0].json
         
-        # The result structure is a dict with 'dt_polys' (boxes) and 'res' (texts).
-        boxes = json_result.get('dt_polys', [])
-        texts = json_result.get('res', [])
+        # The actual results are nested inside the 'res' key
+        ocr_data = json_result.get('res', {})
+        
+        # Extract boxes and texts from the nested dictionary
+        boxes = ocr_data.get('dt_polys', [])
+        texts = ocr_data.get('rec_texts', [])
 
         ocr_results = []
         for box, text in zip(boxes, texts):

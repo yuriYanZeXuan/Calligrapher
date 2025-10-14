@@ -35,6 +35,11 @@ MODEL_TYPE="flux"
 # Set to "false" to run only supervised training.
 USE_RL=true
 
+# Set to "true" to disable loading the VLM reward model for memory saving and testing.
+# When true, random rewards will be used.
+DISABLE_RL_REWARD_MODEL=true
+
+
 # --- 2. Training Parameters ---
 
 # -- Basic Parameters --
@@ -78,6 +83,7 @@ accelerate launch train/train.py \
   --rl_warmup_steps=$RL_WARMUP_STEPS \
   --ocr_weight=$OCR_REWARD_WEIGHT \
   --vlm_weight=$VLM_REWARD_WEIGHT \
-  --vlm_model_path=$VLM_MODEL_PATH
+  --vlm_model_path=$VLM_MODEL_PATH \
+  $( [ "$DISABLE_RL_REWARD_MODEL" = true ] && echo "--no_rl_reward_model" )
 
 echo "Training finished."

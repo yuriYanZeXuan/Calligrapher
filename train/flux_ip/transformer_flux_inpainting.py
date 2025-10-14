@@ -26,16 +26,17 @@ from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import (
     Attention,
     AttentionProcessor,
-    FluxAttnProcessor2_0,
-    FluxAttnProcessor2_0_NPU,
-    FusedFluxAttnProcessor2_0,
+    FluxAttnProcessor,
+    FluxAttnProcessorNPU,
+    FusedFluxAttnProcessor,
 )
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero, AdaLayerNormZeroSingle
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.import_utils import is_torch_npu_available
 from diffusers.utils.torch_utils import maybe_allow_in_graph
-from diffusers.models.embeddings import CombinedTimestepGuidanceTextProjEmbeddings, CombinedTimestepTextProjEmbeddings, FluxPosEmbed
+from diffusers.models.embeddings import CombinedTimestepGuidanceTextProjEmbeddings, CombinedTimestepTextProjEmbeddings
+from diffusers.models.transformers.transformer_flux import FluxPosEmbed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
 
@@ -67,9 +68,9 @@ class FluxSingleTransformerBlock(nn.Module):
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
 
         if is_torch_npu_available():
-            processor = FluxAttnProcessor2_0_NPU()
+            processor = FluxAttnProcessorNPU()
         else:
-            processor = FluxAttnProcessor2_0()
+            processor = FluxAttnProcessor()
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -142,7 +143,7 @@ class FluxTransformerBlock(nn.Module):
         self.norm1_context = AdaLayerNormZero(dim)
 
         if hasattr(F, "scaled_dot_product_attention"):
-            processor = FluxAttnProcessor2_0()
+            processor = FluxAttnProcessor()
         else:
             raise ValueError(
                 "The current PyTorch version does not support the `scaled_dot_product_attention` function."
@@ -409,7 +410,7 @@ class FluxTransformer2DModel(
             if isinstance(module, Attention):
                 module.fuse_projections(fuse=True)
 
-        self.set_attn_processor(FusedFluxAttnProcessor2_0())
+        self.set_attn_processor(FusedFluxAttnProcessor())
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.unfuse_qkv_projections
     def unfuse_qkv_projections(self):

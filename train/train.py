@@ -95,6 +95,9 @@ def parse_args():
     parser.add_argument("--vlm_weight", type=float, default=0.4, help="Weight for VLM score in RL.")
     parser.add_argument("--vlm_model_path", type=str, default="Qwen/Qwen-VL-Chat", help="Path to the VLM model for reward calculation.")
 
+    # --- Memory/Speed Optimizations ---
+    parser.add_argument("--gradient_checkpointing", action="store_true", help="Enable gradient checkpointing.")
+    parser.add_argument("--no_rl_reward_model", action="store_true", help="Disable loading the VLM reward model and use random rewards for testing.")
 
     # --- Logging ---
     parser.add_argument("--report_to", type=str, default="tensorboard")
@@ -168,17 +171,30 @@ def main():
     image_encoder.to(accelerator.device, dtype=weight_dtype)
     transformer.to(accelerator.device, dtype=weight_dtype)
     
+    if args.gradient_checkpointing:
+        transformer.gradient_checkpointing_enable()
+
     image_proj_model = setup_ip_adapter(transformer, accelerator, weight_dtype, args)
 
     # --- RL Setup ---
     if args.use_rl:
         policy = create_policy(transformer, noise_scheduler, args.model_type)
-        reward_calculator = RewardCalculator(
-            accelerator.device, 
-            args.ocr_weight, 
-            args.vlm_weight, 
-            vlm_model_path=args.vlm_model_path
-        )
+        if args.no_rl_reward_model:
+            logger.info("Using dummy reward calculator with random rewards.")
+            class DummyRewardCalculator:
+                def __init__(self, device):
+                    self.device = device
+                def get_reward(self, pixel_values, prompts):
+                    batch_size = pixel_values.shape[0]
+                    return torch.rand(batch_size, device=self.device)
+            reward_calculator = DummyRewardCalculator(accelerator.device)
+        else:
+            reward_calculator = RewardCalculator(
+                accelerator.device, 
+                args.ocr_weight, 
+                args.vlm_weight, 
+                vlm_model_path=args.vlm_model_path
+            )
         grpo_trainer = GRPOTrainer(policy, accelerator, lr=args.learning_rate)
     else:
         policy, reward_calculator, grpo_trainer = None, None, None

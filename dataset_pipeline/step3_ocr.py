@@ -39,12 +39,11 @@ def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:
         print(f"Performing OCR with PaddleOCR on {image_path}")
         # Use the predict method as requested
         result = paddle_reader.predict(input=image_path)
-        result = result[0].json
-        ocr_data = result.get('res', [])
+        json_result = result[0].json
         
-        # Flatten the lists of boxes and texts
-        boxes = [poly for item in ocr_data for poly in item.get('dt_polys', [])]
-        texts = [text for item in ocr_data for text in item.get('rec_texts', [])]
+        # Safely extract boxes and texts from the result dictionary
+        boxes = json_result.get('dt_polys', [])
+        texts = [item['rec_texts'][0] for item in json_result.get('res', []) if 'rec_texts' in item and item['rec_texts']]
 
         ocr_results = []
         for box, text in zip(boxes, texts):

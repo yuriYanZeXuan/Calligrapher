@@ -1,0 +1,16 @@
+{
+    "id": "0d86d9f7-ad0b-47f1-b2a9-1f8356e4985f",
+    "image_file": "0d86d9f7-ad0b-47f1-b2a9-1f8356e4985f.png",
+    "human_instruction": "\"Ocean\" with waves integrated into the letters.",
+    "augmented_prompt": "\"Ocean\" with waves integrated into the letters.",
+    "reference_text": "Ocean",
+    "ocr_result": {
+        "text": "cean",
+        "bounding_box": [
+            182,
+            382,
+            972,
+            634
+        ]
+    }
+}

@@ -180,7 +180,8 @@ def main():
         policy, reward_calculator, grpo_trainer = None, None, None
 
     # --- Optimizer ---
-    params_to_optimize = itertools.chain(image_proj_model.parameters(), transformer.attn_processors.parameters())
+    attn_processors = transformer.attn_processors.values()
+    params_to_optimize = itertools.chain(image_proj_model.parameters(), *(p.parameters() for p in attn_processors))
     optimizer = torch.optim.AdamW(params_to_optimize, lr=args.learning_rate)
 
     # --- Dataset ---
@@ -431,7 +432,11 @@ def main():
 
                     accelerator.backward(loss)
                     if accelerator.sync_gradients:
-                        params_to_clip = itertools.chain(accelerator.unwrap_model(image_proj_model).parameters(), accelerator.unwrap_model(transformer).attn_processors.parameters())
+                        attn_processors_unwrapped = accelerator.unwrap_model(transformer).attn_processors.values()
+                        params_to_clip = itertools.chain(
+                            accelerator.unwrap_model(image_proj_model).parameters(),
+                            *(p.parameters() for p in attn_processors_unwrapped)
+                        )
                         accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                     
                     optimizer.step()

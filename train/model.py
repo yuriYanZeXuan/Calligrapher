@@ -69,6 +69,8 @@ def load_vae_and_transformer(args):
     transformer = TransformerModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant,
         in_channels=33,
+        low_cpu_mem_usage=False,
+        ignore_mismatched_sizes=True,
     )
     return vae, transformer
 

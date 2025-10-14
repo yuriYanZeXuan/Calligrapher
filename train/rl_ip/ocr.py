@@ -5,7 +5,7 @@ import numpy as np
 class OCRScorer:
     def __init__(self, device=None):
         # PaddleOCR uses CPU or GPU, device parameter is for compatibility
-        self.ocr_model = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False)
+        self.ocr_model = PaddleOCR(use_angle_cls=True, lang='ch')
         print("Initialized PaddleOCR Model.")
 
     def score(self, image_pil: Image.Image) -> tuple[str, float]:

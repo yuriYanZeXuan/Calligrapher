@@ -5,11 +5,11 @@ import os
 import sys
 from pathlib import Path
 
-# Add the project's parent directory to the Python path.
-# This allows for absolute imports of both 'Calligrapher' and 'flux_ip' as top-level packages.
-project_root_parent = str(Path(__file__).resolve().parents[2])
-if project_root_parent not in sys.path:
-    sys.path.insert(0, project_root_parent)
+# Add the project's root directory ('Calligrapher') to the Python path.
+# This allows for absolute imports from the project root.
+project_root = str(Path(__file__).resolve().parents[1])
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 import itertools
 from functools import partial
@@ -25,8 +25,8 @@ from diffusers.training_utils import compute_density_for_timestep_sampling, comp
 from tqdm.auto import tqdm
 from transformers import AutoProcessor
 
-from Calligrapher.train.dataset import SimpleDataset, collate_fn
-from Calligrapher.train.model import (
+from train.dataset import SimpleDataset, collate_fn
+from train.model import (
     load_text_encoders_and_tokenizers,
     load_vae_and_transformer,
     load_image_encoder,
@@ -41,9 +41,9 @@ from Calligrapher.train.model import (
 #     get_sigmas,
 #     prepare_mask_latents4training,
 # )
-from Calligrapher.train.rl_ip.policy import create_policy
-from Calligrapher.train.rl_ip.reward import RewardCalculator
-from Calligrapher.train.rl_ip.grpo_trainer import GRPOTrainer
+from train.rl_ip.policy import create_policy
+from train.rl_ip.reward import RewardCalculator
+from train.rl_ip.grpo_trainer import GRPOTrainer
 
 logger = get_logger(__name__)
 
@@ -100,7 +100,7 @@ def parse_args():
     
     if args.model_type == 'flux':
         global encode_prompt, pack_latents, unpack_latents, prepare_latent_image_ids, get_sigmas, prepare_mask_latents4training
-        from flux_ip.utils import (
+        from train.flux_ip.utils import (
             encode_prompt, pack_latents, unpack_latents, prepare_latent_image_ids, get_sigmas, prepare_mask_latents4training
         )
     elif args.model_type == 'qwen':
@@ -109,7 +109,7 @@ def parse_args():
         # For now, we'll try to use flux's utils as placeholders.
         logger.warning("Using placeholder utils from 'flux_ip' for 'qwen' model. These may need to be adapted.")
         global encode_prompt, pack_latents, unpack_latents, prepare_latent_image_ids, get_sigmas, prepare_mask_latents4training
-        from flux_ip.utils import (
+        from train.flux_ip.utils import (
             encode_prompt, pack_latents, unpack_latents, prepare_latent_image_ids, get_sigmas, prepare_mask_latents4training
         )
     else:

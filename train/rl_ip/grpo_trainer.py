@@ -3,9 +3,9 @@ import torch.nn as nn
 from typing import Dict
 from tqdm import tqdm
 
-from Calligrapher.train.rl_ip.policy import PolicyWrapper
-from Calligrapher.train.rl_ip.reward import RewardCalculator
-from flux_ip.utils import unpack_latents
+from .policy import PolicyWrapper
+from .reward import RewardCalculator
+from train.flux_ip.utils import unpack_latents
 
 class GRPOTrainer:
     def __init__(

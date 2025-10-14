@@ -67,7 +67,8 @@ def load_vae_and_transformer(args):
         raise ValueError(f"Unknown model_type: {args.model_type}")
 
     transformer = TransformerModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant
+        args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant,
+        in_channels=33,
     )
     return vae, transformer
 

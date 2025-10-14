@@ -13,6 +13,7 @@ if project_root not in sys.path:
 
 import itertools
 from functools import partial
+import torch.nn.functional as F
 
 import torch
 import torch.utils.checkpoint
@@ -357,7 +358,7 @@ def main():
                     if args.model_type == 'flux':
                         b, c, h, w = noisy_latents.shape
                         
-                        # Prepare mask and masked image latents
+                        # Prepare mask and masked image latents, which are essential for the inpainting task.
                         mask_latents, masked_image_latents = prepare_mask_latents4training(
                             mask=mask_image,
                             masked_image=masked_image,
@@ -370,15 +371,16 @@ def main():
                             vae_scale_factor=8,
                         )
                         
-                        # Concatenate along channel dimension for inpainting
+                        # Concatenate all inpainting-related latents along the channel dimension.
+                        # This creates the 33-channel input that the reconfigured model now expects.
                         inpainting_latents = torch.cat((noisy_latents, masked_image_latents, mask_latents), dim=1)
                         
-                        # Pack the concatenated latents
+                        # Pack the concatenated latents to create the final hidden states for the transformer.
                         c_inpainting = inpainting_latents.shape[1]
                         transformer_hidden_states = pack_latents(inpainting_latents, b, c_inpainting, h, w)
 
                     elif args.model_type == 'qwen':
-                        # NOTE: This is a placeholder for Qwen's data preparation.
+                        # NOTE: This is a placeholder for Qwen's data preparation, mirroring the flux logic.
                         logger.info("Using placeholder data preparation for Qwen model.", main_process_only=True)
                         b, c, h, w = noisy_latents.shape
                         mask_latents, masked_image_latents = prepare_mask_latents4training(
@@ -393,10 +395,8 @@ def main():
                             vae_scale_factor=8,
                         )
                         
-                        # Concatenate along channel dimension for inpainting
                         inpainting_latents = torch.cat((noisy_latents, masked_image_latents, mask_latents), dim=1)
                         
-                        # Pack the concatenated latents
                         c_inpainting = inpainting_latents.shape[1]
                         transformer_hidden_states = pack_latents(inpainting_latents, b, c_inpainting, h, w)
 

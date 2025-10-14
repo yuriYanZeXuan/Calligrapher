@@ -122,6 +122,11 @@ def parse_args():
     else:
         raise ValueError(f"Unknown model_type '{args.model_type}' for utility loading.")
 
+    # Force resolution to 512x512 if it's higher, to save memory.
+    if args.resolution > 512:
+        logger.warning(f"Resolution {args.resolution} is too high. Forcing to 512x512 to save memory.")
+        args.resolution = 512
+
     return args
 
 def main():

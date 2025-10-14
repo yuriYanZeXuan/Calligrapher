@@ -1,18 +1,19 @@
 import os
 
-# API configuration
-API_BASE_URL = "http://35.220.164.252:3888/v1"
-API_KEY = os.environ.get("API_KEY", "your_api_key_here") # It's better to use environment variables
+# --- API Configuration ---
+# Point this to your local server's address
+API_BASE_URL = "http://127.0.0.1:8000/v1" 
+# This can be any string, as the local server doesn't validate it
+API_KEY = "local-api-key" 
 
-# Model configuration
-IMAGE_GEN_MODEL = "doubao-seedream-4-0-250828"
-TEXT_GEN_MODEL = "gpt-4.1"
-
-# Image configuration
+# --- Model Configuration ---
+# This should match the model name expected by your local server
+IMAGE_GEN_MODEL = "qwen-image-edit"
 IMAGE_SIZE = "1024x1024"
 
-# OCR configuration
-OCR_LANGUAGES = ['ch_sim', 'en']
+# --- LLaMA V3 Configuration for Step 2 ---
+# (Keep this as is or update if you have a local LLaMA service)
+LLM_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
 
-# Output directory
-OUTPUT_DIR = "generated_dataset"
+# --- Directory Configuration for the pipeline ---
+OUTPUT_DIR = "sample_dataset"

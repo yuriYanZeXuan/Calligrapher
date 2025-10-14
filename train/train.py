@@ -81,6 +81,9 @@ def parse_args():
     parser.add_argument("--mixed_precision", type=str, default="fp16", choices=["no", "fp16", "bf16"])
     parser.add_argument("--dataloader_num_workers", type=int, default=0)
 
+    # --- Text Encoding ---
+    parser.add_argument("--max_sequence_length", type=int, default=512, help="Maximum sequence length for text prompt.")
+
     # --- Diffusion ---
     parser.add_argument("--weighting_scheme", type=str, default="logit_normal")
 

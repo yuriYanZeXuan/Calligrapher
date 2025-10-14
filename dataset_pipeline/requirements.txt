@@ -1,8 +1,9 @@
 openai
-easyocr
-torch
-torchvision
-Pillow
 requests
+Pillow
+tqdm
 paddleocr
 paddlepaddle
+fastapi
+uvicorn
+python-multipart

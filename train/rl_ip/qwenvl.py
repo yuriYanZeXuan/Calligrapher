@@ -1,52 +1,72 @@
 import torch
+import re
 from PIL import Image
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 from typing import List
+
+def extract_score(output_text: str) -> float:
+    match = re.search(r'<Score>(\d+)</Score>', output_text)
+    if match:
+        # Normalize score to be between 0 and 1
+        return float(match.group(1)) / 5.0
+    return 0.0
 
 class QwenVLScorer:
     def __init__(self, model_path: str, device="cuda"):
         self.device = device
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path, 
             device_map="auto", 
             trust_remote_code=True
         ).eval()
-        print(f"Initialized Qwen-VL-Chat Model from: {model_path}")
+        self.task = '''
+Your role is to evaluate the aesthetic quality score of given images.
+1. Bad: Extremely blurry, underexposed with significant noise, indiscernible
+subjects, and chaotic composition.
+2. Poor: Noticeable blur, poor lighting, washed-out colors, and awkward
+composition with cut-off subjects.
+3. Fair: In focus with adequate lighting, dull colors, decent composition but
+lacks creativity.
+4. Good: Sharp, good exposure, vibrant colors, thoughtful composition with
+a clear focal point.
+5. Excellent: Exceptional clarity, perfect exposure, rich colors, masterful
+composition with emotional impact.
+
+Please first provide a detailed analysis of the evaluation process, including the criteria for judging aesthetic quality, within the <Thought> tag. Then, give a final score from 1 to 5 within the <Score> tag.
+<Thought>
+[Analyze the evaluation process in detail here]
+</Thought>
+<Score>X</Score>
+'''
+        print(f"Initialized Qwen-VL Model from: {model_path}")
 
     def score(self, image_pil: Image.Image, prompt: str) -> float:
         """
-        Calculates a score based on how well the Qwen-VL model's response to the image
-        matches the given prompt. This is a proxy for image-text alignment.
+        Calculates a score based on the aesthetic quality of the image.
+        The prompt is not directly used for scoring but is kept for API consistency.
         """
         
-        # This is a simplified scoring logic. A more sophisticated approach might be needed.
-        # The idea is to ask the model a question about the text in the image and check its response.
-        question = f"What text is written in the image? Answer with only the text content."
-        
-        query = self.tokenizer.from_list_format([
-            {'image': image_pil},
-            {'text': question},
-        ])
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image_pil},
+                    {"type": "text", "text": self.task},
+                ],
+            },
+        ]
+
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=[text], images=[image_pil], return_tensors="pt").to(self.device)
 
         with torch.no_grad():
-            response, _ = self.model.chat(self.tokenizer, query=query, history=None)
+            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+            response_ids = generated_ids[:, inputs['input_ids'].shape[1]:]
+            response = self.processor.batch_decode(response_ids, skip_special_tokens=True)[0].strip()
 
-        # Extract ground truth from the original prompt (e.g., "The text is 'hello'")
-        try:
-            ground_truth_text = prompt.split("'")[1].lower().strip()
-        except IndexError:
-            return 0.0 # Cannot score if the prompt format is wrong
-
-        # Simple similarity score (e.g., Jaccard similarity or simple match)
-        response_text = response.lower().strip()
-        
-        # For simplicity, we check for containment. Better metrics could be used.
-        if ground_truth_text in response_text:
-            return 1.0
-        else:
-            # You could use fuzzy string matching here for a more nuanced score.
-            return 0.0
+        score = extract_score(response)
+        return score
 
 if __name__ == '__main__':
     # This example is difficult to run standalone due to model dependencies

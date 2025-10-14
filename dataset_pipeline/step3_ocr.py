@@ -16,7 +16,8 @@ def get_paddle_reader():
             paddle_lang = 'ch' if 'ch_sim' in config.OCR_LANGUAGES else 'en'
             _paddle_reader = PaddleOCR(
                 use_angle_cls=True, # Use default settings which are generally robust
-                lang=paddle_lang
+                lang=paddle_lang,
+                use_doc_orientation_classify=False, # Explicitly disable this
             )
             print("PaddleOCR reader initialized successfully.")
         except Exception as e:

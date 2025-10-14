@@ -355,7 +355,6 @@ def main():
                     
                     # --- MODEL-SPECIFIC LOGIC ---
                     if args.model_type == 'flux':
-                        # pack_latents function expects specific dimensions
                         b, c, h, w = noisy_latents.shape
                         
                         # Prepare mask and masked image latents
@@ -371,16 +370,12 @@ def main():
                             vae_scale_factor=2 ** len(vae.config.block_out_channels),
                         )
                         
-                        # Pack the latents
-                        packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w)
-                        packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+                        # Concatenate along channel dimension for inpainting
+                        inpainting_latents = torch.cat((noisy_latents, masked_image_latents, mask_latents), dim=1)
                         
-                        # Reshape mask to be compatible for concatenation
-                        mask_latents = mask_latents.reshape(b, -1, 1)
-
-                        transformer_hidden_states = torch.cat(
-                            (packed_noisy_latents, packed_masked_image_latents, mask_latents), dim=-1
-                        )
+                        # Pack the concatenated latents
+                        c_inpainting = inpainting_latents.shape[1]
+                        transformer_hidden_states = pack_latents(inpainting_latents, b, c_inpainting, h, w)
 
                     elif args.model_type == 'qwen':
                         # NOTE: This is a placeholder for Qwen's data preparation.
@@ -398,14 +393,12 @@ def main():
                             vae_scale_factor=2 ** len(vae.config.block_out_channels),
                         )
                         
-                        packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w)
-                        packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+                        # Concatenate along channel dimension for inpainting
+                        inpainting_latents = torch.cat((noisy_latents, masked_image_latents, mask_latents), dim=1)
                         
-                        mask_latents = mask_latents.reshape(b, -1, 1)
-
-                        transformer_hidden_states = torch.cat(
-                            (packed_noisy_latents, packed_masked_image_latents, mask_latents), dim=-1
-                        )
+                        # Pack the concatenated latents
+                        c_inpainting = inpainting_latents.shape[1]
+                        transformer_hidden_states = pack_latents(inpainting_latents, b, c_inpainting, h, w)
 
 
                     # Get image embeddings

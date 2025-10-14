@@ -1,14 +1,15 @@
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
-from grpo_utils import sde_step_with_logprob
+from .grpo_utils import sde_step_with_logprob
+from diffusers import FlowMatchEulerDiscreteScheduler
 
 class PolicyWrapper(nn.Module):
     """
     A wrapper for transformer models to make them act as a stochastic policy
     for reinforcement learning. It calculates the log_prob of a transition.
     """
-    def __init__(self, transformer, scheduler, model_type='flux'):
+    def __init__(self, transformer, scheduler: FlowMatchEulerDiscreteScheduler, model_type: str = "flux"):
         super().__init__()
         self.transformer = transformer
         self.scheduler = scheduler

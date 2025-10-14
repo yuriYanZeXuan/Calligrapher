@@ -367,7 +367,7 @@ def main():
                             dtype=prompt_embeds.dtype,
                             device=accelerator.device,
                             vae=vae,
-                            vae_scale_factor=2 ** len(vae.config.block_out_channels),
+                            vae_scale_factor=8,
                         )
                         
                         # Concatenate along channel dimension for inpainting
@@ -390,7 +390,7 @@ def main():
                             dtype=prompt_embeds.dtype,
                             device=accelerator.device,
                             vae=vae,
-                            vae_scale_factor=2 ** len(vae.config.block_out_channels),
+                            vae_scale_factor=8,
                         )
                         
                         # Concatenate along channel dimension for inpainting

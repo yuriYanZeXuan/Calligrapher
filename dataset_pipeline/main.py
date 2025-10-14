@@ -5,7 +5,7 @@ import argparse
 import config
 from step1_generate_image import generate_image
 from step2_simplify_prompt import simplify_prompt
-from step3_ocr import ocr_image,ocr_image_paddle
+from step3_ocr import ocr_image_paddle
 
 def create_dataset_entry(human_written_instruction: str, service: str):
     """

@@ -30,6 +30,14 @@ def generate_image(prompt: str, output_path: str, service: str = "remote") -> bo
             base_url=base_url,
             api_key=service_config["api_key"]
         )
+        # HACK: The openai library might incorrectly use "/generations" plural.
+        # We manually patch the resource path to ensure it's correct.
+        client.images.with_raw_response.generate = client.images.with_raw_response.generate.__class__(
+            client.images.with_raw_response.generate,
+            resource_cls=client.images.with_raw_response.generate.resource_cls,
+            client=client.images.with_raw_response.generate.client,
+            options={'path': '/images/generate'},
+        )
 
         print(f"Generating image with prompt: '{prompt}' using '{service}' service at {base_url}.")
         response = client.images.generate(

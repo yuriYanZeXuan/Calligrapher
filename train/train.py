@@ -371,13 +371,19 @@ def main():
                             vae_scale_factor=8,
                         )
                         
-                        # Concatenate all inpainting-related latents along the channel dimension.
-                        # This creates the 33-channel input that the reconfigured model now expects.
-                        inpainting_latents = torch.cat((noisy_latents, masked_image_latents, mask_latents), dim=1)
+                        # 1. Pack noisy_latents, masked_image_latents, and mask separately, mimicking the official flux-fill pipeline.
+                        packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w) # (B, L, 64)
                         
-                        # Pack the concatenated latents to create the final hidden states for the transformer.
-                        c_inpainting = inpainting_latents.shape[1]
-                        transformer_hidden_states = pack_latents(inpainting_latents, b, c_inpainting, h, w)
+                        packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w) # (B, L, 64)
+                        
+                        # The mask is 1 channel, but needs to be packed. The official pipeline expands it to vae_scale_factor^2 channels.
+                        mask_c = vae.config.scaling_factor ** 2 # Should be 8*8 = 64
+                        packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w) # (B, L, 256)
+
+                        # 2. Concatenate the packed latents along the feature dimension to create the final 384-dim input.
+                        transformer_hidden_states = torch.cat(
+                            [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
+                        )
 
                     elif args.model_type == 'qwen':
                         # NOTE: This is a placeholder for Qwen's data preparation, mirroring the flux logic.
@@ -395,10 +401,14 @@ def main():
                             vae_scale_factor=8,
                         )
                         
-                        inpainting_latents = torch.cat((noisy_latents, masked_image_latents, mask_latents), dim=1)
-                        
-                        c_inpainting = inpainting_latents.shape[1]
-                        transformer_hidden_states = pack_latents(inpainting_latents, b, c_inpainting, h, w)
+                        packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w)
+                        packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+                        mask_c = vae.config.scaling_factor ** 2
+                        packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
+
+                        transformer_hidden_states = torch.cat(
+                            [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
+                        )
 
 
                     # Get image embeddings

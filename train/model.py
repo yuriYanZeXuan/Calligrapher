@@ -60,17 +60,16 @@ def load_vae_and_transformer(args):
     )
     
     if args.model_type == 'flux':
-        from flux_ip.transformer_flux_inpainting import FluxTransformer2DModel as TransformerModel
+        # Ensure we are using the official, standard transformer model from diffusers
+        # This model correctly expects packed latents.
+        from diffusers.models import FluxTransformer2DModel as TransformerModel
     elif args.model_type == 'qwen':
         from qwen_ip.transformer import QwenTransformer2DModel as TransformerModel
     else:
         raise ValueError(f"Unknown model_type: {args.model_type}")
 
     transformer = TransformerModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant,
-        in_channels=33,
-        low_cpu_mem_usage=False,
-        ignore_mismatched_sizes=True,
+        args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant
     )
     return vae, transformer
 

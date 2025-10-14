@@ -48,19 +48,21 @@ def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:
 
     try:
         print(f"Performing OCR with PaddleOCR on {image_path}")
-        # Use paddle_reader.ocr instead of predict for a simpler API
-        result = paddle_reader.ocr(image_path, cls=True)
+        # Use the predict method as requested
+        result = paddle_reader.predict(input=image_path)
         
         ocr_results = []
-        # The result of ocr is a list of lines, where each line is [bbox, (text, confidence)]
+        # The result of predict is a list containing one structured result object/dict for the image
         if not result or not result[0]:
             print("PaddleOCR found 0 text block(s).")
             return ocr_results
 
-        for line in result[0]:
-            box = line[0]
-            text = line[1][0]
-            
+        # Extract data from the structured result
+        ocr_data = result[0]
+        boxes = [item['dt_polys'] for item in ocr_data]
+        texts = [item['rec_texts'] for item in ocr_data]
+
+        for box, text in zip(boxes, texts):
             # box is a list of 4 points [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
             xs = [p[0] for p in box]
             ys = [p[1] for p in box]

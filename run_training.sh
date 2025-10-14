@@ -61,7 +61,7 @@ VLM_REWARD_WEIGHT=0.3
 # This command uses `accelerate` to launch the training script.
 # Make sure you have configured accelerate beforehand with `accelerate config`.
 
-accelerate launch Calligrapher/train/train.py \
+accelerate launch -m Calligrapher.train.train \
   --pretrained_model_name_or_path=$PRETRAINED_MODEL_PATH \
   --siglip_path=$SIGLIP_MODEL_PATH \
   --train_data_json=$TRAIN_DATA_DIR \

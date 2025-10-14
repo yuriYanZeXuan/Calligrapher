@@ -3,9 +3,9 @@ import torch.nn as nn
 from typing import Dict
 from tqdm import tqdm
 
-from .policy import PolicyWrapper
-from .reward import RewardCalculator
-from ..utils import unpack_latents # Assuming utils are in parent dir
+from Calligrapher.train.rl_ip.policy import PolicyWrapper
+from Calligrapher.train.rl_ip.reward import RewardCalculator
+from Calligrapher.flux_ip.utils import unpack_latents
 
 class GRPOTrainer:
     def __init__(

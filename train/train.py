@@ -48,6 +48,49 @@ from train.rl_ip.grpo_trainer import GRPOTrainer
 
 logger = get_logger(__name__)
 
+def log_memory_breakdown(accelerator, title, models_dict, params_to_optimize=None):
+    if not accelerator.is_main_process:
+        return
+
+    torch.cuda.synchronize()
+    
+    total_allocated_gb = torch.cuda.memory_allocated() / (1024 ** 3)
+    total_reserved_gb = torch.cuda.memory_reserved() / (1024 ** 3)
+
+    print(f"\n--- Memory Breakdown: {title} ---")
+    print(f"Total GPU Memory Allocated: {total_allocated_gb:.2f} GB | Reserved: {total_reserved_gb:.2f} GB")
+
+    def get_model_size_gb(model):
+        return sum(p.numel() * p.element_size() for p in model.parameters() if p.device.type == 'cuda') / (1024 ** 3)
+
+    # --- 1. Model Weights ---
+    print(f"\n[1. Model Weights]")
+    total_model_size = 0
+    for name, model in models_dict.items():
+        size = get_model_size_gb(model)
+        print(f"  - {name}: {size:.3f} GB")
+        total_model_size += size
+    print(f"  ---------------------------------")
+    print(f"  Total Model Weights: {total_model_size:.3f} GB")
+
+    # --- 2. Gradients ---
+    gradient_size = 0
+    if params_to_optimize:
+        gradient_size = sum(p.grad.numel() * p.grad.element_size() for p in params_to_optimize if p.grad is not None and p.grad.device.type == 'cuda') / (1024 ** 3)
+    
+    if gradient_size > 0:
+        print(f"\n[2. Gradients (for trainable params)]")
+        print(f"  - Gradient Size: {gradient_size:.3f} GB")
+
+    # --- 3. Optimizer States, Activations & Other ---
+    accounted_for = total_model_size + gradient_size
+    other_mem = total_allocated_gb - accounted_for
+    
+    print(f"\n[3. Other (Optimizer States, Activations, Buffers)]")
+    print(f"  - Estimated Size: {max(0, other_mem):.3f} GB")
+    print("--------------------------------------------------\n")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple training script for FLUX IP-Adapter.")
     # --- Model and Paths ---
@@ -99,6 +142,7 @@ def parse_args():
     parser.add_argument("--gradient_checkpointing", action="store_true", help="Enable gradient checkpointing.")
     parser.add_argument("--no_rl_reward_model", action="store_true", help="Disable loading the VLM reward model and use random rewards for testing.")
     parser.add_argument("--use_8bit_adam", action="store_true", help="Use 8-bit AdamW optimizer.")
+    parser.add_argument("--enable_memory_profiler", action="store_true", help="Enable detailed memory usage logging.")
 
     # --- Logging ---
     parser.add_argument("--report_to", type=str, default="tensorboard")
@@ -181,6 +225,17 @@ def main():
         transformer.gradient_checkpointing_enable()
 
     image_proj_model = setup_ip_adapter(transformer, accelerator, weight_dtype, args)
+
+    if args.enable_memory_profiler:
+        models_dict = {
+            "VAE": vae,
+            "Text Encoder 1": text_encoder_one,
+            "Text Encoder 2": text_encoder_two,
+            "Image Encoder": image_encoder,
+            "Transformer": accelerator.unwrap_model(transformer),
+            "IP Proj Model": image_proj_model,
+        }
+        log_memory_breakdown(accelerator, "After Model Loading", models_dict)
 
     # --- RL Setup ---
     if args.use_rl:
@@ -343,6 +398,9 @@ def main():
                     if accelerator.sync_gradients:
                         accelerator.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
                     
+                    if args.enable_memory_profiler and accelerator.sync_gradients:
+                        log_memory_breakdown(accelerator, f"Step {global_step} - Before RL Optimizer", models_dict, params_to_optimize)
+
                     optimizer.step() # Assuming the PPO optimizer handles the policy params
                     lr_scheduler.step()
                     optimizer.zero_grad()
@@ -501,6 +559,9 @@ def main():
                         )
                         accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                     
+                    if args.enable_memory_profiler and accelerator.sync_gradients:
+                        log_memory_breakdown(accelerator, f"Step {global_step} - Before Optimizer", models_dict, params_to_optimize)
+
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()

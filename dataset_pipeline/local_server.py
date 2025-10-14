@@ -25,7 +25,7 @@ app.mount(f"/{STATIC_DIR}", StaticFiles(directory=STATIC_DIR), name="static")
 # --- OpenAI Compatible Pydantic Models ---
 class ImageGenerationRequest(BaseModel):
     prompt: str
-    model: Optional[str] = "qwen-image-edit"
+    model: Optional[str] = "qwen-image"
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "url"
     extra_body: Optional[Dict[str, Any]] = None
@@ -75,9 +75,10 @@ async def load_image_model():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model_path = config.SERVICES["local"]["image_model_path"]
     
+    # Use bfloat16 for better stability on modern GPUs like H800
     ModelHolder.image_pipeline = QwenImagePipeline.from_pretrained(
         model_path, 
-        torch_dtype=torch.float16
+        torch_dtype=torch.bfloat16
     ).to(device)
     print(f"Image Model loaded from {model_path}.")
 
@@ -115,6 +116,7 @@ def image_generator(prompt: str, size: tuple[int, int], save_path: str):
             height=size[1],
             width=size[0],
             num_inference_steps=50,
+            true_cfg_scale=4.0, # Explicitly set guidance scale
         ).images[0]
         
         image.save(save_path)

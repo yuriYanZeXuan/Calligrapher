@@ -12,7 +12,7 @@ SERVICES = {
         "api_key": "local-key", # Not used by local server, but required for client
         
         # --- API model names (should match what the local server expects) ---
-        "image_gen_model": "qwen-image-edit",
+        "image_gen_model": "qwen-image",
         "llm_model": "qwen2.5llm",
         
         # --- Local model paths (used by local_server.py on startup) ---

@@ -9,7 +9,8 @@
 
 # -- Paths --
 # Path to the base pretrained model (e.g., a FLUX or Qwen-Edit model from Hugging Face)
-PRETRAINED_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/QwenEdit" 
+# PRETRAINED_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/QwenEdit" 
+PRETRAINED_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill" 
 
 # Path to the SigLIP vision model (used by the IP-Adapter)
 SIGLIP_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip" 
@@ -27,7 +28,7 @@ OUTPUT_DIR="./output_qwen"
 # -- Model Selection --
 # Choose the model architecture you are training.
 # Options: "flux" or "qwen"
-MODEL_TYPE="qwen"
+MODEL_TYPE="flux"
 
 # -- Training Mode --
 # Set to "true" to enable GRPO-RL training after warmup steps.

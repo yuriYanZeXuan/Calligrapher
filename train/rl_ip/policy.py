@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
-from .grpo_utils import sde_step_with_logprob
+from grpo_utils import sde_step_with_logprob
 
 class PolicyWrapper(nn.Module):
     """

@@ -1,7 +1,7 @@
 import torch
 from torchvision.transforms.functional import to_pil_image
-from .ocr import OCRScorer
-from .qwenvl import QwenVLScorer
+from ocr import OCRScorer
+from qwenvl import QwenVLScorer
 
 class RewardCalculator:
     def __init__(self, device, ocr_weight=0.6, vlm_weight=0.4, vlm_model_path: str = "Qwen/Qwen2.5-VL"):

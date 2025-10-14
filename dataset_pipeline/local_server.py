@@ -162,12 +162,9 @@ def llm_generator(messages: List[Dict]) -> str:
         print(f"Error in llm_generator: {e}")
         return "error_in_llm"
 
-# --- API Endpoints ---
-@app.post("/v1/images/generate", response_model=ImageGenerationResponse)
+# Define endpoint functions without decorators
 async def generate_image_endpoint(request: ImageGenerationRequest, http_request: Request):
-    """
-    OpenAI-compatible endpoint for image generation.
-    """
+    """OpenAI-compatible endpoint for image generation."""
     print(f"Received image generation request with prompt: '{request.prompt}'")
     
     # --- Model Inference (Placeholder) ---
@@ -197,11 +194,8 @@ async def generate_image_endpoint(request: ImageGenerationRequest, http_request:
     
     return JSONResponse(content=response_data.dict())
 
-@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def create_chat_completion(request: ChatCompletionRequest):
-    """
-    OpenAI-compatible endpoint for chat completions.
-    """
+    """OpenAI-compatible endpoint for chat completions."""
     print(f"Received chat completion request for model: '{request.model}'")
     
     # ====================================================================
@@ -251,9 +245,11 @@ if __name__ == "__main__":
     # Register startup event and endpoints based on service type
     if args.service == "image":
         app.add_event_handler("startup", load_image_model)
+        app.add_api_route("/v1/images/generate", generate_image_endpoint, methods=["POST"])
         print("Starting local IMAGE generation server...")
     elif args.service == "llm":
         app.add_event_handler("startup", load_llm_model)
+        app.add_api_route("/v1/chat/completions", create_chat_completion, methods=["POST"])
         print("Starting local LLM server...")
 
     device_info = f"on GPU(s): {os.environ.get('CUDA_VISIBLE_DEVICES', 'all')}" if torch.cuda.is_available() else "on CPU"

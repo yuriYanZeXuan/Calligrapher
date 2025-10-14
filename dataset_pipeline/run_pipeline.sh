@@ -12,6 +12,7 @@ IMAGE_SERVER_GPUS="0,1,2,3"
 
 LLM_SERVER_PORT=8001
 LLM_SERVER_GPUS="4,5,6,7"
+LOG_FILE="server.log"
 
 # --- Cleanup Function ---
 # This function is called when the script exits to ensure background services are stopped.
@@ -29,15 +30,18 @@ trap cleanup EXIT SIGINT SIGTERM
 # --- Main Execution ---
 
 echo "Starting local model services in the background..."
+# Clear the log file for a fresh run
+> $LOG_FILE
 
-# Start Image Service, redirecting its output to /dev/null to keep the console clean
+# Start Image Service, redirecting its output to the log file
 echo "-> Launching Image Service on port $IMAGE_SERVER_PORT (GPUs: $IMAGE_SERVER_GPUS)..."
-python local_server.py --service image --port $IMAGE_SERVER_PORT --device_ids $IMAGE_SERVER_GPUS > /dev/null 2>&1 &
+python local_server.py --service image --port $IMAGE_SERVER_PORT --device_ids $IMAGE_SERVER_GPUS >> $LOG_FILE 2>&1 &
 
-# Start LLM Service, redirecting its output to /dev/null
+# Start LLM Service, redirecting its output to the log file
 echo "-> Launching LLM Service on port $LLM_SERVER_PORT (GPUs: $LLM_SERVER_GPUS)..."
-python local_server.py --service llm --port $LLM_SERVER_PORT --device_ids $LLM_SERVER_GPUS > /dev/null 2>&1 &
+python local_server.py --service llm --port $LLM_SERVER_PORT --device_ids $LLM_SERVER_GPUS >> $LOG_FILE 2>&1 &
 
+echo "Service logs are being written to '$LOG_FILE'. You can tail it in another terminal."
 echo -e "\nWaiting for models to load. This can take several minutes..."
 # We use a simple sleep timer. If your models load faster or slower, you can
 # adjust this value (in seconds).

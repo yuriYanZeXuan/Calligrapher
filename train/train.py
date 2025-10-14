@@ -377,7 +377,8 @@ def main():
                         packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w) # (B, L, 64)
                         
                         # The mask is 1 channel, but needs to be packed. The official pipeline expands it to vae_scale_factor^2 channels.
-                        mask_c = vae.config.scaling_factor ** 2 # Should be 8*8 = 64
+                        vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+                        mask_c = vae_scale_factor ** 2 # Should be 8*8 = 64
                         packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w) # (B, L, 256)
 
                         # 2. Concatenate the packed latents along the feature dimension to create the final 384-dim input.
@@ -403,7 +404,8 @@ def main():
                         
                         packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w)
                         packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
-                        mask_c = vae.config.scaling_factor ** 2
+                        vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+                        mask_c = vae_scale_factor ** 2
                         packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
 
                         transformer_hidden_states = torch.cat(

@@ -17,8 +17,8 @@ SERVICES = {
         
         # --- Local model paths (used by local_server.py on startup) ---
         # Replace these with the actual paths to your downloaded model weights
-        "image_model_path": "Qwen/Qwen-Image", 
-        "llm_model_path": "Qwen/Qwen2.5-7B-Instruct"
+        "image_model_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen_image", 
+        "llm_model_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen2_5Instruct"
     },
     "remote": {
         # --- Single endpoint for remote API ---
@@ -33,7 +33,7 @@ SERVICES = {
 
 # --- Shared Configuration ---
 IMAGE_SIZE = "1024x1024"
-OUTPUT_DIR = "generated_dataset"
+OUTPUT_DIR = "generated_dataset_local"
 
 # --- Other Steps Configuration ---
 OCR_LANGUAGES = ['ch_sim', 'en'] # For step 3

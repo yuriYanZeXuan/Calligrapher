@@ -345,7 +345,7 @@ def main():
                     timesteps = noise_scheduler_copy.timesteps[indices].to(device=latents.device)
 
                     # Add noise
-                    sigmas = get_sigmas(timesteps, noise_scheduler_copy, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
+                    sigmas = get_sigmas(noise_scheduler_copy, timesteps, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
                     noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
                     
                     # Prepare mask and masked image latents

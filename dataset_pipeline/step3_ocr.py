@@ -10,29 +10,15 @@ def get_paddle_reader():
     """Initializes and returns the PaddleOCR reader (singleton)."""
     global _paddle_reader
     if _paddle_reader is None:
-        try:
-            print("Initializing PaddleOCR reader for the first time...")
-            # Map languages for PaddleOCR. 'ch' model supports both Chinese and English.
-            paddle_lang = 'ch' if 'ch_sim' in config.OCR_LANGUAGES else 'en'
-            _paddle_reader = PaddleOCR(
-                # Replace deprecated param with the new one
-                use_textline_orientation=True,
-                lang=paddle_lang,
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False # Explicitly disable this
-            )
-            print("PaddleOCR reader initialized successfully.")
-        except Exception as e:
-            # Print a more detailed error message to help diagnose the issue
-            print("="*50)
-            print("!!! CRITICAL ERROR: Failed to initialize PaddleOCR reader. !!!")
-            print(f"Error details: {e}")
-            print("This is likely due to a network issue (model download failed) or a dependency problem.")
-            print("Please check your network connection and ensure 'paddlepaddle' is installed correctly.")
-            print("="*50)
-            # We don't set it to None, so it will retry on the next call if it was a transient error.
-            # But we will raise the exception to stop the pipeline.
-            raise e
+        print("Initializing PaddleOCR reader for the first time...")
+        # Map languages for PaddleOCR. 'ch' model supports both Chinese and English.
+        # paddle_lang = 'ch' if 'ch_sim' in config.OCR_LANGUAGES else 'en'
+        _paddle_reader = PaddleOCR(
+            use_doc_orientation_classify=False, # 通过 use_doc_orientation_classify 参数指定不使用文档方向分类模型
+            use_doc_unwarping=False, # 通过 use_doc_unwarping 参数指定不使用文本图像矫正模型
+            use_textline_orientation=False, # 通过 use_textline_orientation 参数指定不使用文本行方向分类模型
+        )
+        print("PaddleOCR reader initialized successfully.")
     return _paddle_reader
 
 def ocr_image_paddle(image_path: str) -> List[Tuple[List[int], str]]:

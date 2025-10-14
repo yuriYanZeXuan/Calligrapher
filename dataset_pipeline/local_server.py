@@ -245,7 +245,8 @@ if __name__ == "__main__":
     # Register startup event and endpoints based on service type
     if args.service == "image":
         app.add_event_handler("startup", load_image_model)
-        app.add_api_route("/v1/images/generate", generate_image_endpoint, methods=["POST"])
+        # Match the endpoint that the OpenAI client library seems to be incorrectly calling
+        app.add_api_route("/v1/images/generations", generate_image_endpoint, methods=["POST"])
         print("Starting local IMAGE generation server...")
     elif args.service == "llm":
         app.add_event_handler("startup", load_llm_model)

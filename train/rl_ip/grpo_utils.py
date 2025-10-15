@@ -8,26 +8,39 @@ def sde_step_with_logprob(scheduler, model_output, timestep, sample, prev_sample
     This version is adapted for ODE-based schedulers like FlowMatchEulerDiscreteScheduler.
     """
     
-    # For ODE schedulers, sigmas are pre-computed. We find the sigma for the current and next timestep.
-    # The timestep is a tensor, so we need to use it to index the sigmas tensor.
-    # First, find the unique timesteps and their indices
-    unique_timesteps, indices = torch.unique(timestep, return_inverse=True)
+    # Get the device from the input tensor for the final output
+    device = sample.device
+
+    # Indexing tensors must be on the CPU since scheduler.sigmas and scheduler.timesteps are on the CPU.
+    timestep_cpu = timestep.to('cpu')
+    unique_timesteps_cpu, indices_cpu = torch.unique(timestep_cpu, return_inverse=True)
     
     # Map scheduler timesteps to indices
-    timestep_indices = {t.item(): i for i, t in enumerate(scheduler.timesteps)}
+    timestep_indices_map = {t.item(): i for i, t in enumerate(scheduler.timesteps)}
     
-    # Get the indices in the sigmas tensor for the current timesteps
-    sigma_indices = torch.tensor([timestep_indices[t.item()] for t in unique_timesteps], device=timestep.device)
+    # Get the indices in the sigmas tensor for the current timesteps (on CPU)
+    sigma_indices_cpu = torch.tensor([timestep_indices_map[t.item()] for t in unique_timesteps_cpu])
     
-    # Get sigma_t and sigma_t_next using the indices
-    sigma_t = scheduler.sigmas[sigma_indices][indices]
-    sigma_t_next = scheduler.sigmas[sigma_indices + 1][indices]
+    # Get sigma_t and sigma_t_next using the CPU indices
+    sigma_t = scheduler.sigmas[sigma_indices_cpu][indices_cpu]
+    
+    # Clamp the next indices to avoid out-of-bounds error
+    sigma_indices_next_cpu = (sigma_indices_cpu + 1).clamp(max=len(scheduler.sigmas) - 1)
+    sigma_t_next = scheduler.sigmas[sigma_indices_next_cpu][indices_cpu]
+    
+    # Handle the boundary case for the very last timestep, where the next sigma should be 0.
+    is_last_step = (sigma_indices_cpu[indices_cpu] == len(scheduler.timesteps) - 1)
+    sigma_t_next[is_last_step] = 0.0
+
+    # Move sigmas to the correct device for calculations
+    sigma_t = sigma_t.to(device)
+    sigma_t_next = sigma_t_next.to(device)
     
     # For ODE schedulers, gamma is typically 0 (no stochastic component)
     gamma_t = torch.zeros_like(sigma_t)
     
-    derivative = (sample - model_output) / sigma_t[:, None, None, None]
-    dt = (sigma_t_next - sigma_t)[:, None, None, None]
+    derivative = (sample - model_output) / sigma_t.view(-1, 1, 1, 1)
+    dt = (sigma_t_next - sigma_t).view(-1, 1, 1, 1)
 
     prev_sample_mean = sample + derivative * dt
 
@@ -44,16 +57,7 @@ def sde_step_with_logprob(scheduler, model_output, timestep, sample, prev_sample
     
     # if prev_sample is not provided, sample it from the distribution
     if prev_sample is None:
-        noise = randn_tensor(
-            sample.shape,
-            generator=generator,
-            device=sample.device,
-            dtype=sample.dtype,
-        )
         # In an ODE step, the next sample is deterministic.
-        # prev_sample = prev_sample_mean
-        # However, to keep the GRPO structure, we might add a tiny bit of noise.
-        # Let's stick to the deterministic path for correctness.
         prev_sample = prev_sample_mean
     
     # compute the log prob of prev_sample given the distribution N(prev_sample_mean, std_dev_t^2 * I)
@@ -61,7 +65,7 @@ def sde_step_with_logprob(scheduler, model_output, timestep, sample, prev_sample
     log_prob = (
         -0.5
         * torch.sum(
-            ((prev_sample.float() - prev_sample_mean.float()) / (std_dev_t[:, None, None, None] + epsilon)) ** 2,
+            ((prev_sample.float() - prev_sample_mean.float()) / (std_dev_t.view(-1, 1, 1, 1) + epsilon)) ** 2,
             dim=[1, 2, 3],
         )
     )

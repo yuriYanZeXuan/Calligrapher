@@ -113,8 +113,8 @@ def perform_rollout(
     
     for i, t in tqdm(enumerate(scheduler_timesteps), total=len(scheduler_timesteps), desc="Rollout step", leave=False):
         
-        # Prepare for model input
-        t_batch = t.to(device=device, dtype=torch.long).repeat(latents.shape[0])
+        # Prepare for model input. Keep t_batch as float.
+        t_batch = t.repeat(latents.shape[0]).to(device)
         
         # --- RL Inpainting Adaptation ---
         # Create the packed hidden states required by the inpainting transformer
@@ -225,7 +225,8 @@ def compute_log_prob(
     latents = sample["latents"][:, timestep_idx]
     next_latents = sample["next_latents"][:, timestep_idx]
     t = noise_scheduler.timesteps[timestep_idx]
-    t_batch = t.to(device=device, dtype=torch.long).repeat(latents.shape[0])
+    # Keep t_batch as float.
+    t_batch = t.repeat(latents.shape[0]).to(device)
 
     # 3. Model Prediction (similar to rollout but with gradients)
     guidance = torch.tensor([args.rl_guidance_scale], device=device).expand(latents.shape[0])

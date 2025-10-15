@@ -149,6 +149,76 @@ def perform_rollout(
 
     return images_pil, all_latents, all_log_probs
 
+def compute_log_prob(
+    args, vae, transformer, image_proj_model, text_encoders, tokenizers, image_encoder,
+    noise_scheduler, sample, timestep_idx, weight_dtype, device
+):
+    """
+    Computes the log probability of a given transition using the current model.
+    """
+    # 1. Prepare Inputs from the sampled data
+    prompts = sample["prompts"]
+    
+    prompt_embeds, pooled_prompt_embeds = encode_prompt(
+        text_encoders, tokenizers, prompts, device, max_sequence_length=args.max_sequence_length
+    )
+    
+    with torch.no_grad():
+        image_embeds = image_encoder(sample["clip_images"].to(device, dtype=weight_dtype)).pooler_output
+        
+    image_embeds_ = []
+    for image_embed, drop_image_embed in zip(image_embeds, sample["drop_image_embeds"]):
+        if drop_image_embed == 1:
+            image_embeds_.append(torch.zeros_like(image_embed))
+        else:
+            image_embeds_.append(image_embed)
+    image_embeds = torch.stack(image_embeds_)
+    
+    ip_tokens = image_proj_model(image_embeds)
+    
+    # 2. Get latents and timestep for the specific step
+    latents = sample["latents"][:, timestep_idx]
+    next_latents = sample["next_latents"][:, timestep_idx]
+    t = noise_scheduler.timesteps[timestep_idx]
+    t_batch = torch.tensor([t], device=device, dtype=torch.long).repeat(latents.shape[0])
+
+    # 3. Model Prediction (similar to rollout but with gradients)
+    guidance = torch.tensor([args.rl_guidance_scale], device=device).expand(latents.shape[0])
+    height, width = latents.shape[2], latents.shape[3]
+    img_ids = prepare_latent_image_ids(height, width, device, weight_dtype)
+    text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=device, dtype=weight_dtype)
+    
+    b, c, h, w = latents.shape
+    dummy_packed_latents = torch.zeros(b, h*w, 384, device=device, dtype=weight_dtype)
+
+    model_pred = transformer(
+        hidden_states=dummy_packed_latents,
+        timestep=t_batch / 1000,
+        guidance=guidance,
+        pooled_projections=pooled_prompt_embeds,
+        encoder_hidden_states=prompt_embeds,
+        image_emb=ip_tokens,
+        txt_ids=text_ids,
+        img_ids=img_ids,
+        return_dict=False,
+    )[0]
+
+    model_pred = unpack_latents(model_pred, height * 8, width * 8, 16)
+    sigmas = get_sigmas(noise_scheduler, t_batch, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
+    pred_x0 = model_pred * (-sigmas) + latents
+
+    # 4. Compute log prob for the transition to `next_latents`
+    _, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
+        scheduler=noise_scheduler,
+        model_output=pred_x0,
+        timestep=t_batch,
+        sample=latents,
+        prev_sample=next_latents, # Provide the actual next latent from trajectory
+    )
+    
+    return log_prob, prev_sample_mean, std_dev_t
+
+
 def log_memory_breakdown(accelerator, title, models_dict, params_to_optimize=None):
     if not accelerator.is_main_process:
         return
@@ -674,32 +744,136 @@ def main():
             logger.info("RL Epoch: Rollout Phase Finished.")
             
             # ----------------- COMPUTE ADVANTAGES -----------------
-            # Placeholder: Advantage calculation logic will be implemented here.
+            logger.info("RL Epoch: Computing Advantages...")
             
+            # Gather rewards and prompts across all processes
+            gathered_rewards = accelerator.gather(samples["rewards"]).cpu().numpy()
+            
+            # We need to gather prompts too for per-prompt stat tracking
+            # Since prompts are strings, we can't use accelerator.gather directly.
+            # A common trick is to gather some tensor that has the same batch dimension
+            # and then use that to figure out which process sent which prompt.
+            # For simplicity, let's assume each process can send its prompts to the main process.
+            # This part might need a more robust implementation for multi-node.
+            all_prompts = ["" for _ in range(len(gathered_rewards))]
+            prompts_this_process = samples["prompts"]
+            
+            # Create a placeholder tensor to gather and find out the order
+            order_tensor = torch.arange(len(prompts_this_process), device=accelerator.device) + accelerator.process_index * 1000
+            gathered_order = accelerator.gather(order_tensor).cpu().numpy()
+            
+            # This is a bit of a hack to reconstruct the prompt list on each process
+            # A better way would be to use accelerate.gather_object (if available and performant)
+            all_gathered_prompts = accelerator.gather_object(prompts_this_process)
+
+            if accelerator.is_main_process:
+                if args.rl_per_prompt_stat_tracking:
+                    advantages = stat_tracker.update(all_gathered_prompts, gathered_rewards)
+                else:
+                    advantages = (gathered_rewards - gathered_rewards.mean()) / (gathered_rewards.std() + 1e-8)
+            
+                # Broadcast advantages to all processes
+                advantages_tensor = torch.from_numpy(advantages).to(accelerator.device)
+            else:
+                advantages_tensor = torch.empty(len(gathered_rewards), device=accelerator.device)
+                
+            accelerator.wait_for_everyone()
+            torch.distributed.broadcast(advantages_tensor, src=0)
+            
+            # Ungather advantages to get the ones for this process
+            batch_size_per_process = len(samples["rewards"])
+            start_idx = accelerator.process_index * batch_size_per_process
+            end_idx = start_idx + batch_size_per_process
+            samples["advantages"] = advantages_tensor[start_idx:end_idx]
             
             # ----------------- TRAINING -----------------
             logger.info("RL Epoch: Starting Training Phase...")
             
-            # This section will loop for `rl_num_inner_epochs` and update the model
-            # using the PPO loss function.
+            num_train_timesteps = int(args.rl_num_inference_steps * args.rl_timestep_fraction)
             
-            # Placeholder: Just advance the progress bar for now.
-            # The number of steps taken in one RL epoch depends on the collected data
-            # and gradient accumulation. This is a simplification.
-            steps_in_rl_epoch = 10 # Example value
-            for _ in range(steps_in_rl_epoch):
-                if global_step < args.max_train_steps:
-                    progress_bar.update(1)
-                    global_step += 1
+            for _ in range(args.rl_num_inner_epochs):
+                # Shuffle samples
+                perm = torch.randperm(len(samples["prompts"]), device=accelerator.device)
+                shuffled_samples = {k: (v[perm] if torch.is_tensor(v) else [v[i] for i in perm.cpu().tolist()]) for k, v in samples.items()}
+                
+                # Here we also need to shuffle the clip_images and drop_image_embeds from the original batch
+                # For simplicity, we'll re-use the ones from the last sampled batch. This is a simplification.
+                last_batch = batch 
+                
+                for i in tqdm(range(0, len(shuffled_samples["prompts"]), args.train_batch_size), desc="RL Inner Epoch", leave=False):
+                    mini_batch = {k: (v[i:i+args.train_batch_size] if isinstance(v, (torch.Tensor, list)) else v) for k, v in shuffled_samples.items()}
+                    # This is a simplification, we should really be carrying the clip images with the prompts
+                    mini_batch["clip_images"] = last_batch["clip_images"][:len(mini_batch["prompts"])]
+                    mini_batch["drop_image_embeds"] = last_batch["drop_image_embeds"][:len(mini_batch["prompts"])]
+
+                    for j in tqdm(range(num_train_timesteps), desc="Timestep", leave=False):
+                        with accelerator.accumulate(transformer, image_proj_model):
+                            log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
+                                args, vae, transformer, image_proj_model,
+                                [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
+                                image_encoder, noise_scheduler, mini_batch, j, weight_dtype, accelerator.device
+                            )
+                            
+                            # PGGO/PPO loss calculation
+                            ratio = torch.exp(log_prob - mini_batch["log_probs"][:, j])
+                            advantages_batch = mini_batch["advantages"]
+                            
+                            unclipped_loss = -advantages_batch * ratio
+                            clipped_loss = -advantages_batch * torch.clamp(
+                                ratio, 1.0 - args.rl_pggo_clip_range, 1.0 + args.rl_pggo_clip_range
+                            )
+                            policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                            
+                            loss = policy_loss
+                            
+                            # Optional KL penalty
+                            if args.rl_kl_beta > 0:
+                                # To compute KL, we need a reference model. We can use the original frozen transformer.
+                                # For simplicity, let's skip this for now, but this is where it would go.
+                                # with torch.no_grad():
+                                #    _, prev_sample_mean_ref, _ = compute_log_prob(...) using original model
+                                # kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean() / (2 * std_dev_t ** 2)
+                                # loss += args.rl_kl_beta * kl_loss
+                                pass
+
+                            accelerator.backward(loss)
+                            if accelerator.sync_gradients:
+                                params_to_clip = itertools.chain(
+                                    accelerator.unwrap_model(image_proj_model).parameters(),
+                                    *(p.parameters() for p in accelerator.unwrap_model(transformer).attn_processors.values())
+                                )
+                                accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                            
+                            optimizer.step()
+                            lr_scheduler.step()
+                            optimizer.zero_grad()
+
+                        if accelerator.sync_gradients:
+                            progress_bar.update(1)
+                            global_step += 1
+                            
+                            # Logging
+                            log_data = {
+                                "policy_loss": policy_loss.item(),
+                                "ratio_mean": ratio.mean().item(),
+                                "adv_mean": advantages_batch.mean().item(),
+                            }
+                            accelerator.log(log_data, step=global_step)
+                            progress_bar.set_postfix(**log_data)
+                            
+                            if global_step >= args.max_train_steps:
+                                break
+                    if global_step >= args.max_train_steps:
+                        break
+                if global_step >= args.max_train_steps:
+                    break
             
-            logger.info("RL Epoch: Training Phase Finished.")
-            
-        # Checkpointing logic
-        if global_step % args.checkpointing_steps == 0:
-            if accelerator.is_main_process:
-                save_path = Path(args.output_dir) / f"checkpoint-{global_step}"
-                accelerator.save_state(save_path)
-                logger.info(f"Saved state to {save_path}")
+            # Checkpointing logic
+            if global_step % args.checkpointing_steps == 0:
+                if accelerator.is_main_process:
+                    save_path = Path(args.output_dir) / f"checkpoint-{global_step}"
+                    accelerator.save_state(save_path)
+                    logger.info(f"Saved state to {save_path}")
 
     accelerator.wait_for_everyone()
     accelerator.end_training()

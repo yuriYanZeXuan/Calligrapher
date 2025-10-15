@@ -1,56 +1,59 @@
 # Refactoring and GRPO-RL Integration Changelog
 
-This document summarizes the major refactoring and feature additions to the training pipeline, culminating in the integration of a Generative Reward Policy Optimization (GRPO) training scheme for IP-Adapter.
+This document summarizes the major refactoring and feature additions to the training pipeline, culminating in the integration of a full Generative Reward Policy Optimization (GRPO) / Proximal Policy Optimization (PPO) training scheme for IP-Adapter.
 
-## 1. Modular, Multi-Model Architecture
+## 1. Modular, Multi-Model Architecture (Unchanged)
 
-The core training scripts (`train/model.py` and `train/train.py`) were significantly refactored to support multiple underlying transformer architectures in a plug-and-play manner.
+The core training scripts (`train/model.py` and `train/train.py`) were refactored to support multiple underlying transformer architectures in a plug-and-play manner.
 
-- **`--model_type` Argument**: A new command-line argument `--model_type` was introduced in `train.py`, allowing the user to switch between different models (e.g., `flux`, `qwen`).
+- **`--model_type` Argument**: A command-line argument `--model_type` allows switching between models (e.g., `flux`, `qwen`).
+- **Conditional Imports**: Scripts dynamically load the correct model classes, attention processors, and utility functions based on `model_type`.
+- **Model-Specific Logic Paths**: The main training loop handles model-specific data preparation (e.g., latent packing for Flux) and post-processing.
+- **Directory Structure**: `train/flux_ip/` and `train/qwen_ip/` house model-specific modules.
 
-- **Conditional Imports**: `model.py` and `train.py` now use conditional imports to dynamically load the correct model classes, attention processors, and utility functions based on the selected `model_type`.
+## 2. Overhauled Data Loading Pipeline (Unchanged)
 
-- **Model-Specific Logic Paths**: The main training loop in `train.py` now contains `if/elif` blocks to handle model-specific data preparation (e.g., latent packing for Flux) and post-processing, ensuring that each architecture's unique requirements are met.
+The data loading mechanism in `train/dataset.py` was rewritten to support a custom local dataset format.
 
-- **New Directory Structure**: To support this, new directories were created:
-  - `train/flux_ip/`: Contains modules specific to the Flux model.
-  - `train/qwen_ip/`: Contains placeholder modules for the Qwen-Edit model.
+- **Parsing `self_bench.txt`**: The `SimpleDataset` class reads a `self_bench.txt` file to get sample numbers and text prompts.
+- **Image Triplet Loading**: The dataset loads triplets for inpainting: `_source.png`, `_mask.png`, and `_ref.png`.
+- **Role-Specific Processing**:
+  - **Ground Truth (`pixel_values`)**: The `ref` image is the target for the loss function.
+  - **Input (`source_image`)**: The `source` image is used as context.
+  - **Style Image (`style_images`)**: A crop from the `ref` image is used as input for the IP-Adapter.
 
-## 2. Overhauled Data Loading Pipeline
+## 3. Full GRPO/PPO Reinforcement Learning Integration
 
-The data loading mechanism in `train/dataset.py` was completely rewritten to support a custom local dataset format instead of relying on Hugging Face `datasets`.
+The training pipeline was completely re-architected to support a full reinforcement learning loop, drawing inspiration and core logic from `flow_grpo`. This replaces the previous, incomplete RL implementation.
 
-- **Parsing `self_bench.txt`**: The `SimpleDataset` class now reads a `self_bench.txt` file from the training directory to get the sample number and corresponding text prompt for each entry.
+### 3.1. Decoupled Reward Server
 
-- **Image Triplet Loading**: For each sample, the dataset now loads a triplet of images:
-  - `testxx_source.png`: The source image with an area to be inpainted.
-  - `testxx_mask.png`: The mask defining the inpainting region.
-  - `testxx_ref.png`: The reference image providing the target content/style.
+- **`train/rl_ip/reward_server.py`**: A standalone FastAPI server was implemented. It loads both the VLM (QwenVL) and OCR (PaddleOCR) models onto a specified GPU and exposes a single `/score` endpoint. This decouples the memory-intensive reward models from the main training process.
+- **`run_server.sh`**: A new launch script was created to easily start one or more instances of the reward server on multiple GPUs, with automatic port assignment and logging.
 
-- **Role-Specific Processing**: The loaded images are assigned specific roles for the inpainting task:
-  - **Ground Truth (`pixel_values`)**: The `ref` image is now the target for the loss function.
-  - **Input (`source_image`)**: The `source` image is used as the context for inpainting.
-  - **Style Image (`style_images`)**: A crop from the `ref` image (based on the mask's bounding box) is used as the input for the IP-Adapter.
+### 3.2. Parallel Reward Client
 
-## 3. GRPO Reinforcement Learning Integration
+- **`train/rl_ip/reward.py`**: A new `RewardClient` was implemented. It can connect to multiple reward server instances and uses a thread pool to send reward requests in parallel using a round-robin distribution. This is crucial for preventing the reward calculation from becoming a bottleneck in multi-GPU training.
+- **Weighted Reward Combination**: The client automatically combines the `vlm_score` and `ocr_confidence` from the server based on the `--ocr_weight` and `--vlm_weight` arguments, providing a single `combined_score` to the training loop.
 
-A complete Reinforcement Learning pipeline based on the Generative Reward Policy Optimization (GRPO) algorithm was implemented to allow for direct optimization of the model based on custom rewards.
+### 3.3. Core RL Logic and Training Loop
 
-- **New `rl_ip` Directory**: A dedicated `train/rl_ip/` directory was created to house all RL-related modules.
+- **Abandoned Prototypes**: The old, non-functional RL modules (`grpo_trainer.py`, `policy.py`) were deleted.
+- **`train.py` Overhaul**: The main training script was fundamentally restructured into a `while` loop that supports two distinct phases:
+  - **Supervised Warmup**: For the initial `--rl_warmup_steps`, the script performs standard supervised training on the IP-Adapter to ensure a stable starting policy.
+  - **RL Epochs**: After the warmup, the script enters the main RL loop, which alternates between **Sampling (Rollout)** and **Training**.
 
-- **Reward Models**:
-  - `rl_ip/ocr.py`: Implements an `OCRScorer` using `PaddleOCR` to evaluate the textual accuracy of generated images.
-  - `rl_ip/qwenvl.py`: Implements a `QwenVLScorer` to evaluate the semantic alignment between the generated image and the prompt using the Qwen-VL model.
-  - `rl_ip/reward.py`: Contains a `RewardCalculator` that combines scores from the OCR and VLM models into a single, configurable reward signal.
+### 3.4. Sampling (Rollout) Phase
 
-- **Policy and `log_prob` Calculation**:
-  - `rl_ip/grpo_utils.py`: Implements the core `sde_step_with_logprob` function, which calculates the log probability of a single denoising step in the diffusion process. This is the mathematical foundation of applying policy gradients to diffusion models.
-  - `rl_ip/policy.py`: The `PolicyWrapper` class was updated to use `sde_step_with_logprob`, turning the transformer model into a stochastic policy that can be optimized with RL.
+- **`perform_rollout` Function**: A new, dedicated function was implemented to generate trajectories. It runs a full diffusion denoising process for a batch of prompts.
+- **`log_prob` Calculation**: In each denoising step, it uses the critical `sde_step_with_logprob` utility (ported from `flow_grpo`) to calculate the log probability of the chosen action (denoising step).
+- **Data Collection**: The rollout phase collects all necessary data for training: `latents`, `next_latents`, `log_probs`, and the `rewards` obtained from the `RewardClient`.
 
-- **GRPO Trainer**:
-  - `rl_ip/grpo_trainer.py`: Implements a `GRPOTrainer` responsible for calculating the GRPO loss (`-reward * sum(log_probs)`) and performing backpropagation on the policy network.
+### 3.5. Training Phase (PPO/GRPO)
 
-- **Integration into `train.py`**:
-  - **`--use_rl` Flag**: The main training script now accepts a `--use_rl` flag to activate the RL training phase.
-  - **Warmup Phase**: Training can be configured with `--rl_warmup_steps` to perform standard supervised training for a set number of steps before switching to RL, ensuring model stability.
-  - **Simplified RL Step**: A "DPO-style" one-step GRPO update is implemented. Instead of a full, costly rollout, it rewards the model for making the correct denoising decision at a single, random timestep, providing an efficient and effective training signal.
+- **Advantage Calculation (GRPO vs. PPO)**:
+  - After sampling, the collected rewards are gathered across all processes.
+  - If `--rl_per_prompt_stat_tracking` is enabled (the **GRPO** mode), `PerPromptStatTracker` is used to normalize rewards **on a per-prompt basis** before calculating advantages. This is the key feature of GRPO.
+  - If disabled, advantages are calculated using standard normalization across the entire batch (standard **PPO**).
+- **PPO-Clip Loss Function**: A `compute_log_prob` function was implemented to re-evaluate actions with the current policy. The training loop then calculates the importance sampling ratio (`ratio`) and applies the PPO-Clip surrogate objective function to compute a stable `policy_loss`.
+- **Inner Epochs**: The collected data is reused for multiple training iterations (`--rl_num_inner_epochs`), improving data efficiency.

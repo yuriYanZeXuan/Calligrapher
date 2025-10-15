@@ -88,15 +88,27 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-REWARD_SERVER_URL="http://${REWARD_SERVER_HOST}:${REWARD_SERVER_PORT}/score"
-echo "Connecting to Reward Server at: $REWARD_SERVER_URL"
 echo "Training will run on GPU(s): ${TRAINING_GPU_IDS:-"Accelerate Default"}"
 
 ACCELERATE_LAUNCH_ARGS=""
+NUM_PROCESSES=1
 if [ -n "$TRAINING_GPU_IDS" ]; then
   NUM_PROCESSES=$(echo "$TRAINING_GPU_IDS" | awk -F',' '{print NF}')
   ACCELERATE_LAUNCH_ARGS="--num_processes=$NUM_PROCESSES --gpu_ids=$TRAINING_GPU_IDS"
 fi
+
+REWARD_SERVER_URLS=""
+for i in $(seq 0 $((NUM_PROCESSES - 1))); do
+    port=$((REWARD_SERVER_PORT + i))
+    url="http://${REWARD_SERVER_HOST}:${port}/score"
+    if [ -z "$REWARD_SERVER_URLS" ]; then
+        REWARD_SERVER_URLS="$url"
+    else
+        REWARD_SERVER_URLS="$REWARD_SERVER_URLS,$url"
+    fi
+done
+
+echo "Connecting to Reward Server(s) at: $REWARD_SERVER_URLS"
 
 accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   --pretrained_model_name_or_path=$PRETRAINED_MODEL_PATH \
@@ -115,7 +127,7 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   --rl_warmup_steps=$RL_WARMUP_STEPS \
   --ocr_weight=$OCR_REWARD_WEIGHT \
   --vlm_weight=$VLM_REWARD_WEIGHT \
-  --reward_server_url=$REWARD_SERVER_URL \
+  --reward_server_url="$REWARD_SERVER_URLS" \
   $( [ "$DISABLE_RL_REWARD_MODEL" = true ] && echo "--no_rl_reward_model" ) \
   $( [ "$USE_8BIT_ADAM" = true ] && echo "--use_8bit_adam" )\
   --enable_memory_profiler \

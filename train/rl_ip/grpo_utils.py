@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from diffusers.utils import randn_tensor
+from diffusers.utils.torch_utils import randn_tensor
 
 def sde_step_with_logprob(scheduler, model_output, timestep, sample, prev_sample=None, generator=None, noise_level=0.0):
     """

@@ -26,7 +26,7 @@ DISABLE_RL_REWARD_MODEL=false
 # Specify the GPU IDs to use for training, e.g., "0,1,2,3".
 # If empty, `accelerate` will use its default configuration from `accelerate config`.
 TRAINING_GPU_IDS="0,1,2,3"
-GRADIENT_ACCUMULATION_STEPS=4
+GRADIENT_ACCUMULATION_STEPS=8
 GRADIENT_CHECKPOINTING=true
 
 # --- 2. Reward Server Configuration ---

@@ -468,7 +468,7 @@ def main():
 
     # --- Dataset ---
     train_dataset = SimpleDataset(args, accelerator)
-    clip_image_processor = AutoProcessor.from_pretrained(args.siglip_path)
+    clip_image_processor = AutoProcessor.from_pretrained(args.siglip_path, use_fast=True)
     
     # We need to use functools.partial to pass the clip_image_processor to the collate_fn
     collate_fn_with_processor = partial(collate_fn, clip_image_processor=clip_image_processor)

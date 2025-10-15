@@ -14,7 +14,7 @@ def extract_score(output_text: str) -> float:
 class QwenVLScorer:
     def __init__(self, model_path: str, device="cuda"):
         self.device = device
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, use_fast=True)
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path, 
             device_map="auto", 

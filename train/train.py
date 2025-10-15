@@ -97,7 +97,11 @@ def perform_rollout(
     # 2. Prepare Latents
     noise = torch.randn_like(source_latents)
     # Start the diffusion process from the noised source image latents
-    latents = noise_scheduler.add_noise(source_latents, noise, noise_scheduler.timesteps[0])
+    # Manually add noise for the first timestep, as FlowMatchEulerDiscreteScheduler lacks a .add_noise() method.
+    # We replicate the logic from the supervised training part.
+    t_start = noise_scheduler.timesteps[0].repeat(source_latents.shape[0])
+    sigmas_start = get_sigmas(noise_scheduler, t_start, n_dim=source_latents.ndim, dtype=source_latents.dtype, device=source_latents.device)
+    latents = sigmas_start * noise + (1.0 - sigmas_start) * source_latents
 
     # --- End RL Inpainting Adaptation ---
     

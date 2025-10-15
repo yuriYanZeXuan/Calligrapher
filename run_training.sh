@@ -1,49 +1,39 @@
 #!/bin/bash
 
 # =========================================================================
-# This script is a template for launching the IP-Adapter training.
-# You need to fill in the placeholder paths before running.
+# This script is for launching the IP-Adapter training.
+# It connects to a separate reward server for RL-based training.
 # =========================================================================
 
 # --- 1. Configuration ---
 
 # -- Paths --
-# Path to the base pretrained model (e.g., a FLUX or Qwen-Edit model from Hugging Face)
-# PRETRAINED_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/QwenEdit" 
 PRETRAINED_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill" 
-
-# Path to the SigLIP vision model (used by the IP-Adapter)
 SIGLIP_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip" 
-
-# Path to the VLM model (e.g., Qwen-VL-Chat) used for reward calculation
-VLM_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B"
-
-# Path to your training dataset directory
-# This directory must contain 'self_bench.txt' and the image triplets.
 TRAIN_DATA_DIR="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
-
-# Directory where checkpoints and logs will be saved
-OUTPUT_DIR="./output_qwen"
+OUTPUT_DIR="./output_qwen_new"
 
 # -- Model Selection --
-# Choose the model architecture you are training.
-# Options: "flux" or "qwen"
-MODEL_TYPE="flux"
+MODEL_TYPE="flux" # "flux" or "qwen"
 
 # -- Training Mode --
-# Set to "true" to enable GRPO-RL training after warmup steps.
-# Set to "false" to run only supervised training.
 USE_RL=true
-
-# Set to "true" to disable loading the VLM reward model for memory saving and testing.
-# When true, random rewards will be used.
-DISABLE_RL_REWARD_MODEL=true
-
-# Set to "true" to use the 8-bit AdamW optimizer for memory savings.
 USE_8BIT_ADAM=true
+# Set to "true" to disable connecting to the reward server and use random rewards instead.
+DISABLE_RL_REWARD_MODEL=false
+
+# -- Hardware Configuration --
+# Specify the GPU IDs to use for training, e.g., "0,1,2,3".
+# If empty, `accelerate` will use its default configuration from `accelerate config`.
+TRAINING_GPU_IDS="0,1,2,3"
+
+# --- 2. Reward Server Configuration ---
+# These should match the host and port of your running reward server.
+REWARD_SERVER_HOST="127.0.0.1"
+REWARD_SERVER_PORT=8000
 
 
-# --- 2. Training Parameters ---
+# --- 3. Training Parameters ---
 
 # -- Basic Parameters --
 RESOLUTION=512
@@ -53,23 +43,54 @@ CHECKPOINTING_STEPS=500
 LEARNING_RATE=1e-5
 
 # -- Accelerator & Precision --
-MIXED_PRECISION="fp16" # or "bf16" if your hardware supports it
+MIXED_PRECISION="fp16" # or "bf16"
 
 # -- RL-Specific Parameters --
-# Number of supervised steps before switching to RL
 RL_WARMUP_STEPS=1000
-# Weight for the OCR reward component
 OCR_REWARD_WEIGHT=0.7
-# Weight for the VLM score reward component
 VLM_REWARD_WEIGHT=0.3
 
 
-# --- 3. Launch Training ---
+# --- 4. Launch Training ---
+# This script uses `accelerate launch` for training.
+#
+# The `TRAINING_GPU_IDS` variable above allows you to specify which GPUs to use.
+# If you leave it empty, you must configure `accelerate` beforehand by running
+# `accelerate config` in your terminal.
 
-# This command uses `accelerate` to launch the training script.
-# Make sure you have configured accelerate beforehand with `accelerate config`.
+echo "--- Starting Training ---"
 
-accelerate launch train/train.py \
+# Override server settings with command-line arguments if provided
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --reward-host) REWARD_SERVER_HOST="$2"; shift ;;
+        --reward-port) REWARD_SERVER_PORT="$2"; shift ;;
+        --gpu-ids) TRAINING_GPU_IDS="$2"; shift ;;
+        -h|--help)
+            echo "Usage: $0 [options]"
+            echo "Options:"
+            echo "  --reward-host   Host of the reward server. (Default: $REWARD_SERVER_HOST)"
+            echo "  --reward-port   Port of the reward server. (Default: $REWARD_SERVER_PORT)"
+            echo "  --gpu-ids       Comma-separated GPU IDs for training, e.g., '0,1,2'. (Default: $TRAINING_GPU_IDS)"
+            echo "  Note: Other parameters like model paths must be configured inside the script."
+            exit 0
+            ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+REWARD_SERVER_URL="http://${REWARD_SERVER_HOST}:${REWARD_SERVER_PORT}/score"
+echo "Connecting to Reward Server at: $REWARD_SERVER_URL"
+echo "Training will run on GPU(s): ${TRAINING_GPU_IDS:-"Accelerate Default"}"
+
+ACCELERATE_LAUNCH_ARGS=""
+if [ -n "$TRAINING_GPU_IDS" ]; then
+  NUM_PROCESSES=$(echo "$TRAINING_GPU_IDS" | awk -F',' '{print NF}')
+  ACCELERATE_LAUNCH_ARGS="--num_processes=$NUM_PROCESSES --gpu_ids=$TRAINING_GPU_IDS"
+fi
+
+accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   --pretrained_model_name_or_path=$PRETRAINED_MODEL_PATH \
   --siglip_path=$SIGLIP_MODEL_PATH \
   --train_data_json=$TRAIN_DATA_DIR \
@@ -86,8 +107,9 @@ accelerate launch train/train.py \
   --rl_warmup_steps=$RL_WARMUP_STEPS \
   --ocr_weight=$OCR_REWARD_WEIGHT \
   --vlm_weight=$VLM_REWARD_WEIGHT \
-  --vlm_model_path=$VLM_MODEL_PATH \
+  --reward_server_url=$REWARD_SERVER_URL \
   $( [ "$DISABLE_RL_REWARD_MODEL" = true ] && echo "--no_rl_reward_model" ) \
-  $( [ "$USE_8BIT_ADAM" = true ] && echo "--use_8bit_adam" )
+  $( [ "$USE_8BIT_ADAM" = true ] && echo "--use_8bit_adam" )\
+  --enable_memory_profiler
 
 echo "Training finished."

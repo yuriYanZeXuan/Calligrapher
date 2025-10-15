@@ -4,29 +4,50 @@ import numpy as np
 
 class OCRScorer:
     def __init__(self, device=None):
-        # PaddleOCR uses CPU or GPU, device parameter is for compatibility
-        self.ocr_model = PaddleOCR(use_angle_cls=True, lang='ch')
+        # Initialize PaddleOCR based on the reference script to disable unnecessary modules.
+        # 'ch' lang model supports both Chinese and English.
+        self.ocr_model = PaddleOCR(
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+            use_angle_cls=True, 
+            lang='ch'
+        )
         print("Initialized PaddleOCR Model.")
 
     def score(self, image_pil: Image.Image) -> tuple[str, float]:
         """
-        Performs OCR on a PIL image and returns the recognized text and confidence score.
+        Performs OCR on a PIL image using the .predict() method
+        and returns the recognized text and average confidence score.
         """
         # Convert PIL image to numpy array for PaddleOCR
         image_np = np.array(image_pil.convert('RGB'))
         
-        result = self.ocr_model.ocr(image_np, cls=True)
-        
-        if result and result[0] is not None:
-            # result is a list of lists, where each inner list contains [bbox, (text, confidence)]
-            recognized_texts = [res[1][0] for res in result[0]]
-            confidences = [res[1][1] for res in result[0]]
+        try:
+            # Use the predict method as specified in the reference
+            result = self.ocr_model.predict(input=image_np)
             
-            full_text = " ".join(recognized_texts)
-            avg_confidence = np.mean(confidences) if confidences else 0.0
+            # The result is a list containing one Result object
+            if not result or not result[0]:
+                return "", 0.0
             
-            return full_text, float(avg_confidence)
-        else:
+            json_result = result[0].json
+            
+            # The actual data is nested inside the 'res' key
+            ocr_data = json_result.get('res', {})
+            
+            # Extract recognized texts and their scores as per the documentation
+            texts = ocr_data.get('rec_texts', [])
+            confidences = ocr_data.get('rec_scores', [])
+            
+            if texts and confidences:
+                full_text = " ".join(texts)
+                avg_confidence = np.mean(confidences) if confidences else 0.0
+                return full_text, float(avg_confidence)
+            else:
+                return "", 0.0
+        except Exception as e:
+            print(f"An error occurred during PaddleOCR prediction: {e}")
             return "", 0.0
 
 if __name__ == '__main__':

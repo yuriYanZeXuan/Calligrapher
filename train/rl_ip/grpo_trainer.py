@@ -24,7 +24,7 @@ class GRPOTrainer:
 
         self.policy, self.optimizer = self.accelerator.prepare(self.policy, self.optimizer)
 
-    def train_step(self, rollout_buffer: Dict[str, any], reward_calculator: RewardCalculator):
+    async def train_step(self, rollout_buffer: Dict[str, any], reward_calculator: RewardCalculator):
         # 1. Unpack rollout data
         prompts = rollout_buffer['prompts']
         final_latents = rollout_buffer['final_latents']
@@ -38,8 +38,8 @@ class GRPOTrainer:
         with torch.no_grad():
             images = vae.decode(final_latents_unpacked / vae.config.scaling_factor).sample
 
-        # 3. Compute rewards
-        rewards = reward_calculator.get_reward(images, prompts)
+        # 3. Compute rewards asynchronously
+        rewards = await reward_calculator.get_reward_async(images, prompts)
         
         # 4. Calculate GRPO loss
         # Sum of log_probs across all timesteps for each trajectory

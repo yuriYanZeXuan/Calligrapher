@@ -167,7 +167,12 @@ def perform_rollout(
         )[0]
         
         model_pred = unpack_latents(model_pred, height * 8, width * 8, 16)
-        sigmas = get_sigmas(noise_scheduler, t_batch, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
+        
+        # Get sigmas directly using the loop index `i` to avoid floating point comparison issues in `get_sigmas`.
+        sigma_t = noise_scheduler.sigmas[i]
+        sigmas = sigma_t.repeat(latents.shape[0]).to(dtype=latents.dtype, device=latents.device)
+        sigmas = sigmas.view(-1, *([1] * (latents.ndim - 1)))
+        
         pred_x0 = model_pred * (-sigmas) + latents
         
         # SDE step to get next latents and log prob

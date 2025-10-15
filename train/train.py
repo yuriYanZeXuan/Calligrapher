@@ -406,7 +406,10 @@ def main():
     transformer.to(accelerator.device, dtype=weight_dtype)
     
     if args.gradient_checkpointing:
-        transformer.gradient_checkpointing_enable()
+        transformer.gradient_checkpointing = True
+        text_encoder_one.gradient_checkpointing_enable()
+        text_encoder_two.gradient_checkpointing_enable()
+        image_encoder.gradient_checkpointing_enable()
 
     image_proj_model = setup_ip_adapter(transformer, accelerator, weight_dtype, args)
 

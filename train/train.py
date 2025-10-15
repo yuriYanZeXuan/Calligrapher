@@ -84,12 +84,22 @@ def perform_rollout(
     
     ip_tokens = image_proj_model(image_embeds)
     
+    # --- RL Inpainting Adaptation ---
+    # The rollout needs to mimic the inpainting data format that the model expects.
+    # We'll use the source image and mask from the batch to create the initial state.
+    mask_image = batch["mask"].to(device, dtype=weight_dtype)
+    source_image = batch["source_image"].to(device, dtype=weight_dtype)
+    
+    # VAE encode the source image to get latents that will be combined with noise.
+    source_latents = vae.encode(source_image * (1 - mask_image)).latent_dist.sample() * vae.config.scaling_factor
+    source_latents = source_latents.to(dtype=weight_dtype)
+    
     # 2. Prepare Latents
-    latents = torch.randn(
-        (len(prompts), 16, args.resolution // 8, args.resolution // 8),
-        device=device,
-        dtype=weight_dtype,
-    )
+    noise = torch.randn_like(source_latents)
+    # Start the diffusion process from the noised source image latents
+    latents = noise_scheduler.add_noise(source_latents, noise, noise_scheduler.timesteps[0])
+
+    # --- End RL Inpainting Adaptation ---
     
     # 3. Denoising Loop (Trajectory Generation)
     all_latents = [latents]
@@ -102,20 +112,46 @@ def perform_rollout(
         # Prepare for model input
         t_batch = t.to(device=device, dtype=torch.long).repeat(latents.shape[0])
         
+        # --- RL Inpainting Adaptation ---
+        # Create the packed hidden states required by the inpainting transformer
+        b, c, h, w = latents.shape
+        mask_latents, masked_image_latents = prepare_mask_latents4training(
+            mask=mask_image,
+            masked_image=source_image * (1 - mask_image),
+            batch_size=b,
+            height=args.resolution,
+            width=args.resolution,
+            dtype=prompt_embeds.dtype,
+            device=device,
+            vae=vae,
+            vae_scale_factor=8,
+        )
+
+        packed_noisy_latents = pack_latents(latents, b, c, h, w)
+        packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+        
+        vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+        mask_c = vae_scale_factor ** 2
+        packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
+
+        transformer_hidden_states = torch.cat(
+            [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
+        )
+        # --- End RL Inpainting Adaptation ---
+
         # Model prediction
         guidance = torch.tensor([args.rl_guidance_scale], device=device).expand(latents.shape[0])
         height, width = latents.shape[2], latents.shape[3]
         img_ids = prepare_latent_image_ids(height, width, device, weight_dtype)
         text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=device, dtype=weight_dtype)
         
-        # Here we don't have the ground truth mask/source image, so we pass None or zeros
         # This part needs to be adapted if the RL task is inpainting.
         # For now, assuming a text-to-image task for RL.
-        b, c, h, w = latents.shape
-        dummy_packed_latents = torch.zeros(b, h*w, 384, device=device, dtype=weight_dtype)
+        # b, c, h, w = latents.shape
+        # dummy_packed_latents = torch.zeros(b, h*w, 384, device=device, dtype=weight_dtype)
 
         model_pred = transformer(
-            hidden_states=dummy_packed_latents, # This needs to be adapted for T2I
+            hidden_states=transformer_hidden_states, # This needs to be adapted for T2I
             timestep=t_batch / 1000,
             guidance=guidance,
             pooled_projections=pooled_prompt_embeds,
@@ -188,11 +224,45 @@ def compute_log_prob(
     img_ids = prepare_latent_image_ids(height, width, device, weight_dtype)
     text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=device, dtype=weight_dtype)
     
+    # This is a simplification, we should really be carrying the clip images with the prompts
+    # Re-create the mask and source from the batch
+    # We assume the `sample` dict now contains the necessary info.
+    # This requires modification upstream where `all_samples` is created.
+    # For now, let's assume we can get it. This will likely fail if not fixed.
+    
+    # FIXME: The source_image and mask need to be passed along with the sample.
+    # For now, we will have to use a placeholder or data from the last batch from the parent scope,
+    # which is not ideal.
+    # A proper fix involves adding "source_image" and "mask" to the `all_samples` dict.
+    
     b, c, h, w = latents.shape
-    dummy_packed_latents = torch.zeros(b, h*w, 384, device=device, dtype=weight_dtype)
+    # NOTE: Using sample['source_image'] and sample['mask'] which we assume are now passed.
+    mask_latents, masked_image_latents = prepare_mask_latents4training(
+        mask=sample["mask"].to(device, dtype=weight_dtype),
+        masked_image=sample["source_image"].to(device, dtype=weight_dtype) * (1 - sample["mask"].to(device, dtype=weight_dtype)),
+        batch_size=b,
+        height=args.resolution,
+        width=args.resolution,
+        dtype=prompt_embeds.dtype,
+        device=device,
+        vae=vae,
+        vae_scale_factor=8,
+    )
+
+    packed_noisy_latents = pack_latents(latents, b, c, h, w)
+    packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+    
+    vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+    mask_c = vae_scale_factor ** 2
+    packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
+
+    transformer_hidden_states = torch.cat(
+        [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
+    )
+
 
     model_pred = transformer(
-        hidden_states=dummy_packed_latents,
+        hidden_states=transformer_hidden_states,
         timestep=t_batch / 1000,
         guidance=guidance,
         pooled_projections=pooled_prompt_embeds,
@@ -737,6 +807,13 @@ def main():
                     "next_latents": latents_tensor[:, 1:],  # x_{t-1}
                     "log_probs": log_probs_tensor,
                     "rewards": rewards_tensor,
+                    # --- RL Inpainting Adaptation ---
+                    # Pass source and mask for re-computation of hidden states during training
+                    "source_image": batch["source_image"],
+                    "mask": batch["mask"],
+                    "clip_images": batch["clip_images"],
+                    "drop_image_embeds": batch["drop_image_embeds"],
+                    # --- End RL Inpainting Adaptation ---
                 })
             
             # Collate all batches into a single dictionary of tensors
@@ -798,17 +875,21 @@ def main():
             for _ in range(args.rl_num_inner_epochs):
                 # Shuffle samples
                 perm = torch.randperm(len(samples["prompts"]), device=accelerator.device)
-                shuffled_samples = {k: (v[perm] if torch.is_tensor(v) else [v[i] for i in perm.cpu().tolist()]) for k, v in samples.items()}
                 
-                # Here we also need to shuffle the clip_images and drop_image_embeds from the original batch
-                # For simplicity, we'll re-use the ones from the last sampled batch. This is a simplification.
-                last_batch = batch 
+                # Create a list of indices for non-tensor data
+                perm_list = perm.cpu().tolist()
+                
+                shuffled_samples = {
+                    k: (v[perm] if torch.is_tensor(v) else ([v[i] for i in perm_list] if isinstance(v, list) else v))
+                    for k, v in samples.items()
+                }
+
                 
                 for i in tqdm(range(0, len(shuffled_samples["prompts"]), args.train_batch_size), desc="RL Inner Epoch", leave=False):
                     mini_batch = {k: (v[i:i+args.train_batch_size] if isinstance(v, (torch.Tensor, list)) else v) for k, v in shuffled_samples.items()}
                     # This is a simplification, we should really be carrying the clip images with the prompts
-                    mini_batch["clip_images"] = last_batch["clip_images"][:len(mini_batch["prompts"])]
-                    mini_batch["drop_image_embeds"] = last_batch["drop_image_embeds"][:len(mini_batch["prompts"])]
+                    # mini_batch["clip_images"] = last_batch["clip_images"][:len(mini_batch["prompts"])]
+                    # mini_batch["drop_image_embeds"] = last_batch["drop_image_embeds"][:len(mini_batch["prompts"])]
 
                     for j in tqdm(range(num_train_timesteps), desc="Timestep", leave=False):
                         with accelerator.accumulate(transformer, image_proj_model):

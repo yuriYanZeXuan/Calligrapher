@@ -100,7 +100,7 @@ def perform_rollout(
     for i, t in tqdm(enumerate(scheduler_timesteps), total=len(scheduler_timesteps), desc="Rollout step", leave=False):
         
         # Prepare for model input
-        t_batch = torch.tensor([t], device=device, dtype=torch.long).repeat(latents.shape[0])
+        t_batch = t.to(device=device, dtype=torch.long).repeat(latents.shape[0])
         
         # Model prediction
         guidance = torch.tensor([args.rl_guidance_scale], device=device).expand(latents.shape[0])
@@ -180,7 +180,7 @@ def compute_log_prob(
     latents = sample["latents"][:, timestep_idx]
     next_latents = sample["next_latents"][:, timestep_idx]
     t = noise_scheduler.timesteps[timestep_idx]
-    t_batch = torch.tensor([t], device=device, dtype=torch.long).repeat(latents.shape[0])
+    t_batch = t.to(device=device, dtype=torch.long).repeat(latents.shape[0])
 
     # 3. Model Prediction (similar to rollout but with gradients)
     guidance = torch.tensor([args.rl_guidance_scale], device=device).expand(latents.shape[0])

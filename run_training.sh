@@ -11,7 +11,7 @@
 PRETRAINED_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill" 
 SIGLIP_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip" 
 TRAIN_DATA_DIR="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
-OUTPUT_DIR="./output_qwen_new"
+OUTPUT_DIR="./output_flux"
 
 # -- Model Selection --
 MODEL_TYPE="flux" # "flux" or "qwen"
@@ -48,7 +48,7 @@ LEARNING_RATE=1e-5
 MIXED_PRECISION="fp16" # or "bf16"
 
 # -- RL-Specific Parameters --
-RL_WARMUP_STEPS=1000
+RL_WARMUP_STEPS=10
 OCR_REWARD_WEIGHT=0.7
 VLM_REWARD_WEIGHT=0.3
 

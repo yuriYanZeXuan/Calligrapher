@@ -32,7 +32,7 @@ def import_model_class_from_model_name_or_path(
 
 def load_text_encoders_and_tokenizers(args):
     tokenizer_one = CLIPTokenizer.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision
+        args.pretrained_model_name_or_path, subfolder="tokenizer", use_fast=True
     )
     tokenizer_two = T5TokenizerFast.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="tokenizer_2", revision=args.revision

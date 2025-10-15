@@ -26,6 +26,8 @@ DISABLE_RL_REWARD_MODEL=false
 # Specify the GPU IDs to use for training, e.g., "0,1,2,3".
 # If empty, `accelerate` will use its default configuration from `accelerate config`.
 TRAINING_GPU_IDS="0,1,2,3"
+GRADIENT_ACCUMULATION_STEPS=4
+GRADIENT_CHECKPOINTING=true
 
 # --- 2. Reward Server Configuration ---
 # These should match the host and port of your running reward server.
@@ -130,6 +132,8 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   --reward_server_url="$REWARD_SERVER_URLS" \
   $( [ "$DISABLE_RL_REWARD_MODEL" = true ] && echo "--no_rl_reward_model" ) \
   $( [ "$USE_8BIT_ADAM" = true ] && echo "--use_8bit_adam" )\
+  --gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS \
+  $( [ "$GRADIENT_CHECKPOINTING" = true ] && echo "--gradient_checkpointing" ) \
   --enable_memory_profiler \
   --rl_per_prompt_stat_tracking \
   --rl_num_batches_per_epoch=$RL_NUM_BATCHES_PER_EPOCH \

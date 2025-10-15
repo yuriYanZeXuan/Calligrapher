@@ -330,11 +330,7 @@ def parse_args():
     parser.add_argument("--rl_adv_clip_max", type=float, default=5, help="Max value for advantage clipping.")
     parser.add_argument("--rl_pggo_clip_range", type=float, default=0.2, help="PPO clipping range.")
     parser.add_argument("--rl_kl_beta", type=float, default=0.1, help="Beta coefficient for the KL penalty term.")
-    parser.add_argument(
-        "--gradient_checkpointing",
-        action="store_true",
-        help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
-    )
+    
     
     args = parser.parse_args()
     

@@ -50,6 +50,14 @@ RL_WARMUP_STEPS=1000
 OCR_REWARD_WEIGHT=0.7
 VLM_REWARD_WEIGHT=0.3
 
+# -- New RL Sampling and Training Parameters --
+RL_NUM_BATCHES_PER_EPOCH=2
+RL_NUM_INFERENCE_STEPS=50
+RL_TIMESTEP_FRACTION=1.0
+RL_NUM_INNER_EPOCHS=1
+RL_PGGO_CLIP_RANGE=0.2
+RL_KL_BETA=0.1
+
 
 # --- 4. Launch Training ---
 # This script uses `accelerate launch` for training.
@@ -110,6 +118,13 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   --reward_server_url=$REWARD_SERVER_URL \
   $( [ "$DISABLE_RL_REWARD_MODEL" = true ] && echo "--no_rl_reward_model" ) \
   $( [ "$USE_8BIT_ADAM" = true ] && echo "--use_8bit_adam" )\
-  --enable_memory_profiler
+  --enable_memory_profiler \
+  --rl_per_prompt_stat_tracking \
+  --rl_num_batches_per_epoch=$RL_NUM_BATCHES_PER_EPOCH \
+  --rl_num_inference_steps=$RL_NUM_INFERENCE_STEPS \
+  --rl_timestep_fraction=$RL_TIMESTEP_FRACTION \
+  --rl_num_inner_epochs=$RL_NUM_INNER_EPOCHS \
+  --rl_pggo_clip_range=$RL_PGGO_CLIP_RANGE \
+  --rl_kl_beta=$RL_KL_BETA
 
 echo "Training finished."

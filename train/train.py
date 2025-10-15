@@ -4,8 +4,12 @@ import math
 import os
 import sys
 from pathlib import Path
-import asyncio # New import
-import aiohttp # New import
+import time
+import random
+import tempfile
+from collections import defaultdict
+from PIL import Image
+import numpy as np
 
 # Add the project's root directory ('Calligrapher') to the Python path.
 # This allows for absolute imports from the project root.
@@ -44,12 +48,106 @@ from train.model import (
 #     get_sigmas,
 #     prepare_mask_latents4training,
 # )
-from train.rl_ip.policy import create_policy
-from train.rl_ip.reward import RewardCalculator
-from train.rl_ip.grpo_trainer import GRPOTrainer
-from train.rl_ip.vlm_scorer_api import VLMScorerAPI # New import
+# --- New RL Imports ---
+from train.rl_ip.reward import RewardClient
+from train.rl_ip.stat_tracking import PerPromptStatTracker
+from train.rl_ip.grpo_utils import sde_step_with_logprob
+
 
 logger = get_logger(__name__)
+
+@torch.no_grad()
+def perform_rollout(
+    args, vae, transformer, image_proj_model, text_encoders, tokenizers, image_encoder,
+    noise_scheduler, batch, weight_dtype, device
+):
+    """
+    Performs a single rollout to generate trajectories (images, latents, log_probs).
+    """
+    # 1. Prepare Inputs
+    prompts = batch["prompts"]
+    
+    prompt_embeds, pooled_prompt_embeds = encode_prompt(
+        text_encoders, tokenizers, prompts, device, max_sequence_length=args.max_sequence_length
+    )
+    
+    with torch.no_grad():
+        image_embeds = image_encoder(batch["clip_images"].to(device, dtype=weight_dtype)).pooler_output
+    
+    image_embeds_ = []
+    for image_embed, drop_image_embed in zip(image_embeds, batch["drop_image_embeds"]):
+        if drop_image_embed == 1:
+            image_embeds_.append(torch.zeros_like(image_embed))
+        else:
+            image_embeds_.append(image_embed)
+    image_embeds = torch.stack(image_embeds_)
+    
+    ip_tokens = image_proj_model(image_embeds)
+    
+    # 2. Prepare Latents
+    latents = torch.randn(
+        (len(prompts), 16, args.resolution // 8, args.resolution // 8),
+        device=device,
+        dtype=weight_dtype,
+    )
+    
+    # 3. Denoising Loop (Trajectory Generation)
+    all_latents = [latents]
+    all_log_probs = []
+    
+    scheduler_timesteps = noise_scheduler.timesteps
+    
+    for i, t in tqdm(enumerate(scheduler_timesteps), total=len(scheduler_timesteps), desc="Rollout step", leave=False):
+        
+        # Prepare for model input
+        t_batch = torch.tensor([t], device=device, dtype=torch.long).repeat(latents.shape[0])
+        
+        # Model prediction
+        guidance = torch.tensor([args.rl_guidance_scale], device=device).expand(latents.shape[0])
+        height, width = latents.shape[2], latents.shape[3]
+        img_ids = prepare_latent_image_ids(height, width, device, weight_dtype)
+        text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=device, dtype=weight_dtype)
+        
+        # Here we don't have the ground truth mask/source image, so we pass None or zeros
+        # This part needs to be adapted if the RL task is inpainting.
+        # For now, assuming a text-to-image task for RL.
+        b, c, h, w = latents.shape
+        dummy_packed_latents = torch.zeros(b, h*w, 384, device=device, dtype=weight_dtype)
+
+        model_pred = transformer(
+            hidden_states=dummy_packed_latents, # This needs to be adapted for T2I
+            timestep=t_batch / 1000,
+            guidance=guidance,
+            pooled_projections=pooled_prompt_embeds,
+            encoder_hidden_states=prompt_embeds,
+            image_emb=ip_tokens,
+            txt_ids=text_ids,
+            img_ids=img_ids,
+            return_dict=False,
+        )[0]
+        
+        model_pred = unpack_latents(model_pred, height * 8, width * 8, 16)
+        sigmas = get_sigmas(noise_scheduler, t_batch, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
+        pred_x0 = model_pred * (-sigmas) + latents
+        
+        # SDE step to get next latents and log prob
+        latents, log_prob, _, _ = sde_step_with_logprob(
+            scheduler=noise_scheduler,
+            model_output=pred_x0,
+            timestep=t_batch,
+            sample=latents,
+        )
+        
+        all_latents.append(latents)
+        all_log_probs.append(log_prob)
+
+    # 4. Decode Final Latent to Image
+    latents = latents / vae.config.scaling_factor
+    images_tensor = vae.decode(latents.to(vae.dtype)).sample
+    images_pil = [(t.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8) for t in images_tensor]
+    images_pil = [Image.fromarray(img) for img in images_pil]
+
+    return images_pil, all_latents, all_log_probs
 
 def log_memory_breakdown(accelerator, title, models_dict, params_to_optimize=None):
     if not accelerator.is_main_process:
@@ -151,6 +249,17 @@ def parse_args():
     # --- Logging ---
     parser.add_argument("--report_to", type=str, default="tensorboard")
     parser.add_argument("--logging_dir", type=str, default="logs")
+
+    # --- RL Sampling and Training ---
+    parser.add_argument("--rl_per_prompt_stat_tracking", action="store_true", help="Enable per-prompt advantage normalization (GRPO).")
+    parser.add_argument("--rl_num_batches_per_epoch", type=int, default=1, help="Number of batches to sample per RL epoch.")
+    parser.add_argument("--rl_num_inference_steps", type=int, default=50, help="Number of diffusion steps for sampling.")
+    parser.add_argument("--rl_guidance_scale", type=float, default=3.5, help="Guidance scale for sampling.")
+    parser.add_argument("--rl_timestep_fraction", type=float, default=1.0, help="Fraction of timesteps to train on per trajectory.")
+    parser.add_argument("--rl_num_inner_epochs", type=int, default=1, help="Number of training epochs on the sampled data.")
+    parser.add_argument("--rl_adv_clip_max", type=float, default=5, help="Max value for advantage clipping.")
+    parser.add_argument("--rl_pggo_clip_range", type=float, default=0.2, help="PPO clipping range.")
+    parser.add_argument("--rl_kl_beta", type=float, default=0.1, help="Beta coefficient for the KL penalty term.")
     
     args = parser.parse_args()
     
@@ -178,7 +287,7 @@ def parse_args():
 
     return args
 
-async def main_async():
+def main():
     args = parse_args()
 
     logging_dir = Path(args.output_dir, args.logging_dir)
@@ -242,364 +351,362 @@ async def main_async():
         log_memory_breakdown(accelerator, "After Model Loading", models_dict)
 
     # --- RL Setup ---
-    # Use a context manager for the aiohttp session
-    async with aiohttp.ClientSession() as session:
-        if args.use_rl:
-            policy = create_policy(transformer, noise_scheduler, args.model_type)
-            if args.no_rl_reward_model:
-                logger.info("Using dummy reward calculator with random rewards.")
-                class DummyRewardCalculator:
-                    def __init__(self, device):
-                        self.device = device
-                    async def get_reward_async(self, pixel_values, prompts):
-                        batch_size = pixel_values.shape[0]
-                        return torch.rand(batch_size, device=self.device)
-                reward_calculator = DummyRewardCalculator(accelerator.device)
-            else:
-                logger.info(f"Using VLM reward server at: {args.reward_server_url}")
-                vlm_scorer_api = VLMScorerAPI(api_url=args.reward_server_url, session=session)
-                reward_calculator = RewardCalculator(
-                    accelerator.device, 
-                    args.ocr_weight, 
-                    args.vlm_weight, 
-                    vlm_scorer_api=vlm_scorer_api
-                )
-            grpo_trainer = GRPOTrainer(policy, accelerator, lr=args.learning_rate)
+    if args.use_rl:
+        if not args.no_rl_reward_model:
+            from urllib.parse import urlparse, urlunparse
+            parsed_url = urlparse(args.reward_server_url)
+            base_port = parsed_url.port
+            # Assume we have as many reward servers as training processes for optimal parallelism
+            num_reward_servers = accelerator.num_processes
+            reward_server_urls = [
+                urlunparse(parsed_url._replace(netloc=f"{parsed_url.hostname}:{base_port + i}"))
+                for i in range(num_reward_servers)
+            ]
+            logger.info(f"Process {accelerator.process_index} connecting to reward servers: {reward_server_urls}")
+            reward_client = RewardClient(
+                server_urls=reward_server_urls, 
+                ocr_weight=args.ocr_weight, 
+                vlm_weight=args.vlm_weight
+            )
         else:
-            policy, reward_calculator, grpo_trainer = None, None, None
+            # This is a dummy client if rewards are disabled.
+            class DummyRewardClient:
+                def get_rewards_batch(self, images, prompts):
+                    logger.warning("Using dummy reward client. Generating random rewards.")
+                    return [{'combined_score': random.random()} for _ in images]
+            reward_client = DummyRewardClient()
 
-        # --- Optimizer ---
-        if args.use_8bit_adam:
-            try:
-                import bitsandbytes.optim as bnb_optim
-            except ImportError:
-                raise ImportError(
-                    "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
-                )
-            logger.info("Using 8-bit AdamW optimizer.")
-            optimizer_cls = bnb_optim.AdamW8bit
-        else:
-            optimizer_cls = torch.optim.AdamW
+        if args.rl_per_prompt_stat_tracking:
+            stat_tracker = PerPromptStatTracker()
 
-        attn_processors = transformer.attn_processors.values()
-        params_to_optimize = itertools.chain(image_proj_model.parameters(), *(p.parameters() for p in attn_processors))
-        optimizer = optimizer_cls(params_to_optimize, lr=args.learning_rate)
+    # --- Optimizer ---
+    if args.use_8bit_adam:
+        try:
+            import bitsandbytes.optim as bnb_optim
+        except ImportError:
+            raise ImportError(
+                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
+            )
+        logger.info("Using 8-bit AdamW optimizer.")
+        optimizer_cls = bnb_optim.AdamW8bit
+    else:
+        optimizer_cls = torch.optim.AdamW
 
-        # --- Dataset ---
-        train_dataset = SimpleDataset(args, accelerator)
-        clip_image_processor = AutoProcessor.from_pretrained(args.siglip_path)
+    attn_processors = transformer.attn_processors.values()
+    params_to_optimize = itertools.chain(image_proj_model.parameters(), *(p.parameters() for p in attn_processors))
+    optimizer = optimizer_cls(params_to_optimize, lr=args.learning_rate)
+
+    # --- Dataset ---
+    train_dataset = SimpleDataset(args, accelerator)
+    clip_image_processor = AutoProcessor.from_pretrained(args.siglip_path)
+    
+    # We need to use functools.partial to pass the clip_image_processor to the collate_fn
+    collate_fn_with_processor = partial(collate_fn, clip_image_processor=clip_image_processor)
+
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=args.train_batch_size,
+        shuffle=True,
+        collate_fn=collate_fn_with_processor,
+        num_workers=args.dataloader_num_workers,
+    )
+    
+    # --- Scheduler and Accelerator ---
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if args.max_train_steps is None:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+    
+    lr_scheduler = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+    )
+    
+    transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler
+    )
+
+    # --- Training ---
+    total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(train_dataset)}")
+    logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
+    logger.info(f"  Total train batch size = {total_batch_size}")
+    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    
+    progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
+    progress_bar.set_description("Steps")
+    global_step = 0
+    
+    # The dataloader iterator for getting prompts
+    train_iter = iter(train_dataloader)
+
+    # RL training loop
+    while global_step < args.max_train_steps:
         
-        # We need to use functools.partial to pass the clip_image_processor to the collate_fn
-        collate_fn_with_processor = partial(collate_fn, clip_image_processor=clip_image_processor)
+        if not args.use_rl or global_step < args.rl_warmup_steps:
+            # =======================================================
+            # ================ SUPERVISED TRAINING STEP ===============
+            # =======================================================
+            transformer.train()
+            image_proj_model.train()
+            
+            # This will be filled in the next step, for now just the structure.
+            with accelerator.accumulate(transformer, image_proj_model):
+                try:
+                    batch = next(train_iter)
+                except StopIteration:
+                    train_iter = iter(train_dataloader)
+                    batch = next(train_iter)
 
-        train_dataloader = torch.utils.data.DataLoader(
-            train_dataset,
-            batch_size=args.train_batch_size,
-            shuffle=True,
-            collate_fn=collate_fn_with_processor,
-            num_workers=args.dataloader_num_workers,
-        )
-        
-        # --- Scheduler and Accelerator ---
-        num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-        if args.max_train_steps is None:
-            args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
-        
-        lr_scheduler = get_scheduler(
-            args.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-        )
-        
-        transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-            transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler
-        )
-
-        # --- Training ---
-        total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
-        logger.info("***** Running training *****")
-        logger.info(f"  Num examples = {len(train_dataset)}")
-        logger.info(f"  Num Epochs = {args.num_train_epochs}")
-        logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
-        logger.info(f"  Total train batch size = {total_batch_size}")
-        logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-        logger.info(f"  Total optimization steps = {args.max_train_steps}")
-        
-        progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
-        progress_bar.set_description("Steps")
-        global_step = 0
-
-        noise_scheduler_copy = noise_scheduler
-
-        for epoch in range(args.num_train_epochs):
-            if not args.use_rl or global_step < args.rl_warmup_steps:
-                # --- SUPERVISED TRAINING ---
-                transformer.train()
-                image_proj_model.train()
-            else:
-                # --- RL TRAINING ---
-                policy.train() # The policy contains the transformer
-                image_proj_model.train() # The projection model is still trained supervised-style
+                pixel_values = batch["pixel_values"].to(dtype=vae.dtype)
+                prompts = batch["prompts"]
                 
-            for step, batch in enumerate(train_dataloader):
-                if args.use_rl and global_step >= args.rl_warmup_steps:
-                    # =======================================================
-                    # ============== REINFORCEMENT LEARNING STEP ============
-                    # =======================================================
-                    with accelerator.accumulate(policy, image_proj_model):
-                        # --- 1. Rollout Trajectory ---
-                        # This part needs to be carefully implemented to match the diffusion process
-                        # and collect all necessary data for the GRPO update.
-                        
-                        # NOTE: The full rollout implementation is complex and requires careful state management.
-                        # This is a conceptual placeholder for the rollout logic.
-                        # A real implementation would loop through `num_inference_steps`.
-                        
-                        # For now, we will perform a simplified one-step GRPO update
-                        # as a demonstration, similar to how DPO works.
-                        
-                        # --- Simplified 1-step GRPO ---
-                        
-                        # Prepare inputs
-                        pixel_values = batch["pixel_values"].to(dtype=vae.dtype)
-                        prompts = batch["prompts"]
-                        prompt_embeds, pooled_prompt_embeds = encode_prompt(
-                            [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
-                            prompts, accelerator.device, max_sequence_length=args.max_sequence_length
-                        )
-                        latents = vae.encode(pixel_values).latent_dist.sample() * vae.config.scaling_factor
-                        latents = latents.to(dtype=weight_dtype)
-                        
-                        # Sample a single timestep
-                        t = torch.randint(0, noise_scheduler.config.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
-                        
-                        # Corrupt the latents to s_t
-                        noise = torch.randn_like(latents)
-                        noisy_latents = noise_scheduler.add_noise(latents, noise, t)
+                # Get text embeddings
+                prompt_embeds, pooled_prompt_embeds = encode_prompt(
+                    [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two], 
+                    prompts, accelerator.device, max_sequence_length=args.max_sequence_length
+                )
 
-                        # Get model prediction and log_prob for one step
-                        # We need a "previous" latent to score, let's use the ground truth `latents`
-                        # This is a simplification similar to 1-step DPO-style training.
-                        _, log_prob, _, _ = policy(
-                            latents=noisy_latents,
-                            prev_latents=latents,
-                            timestep=t,
-                            encoder_hidden_states=prompt_embeds,
-                            # Pass other required args for the transformer
-                            pooled_projections=pooled_prompt_embeds,
-                            # ... any other kwargs your model needs
-                        )
+                # VAE encode
+                latents = vae.encode(pixel_values).latent_dist.sample() * vae.config.scaling_factor
+                latents = latents.to(dtype=weight_dtype)
 
-                        # Generate final image from `noisy_latents` to get reward
-                        # For this simplified step, we can't generate a full image.
-                        # A full rollout would be needed.
-                        # As a placeholder, we'll calculate reward on the ground truth image
-                        # and use the log_prob of correcting the noise in one step.
-                        rewards = await reward_calculator.get_reward_async(pixel_values, prompts)
-                        
-                        # GRPO Loss
-                        loss = - (rewards * log_prob).mean()
-                        
-                        # Backprop
-                        accelerator.backward(loss)
-                        if accelerator.sync_gradients:
-                            accelerator.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
-                        
-                        if args.enable_memory_profiler and accelerator.sync_gradients:
-                            log_memory_breakdown(accelerator, f"Step {global_step} - Before RL Optimizer", models_dict, params_to_optimize)
+                # Sample noise and timesteps
+                noise = torch.randn_like(latents)
+                bsz = latents.shape[0]
+                
+                u = compute_density_for_timestep_sampling(
+                    weighting_scheme=args.weighting_scheme, 
+                    batch_size=bsz,
+                    logit_mean=0.0,
+                    logit_std=1.0,
+                    mode_scale=1.29,
+                )
+                indices = (u * noise_scheduler.config.num_train_timesteps).long()
+                timesteps = noise_scheduler.timesteps[indices].to(device=latents.device)
 
-                        optimizer.step() # Assuming the PPO optimizer handles the policy params
-                        lr_scheduler.step()
-                        optimizer.zero_grad()
-
-                else:
-                    # =======================================================
-                    # ================ SUPERVISED TRAINING STEP ===============
-                    # =======================================================
-                    with accelerator.accumulate(transformer, image_proj_model):
-                        pixel_values = batch["pixel_values"].to(dtype=vae.dtype)
-                        prompts = batch["prompts"]
-                        
-                        # Get text embeddings
-                        prompt_embeds, pooled_prompt_embeds = encode_prompt(
-                            [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two], 
-                            prompts, accelerator.device, max_sequence_length=args.max_sequence_length
-                        )
-
-                        # VAE encode
-                        latents = vae.encode(pixel_values).latent_dist.sample() * vae.config.scaling_factor
-                        latents = latents.to(dtype=weight_dtype)
-
-                        # Sample noise and timesteps
-                        noise = torch.randn_like(latents)
-                        bsz = latents.shape[0]
-                        
-                        u = compute_density_for_timestep_sampling(
-                            weighting_scheme=args.weighting_scheme, 
-                            batch_size=bsz,
-                            logit_mean=0.0,
-                            logit_std=1.0,
-                            mode_scale=1.29,
-                        )
-                        indices = (u * noise_scheduler_copy.config.num_train_timesteps).long()
-                        timesteps = noise_scheduler_copy.timesteps[indices].to(device=latents.device)
-
-                        # Add noise
-                        sigmas = get_sigmas(noise_scheduler_copy, timesteps, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
-                        noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
-                        
-                        # Prepare mask and masked image latents
-                        mask_image = batch["mask"].to(dtype=vae.dtype)
-                        source_image = batch["source_image"].to(dtype=vae.dtype)
-                        masked_image = source_image * (1 - mask_image)
-                        
-                        # --- MODEL-SPECIFIC LOGIC ---
-                        if args.model_type == 'flux':
-                            b, c, h, w = noisy_latents.shape
-                            
-                            # Prepare mask and masked image latents, which are essential for the inpainting task.
-                            mask_latents, masked_image_latents = prepare_mask_latents4training(
-                                mask=mask_image,
-                                masked_image=masked_image,
-                                batch_size=bsz,
-                                height=args.resolution,
-                                width=args.resolution,
-                                dtype=prompt_embeds.dtype,
-                                device=accelerator.device,
-                                vae=vae,
-                                vae_scale_factor=8,
-                            )
-                            
-                            # 1. Pack noisy_latents, masked_image_latents, and mask separately, mimicking the official flux-fill pipeline.
-                            packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w) # (B, L, 64)
-                            
-                            packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w) # (B, L, 64)
-                            
-                            # The mask is 1 channel, but needs to be packed. The official pipeline expands it to vae_scale_factor^2 channels.
-                            vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
-                            mask_c = vae_scale_factor ** 2 # Should be 8*8 = 64
-                            packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w) # (B, L, 256)
-
-                            # 2. Concatenate the packed latents along the feature dimension to create the final 384-dim input.
-                            transformer_hidden_states = torch.cat(
-                                [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
-                            )
-
-                        elif args.model_type == 'qwen':
-                            # NOTE: This is a placeholder for Qwen's data preparation, mirroring the flux logic.
-                            logger.info("Using placeholder data preparation for Qwen model.", main_process_only=True)
-                            b, c, h, w = noisy_latents.shape
-                            mask_latents, masked_image_latents = prepare_mask_latents4training(
-                                mask=mask_image,
-                                masked_image=masked_image,
-                                batch_size=bsz,
-                                height=args.resolution,
-                                width=args.resolution,
-                                dtype=prompt_embeds.dtype,
-                                device=accelerator.device,
-                                vae=vae,
-                                vae_scale_factor=8,
-                            )
-                            
-                            packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w)
-                            packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
-                            vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
-                            mask_c = vae_scale_factor ** 2
-                            packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
-
-                            transformer_hidden_states = torch.cat(
-                                [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
-                            )
-
-
-                        # Get image embeddings
-                        with torch.no_grad():
-                            image_embeds = image_encoder(batch["clip_images"].to(accelerator.device, dtype=weight_dtype)).pooler_output
-                        
-                        image_embeds_ = []
-                        for image_embed, drop_image_embed in zip(image_embeds, batch["drop_image_embeds"]):
-                            if drop_image_embed == 1:
-                                image_embeds_.append(torch.zeros_like(image_embed))
-                            else:
-                                image_embeds_.append(image_embed)
-                        image_embeds = torch.stack(image_embeds_)
-                        
-                        ip_tokens = image_proj_model(image_embeds)
-
-                        # Model prediction
-                        guidance = torch.tensor([1.0], device=accelerator.device).expand(bsz)
-                        height, width = latents.shape[2], latents.shape[3]
-                        img_ids = prepare_latent_image_ids(height, width, accelerator.device, weight_dtype)
-                        text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=accelerator.device, dtype=weight_dtype)
-
-                        model_pred = transformer(
-                            hidden_states=transformer_hidden_states,
-                            timestep=timesteps / 1000,
-                            guidance=guidance,
-                            pooled_projections=pooled_prompt_embeds,
-                            encoder_hidden_states=prompt_embeds,
-                            image_emb=ip_tokens,
-                            txt_ids=text_ids,
-                            img_ids=img_ids,
-                            return_dict=False,
-                        )[0]
-                        
-                        # --- MODEL-SPECIFIC POST-PROCESSING ---
-                        if args.model_type == 'flux':
-                            model_pred = unpack_latents(model_pred, height * 8, width * 8, 16)
-                        elif args.model_type == 'qwen':
-                            logger.info("Using placeholder post-processing for Qwen model.", main_process_only=True)
-                            model_pred = unpack_latents(model_pred, height * 8, width * 8, 16)
-
-                        model_pred = model_pred * (-sigmas) + noisy_latents
-
-                        # Loss calculation
-                        weighting = compute_loss_weighting_for_sd3(weighting_scheme=args.weighting_scheme, sigmas=sigmas)
-                        loss = torch.mean((weighting * (model_pred - latents) ** 2).reshape(bsz, -1), 1).mean()
-
-                        accelerator.backward(loss)
-                        if accelerator.sync_gradients:
-                            attn_processors_unwrapped = accelerator.unwrap_model(transformer).attn_processors.values()
-                            params_to_clip = itertools.chain(
-                                accelerator.unwrap_model(image_proj_model).parameters(),
-                                *(p.parameters() for p in attn_processors_unwrapped)
-                            )
-                            accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
-                        
-                        if args.enable_memory_profiler and accelerator.sync_gradients:
-                            log_memory_breakdown(accelerator, f"Step {global_step} - Before Optimizer", models_dict, params_to_optimize)
-
-                        optimizer.step()
-                        lr_scheduler.step()
-                        optimizer.zero_grad()
-
-                if accelerator.sync_gradients:
-                    progress_bar.update(1)
-                    global_step += 1
+                # Add noise
+                sigmas = get_sigmas(noise_scheduler, timesteps, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
+                noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
+                
+                # Prepare mask and masked image latents
+                mask_image = batch["mask"].to(dtype=vae.dtype)
+                source_image = batch["source_image"].to(dtype=vae.dtype)
+                masked_image = source_image * (1 - mask_image)
+                
+                # --- MODEL-SPECIFIC LOGIC ---
+                if args.model_type == 'flux':
+                    b, c, h, w = noisy_latents.shape
                     
-                    if global_step % args.checkpointing_steps == 0:
-                        if accelerator.is_main_process:
-                            save_path = Path(args.output_dir) / f"checkpoint-{global_step}"
-                            accelerator.save_state(save_path)
-                            logger.info(f"Saved state to {save_path}")
+                    # Prepare mask and masked image latents, which are essential for the inpainting task.
+                    mask_latents, masked_image_latents = prepare_mask_latents4training(
+                        mask=mask_image,
+                        masked_image=masked_image,
+                        batch_size=bsz,
+                        height=args.resolution,
+                        width=args.resolution,
+                        dtype=prompt_embeds.dtype,
+                        device=accelerator.device,
+                        vae=vae,
+                        vae_scale_factor=8,
+                    )
+                    
+                    # 1. Pack noisy_latents, masked_image_latents, and mask separately, mimicking the official flux-fill pipeline.
+                    packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w) # (B, L, 64)
+                    
+                    packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w) # (B, L, 64)
+                    
+                    # The mask is 1 channel, but needs to be packed. The official pipeline expands it to vae_scale_factor^2 channels.
+                    vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+                    mask_c = vae_scale_factor ** 2 # Should be 8*8 = 64
+                    packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w) # (B, L, 256)
 
+                    # 2. Concatenate the packed latents along the feature dimension to create the final 384-dim input.
+                    transformer_hidden_states = torch.cat(
+                        [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
+                    )
+
+                elif args.model_type == 'qwen':
+                    # NOTE: This is a placeholder for Qwen's data preparation, mirroring the flux logic.
+                    logger.info("Using placeholder data preparation for Qwen model.", main_process_only=True)
+                    b, c, h, w = noisy_latents.shape
+                    mask_latents, masked_image_latents = prepare_mask_latents4training(
+                        mask=mask_image,
+                        masked_image=masked_image,
+                        batch_size=bsz,
+                        height=args.resolution,
+                        width=args.resolution,
+                        dtype=prompt_embeds.dtype,
+                        device=accelerator.device,
+                        vae=vae,
+                        vae_scale_factor=8,
+                    )
+                    
+                    packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w)
+                    packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+                    vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+                    mask_c = vae_scale_factor ** 2
+                    packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
+
+                    transformer_hidden_states = torch.cat(
+                        [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
+                    )
+
+
+                # Get image embeddings
+                with torch.no_grad():
+                    image_embeds = image_encoder(batch["clip_images"].to(accelerator.device, dtype=weight_dtype)).pooler_output
+                
+                image_embeds_ = []
+                for image_embed, drop_image_embed in zip(image_embeds, batch["drop_image_embeds"]):
+                    if drop_image_embed == 1:
+                        image_embeds_.append(torch.zeros_like(image_embed))
+                    else:
+                        image_embeds_.append(image_embed)
+                image_embeds = torch.stack(image_embeds_)
+                
+                ip_tokens = image_proj_model(image_embeds)
+
+                # Model prediction
+                guidance = torch.tensor([1.0], device=accelerator.device).expand(bsz)
+                height, width = latents.shape[2], latents.shape[3]
+                img_ids = prepare_latent_image_ids(height, width, accelerator.device, weight_dtype)
+                text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=accelerator.device, dtype=weight_dtype)
+
+                model_pred = transformer(
+                    hidden_states=transformer_hidden_states,
+                    timestep=timesteps / 1000,
+                    guidance=guidance,
+                    pooled_projections=pooled_prompt_embeds,
+                    encoder_hidden_states=prompt_embeds,
+                    image_emb=ip_tokens,
+                    txt_ids=text_ids,
+                    img_ids=img_ids,
+                    return_dict=False,
+                )[0]
+                
+                # --- MODEL-SPECIFIC POST-PROCESSING ---
+                if args.model_type == 'flux':
+                    model_pred = unpack_latents(model_pred, height * 8, width * 8, 16)
+                elif args.model_type == 'qwen':
+                    logger.info("Using placeholder post-processing for Qwen model.", main_process_only=True)
+                    model_pred = unpack_latents(model_pred, height * 8, width * 8, 16)
+
+                model_pred = model_pred * (-sigmas) + noisy_latents
+
+                # Loss calculation
+                weighting = compute_loss_weighting_for_sd3(weighting_scheme=args.weighting_scheme, sigmas=sigmas)
+                loss = torch.mean((weighting * (model_pred - latents) ** 2).reshape(bsz, -1), 1).mean()
+                
+                accelerator.backward(loss)
+                if accelerator.sync_gradients:
+                    attn_processors_unwrapped = accelerator.unwrap_model(transformer).attn_processors.values()
+                    params_to_clip = itertools.chain(
+                        accelerator.unwrap_model(image_proj_model).parameters(),
+                        *(p.parameters() for p in attn_processors_unwrapped)
+                    )
+                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                
+                if args.enable_memory_profiler and accelerator.sync_gradients:
+                    log_memory_breakdown(accelerator, f"Step {global_step} - Before Optimizer", models_dict, params_to_optimize)
+
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+            
+            if accelerator.sync_gradients:
+                progress_bar.update(1)
+                global_step += 1
                 logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
                 accelerator.log(logs, step=global_step)
+            
+        else:
+            # =======================================================
+            # ============== REINFORCEMENT LEARNING EPOCH =============
+            # =======================================================
+            
+            # ----------------- SAMPLING (ROLLOUT) -----------------
+            logger.info(f"RL Epoch: Starting Rollout Phase for {args.rl_num_batches_per_epoch} batches...")
+            
+            all_samples = []
+            for i in range(args.rl_num_batches_per_epoch):
+                try:
+                    batch = next(train_iter)
+                except StopIteration:
+                    train_iter = iter(train_dataloader)
+                    batch = next(train_iter)
+                
+                # Generate trajectories
+                images_pil, all_latents, all_log_probs = perform_rollout(
+                    args, vae, transformer, image_proj_model, 
+                    [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
+                    image_encoder, noise_scheduler, batch, weight_dtype, accelerator.device
+                )
 
-                if global_step >= args.max_train_steps:
-                    break
-        
+                # Get rewards
+                prompts = batch["prompts"]
+                rewards_data = reward_client.get_rewards_batch(images_pil, prompts)
+                
+                # Collate data
+                latents_tensor = torch.stack(all_latents, dim=1) # (B, T+1, C, H, W)
+                log_probs_tensor = torch.stack(all_log_probs, dim=1) # (B, T)
+                rewards_tensor = torch.tensor([r['combined_score'] for r in rewards_data], device=accelerator.device, dtype=torch.float32)
+                
+                all_samples.append({
+                    "prompts": prompts,
+                    "latents": latents_tensor[:, :-1], # x_t
+                    "next_latents": latents_tensor[:, 1:],  # x_{t-1}
+                    "log_probs": log_probs_tensor,
+                    "rewards": rewards_tensor,
+                })
+            
+            # Collate all batches into a single dictionary of tensors
+            samples = {
+                k: (torch.cat([s[k] for s in all_samples]) if torch.is_tensor(all_samples[0][k]) else [p for s in all_samples for p in s[k]])
+                for k in all_samples[0].keys()
+            }
+            
+            logger.info("RL Epoch: Rollout Phase Finished.")
+            
+            # ----------------- COMPUTE ADVANTAGES -----------------
+            # Placeholder: Advantage calculation logic will be implemented here.
+            
+            
+            # ----------------- TRAINING -----------------
+            logger.info("RL Epoch: Starting Training Phase...")
+            
+            # This section will loop for `rl_num_inner_epochs` and update the model
+            # using the PPO loss function.
+            
+            # Placeholder: Just advance the progress bar for now.
+            # The number of steps taken in one RL epoch depends on the collected data
+            # and gradient accumulation. This is a simplification.
+            steps_in_rl_epoch = 10 # Example value
+            for _ in range(steps_in_rl_epoch):
+                if global_step < args.max_train_steps:
+                    progress_bar.update(1)
+                    global_step += 1
+            
+            logger.info("RL Epoch: Training Phase Finished.")
+            
+        # Checkpointing logic
+        if global_step % args.checkpointing_steps == 0:
+            if accelerator.is_main_process:
+                save_path = Path(args.output_dir) / f"checkpoint-{global_step}"
+                accelerator.save_state(save_path)
+                logger.info(f"Saved state to {save_path}")
+
     accelerator.wait_for_everyone()
     accelerator.end_training()
 
-def main():
-    # Since our training loop is now async, we run it through asyncio
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        logger.info("Training interrupted by user.")
+def cli_main():
+    # The main logic is now synchronous.
+    main()
 
 if __name__ == "__main__":
-    main()
+    cli_main()

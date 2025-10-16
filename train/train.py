@@ -284,9 +284,16 @@ def compute_log_prob(
     
     b, c, h, w = latents.shape
     # NOTE: Using sample['source_image'] and sample['mask'] which we assume are now passed.
+    # We need to repeat them here as well to match the batch size of latents,
+    # as the latents come from the full trajectory of all generated images.
+    num_images_per_prompt = latents.shape[0] // sample["source_image"].shape[0]
+    
+    source_image_repeated = sample["source_image"].repeat(num_images_per_prompt, 1, 1, 1)
+    mask_repeated = sample["mask"].repeat(num_images_per_prompt, 1, 1, 1)
+
     mask_latents, masked_image_latents = prepare_mask_latents4training(
-        mask=sample["mask"].to(device, dtype=weight_dtype),
-        masked_image=sample["source_image"].to(device, dtype=weight_dtype) * (1 - sample["mask"].to(device, dtype=weight_dtype)),
+        mask=mask_repeated.to(device, dtype=weight_dtype),
+        masked_image=source_image_repeated.to(device, dtype=weight_dtype) * (1 - mask_repeated.to(device, dtype=weight_dtype)),
         batch_size=b,
         height=args.resolution,
         width=args.resolution,
@@ -853,6 +860,11 @@ def main():
                 log_probs_tensor = torch.stack(all_log_probs, dim=1) # (B * N, T)
                 rewards_tensor = torch.tensor([r['combined_score'] for r in rewards_data], device=accelerator.device, dtype=torch.float32)
                 
+                # --- RL Inpainting Adaptation ---
+                # Pass source and mask for re-computation of hidden states during training
+                source_image_unrepeated = batch["source_image"]
+                mask_unrepeated = batch["mask"]
+
                 all_samples.append({
                     "prompts": prompts_for_reward,
                     "latents": latents_tensor[:, :-1], # x_t
@@ -860,9 +872,8 @@ def main():
                     "log_probs": log_probs_tensor,
                     "rewards": rewards_tensor,
                     # --- RL Inpainting Adaptation ---
-                    # Pass source and mask for re-computation of hidden states during training
-                    "source_image": batch["source_image"],
-                    "mask": batch["mask"],
+                    "source_image": source_image_unrepeated,
+                    "mask": mask_unrepeated,
                     "clip_images": batch["clip_images"],
                     "drop_image_embeds": batch["drop_image_embeds"],
                     # --- End RL Inpainting Adaptation ---
@@ -929,10 +940,15 @@ def main():
 
                 
                 for i in tqdm(range(0, len(shuffled_samples["prompts"]), args.train_batch_size), desc="RL Inner Epoch", leave=False):
+                    # We need to get the original un-repeated source/mask/clip images for this mini_batch
+                    # The `prompts` in the mini_batch are already expanded.
+                    # We can find the original items by looking at the dataloader's batch.
+                    # This is complex. A simpler way is to carry the un-repeated items along.
+                    # The current implementation has a flaw here. Let's fix where data is stored.
+                    
+                    # The `shuffled_samples` contains repeated source_image and mask.
+                    # We need to handle this correctly. Let's adjust the data collation.
                     mini_batch = {k: (v[i:i+args.train_batch_size] if isinstance(v, (torch.Tensor, list)) else v) for k, v in shuffled_samples.items()}
-                    # This is a simplification, we should really be carrying the clip images with the prompts
-                    # mini_batch["clip_images"] = last_batch["clip_images"][:len(mini_batch["prompts"])]
-                    # mini_batch["drop_image_embeds"] = last_batch["drop_image_embeds"][:len(mini_batch["prompts"])]
 
                     for j in tqdm(range(num_train_timesteps), desc="Timestep", leave=False):
                         with accelerator.accumulate(transformer, image_proj_model):

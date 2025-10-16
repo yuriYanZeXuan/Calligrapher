@@ -110,9 +110,8 @@ def perform_rollout(
     ip_tokens = ip_tokens.repeat(num_images_per_prompt, 1, 1)
     source_latents = source_latents.repeat(num_images_per_prompt, 1, 1, 1)
 
-    # Repeat mask and source_image for the denoising loop
-    mask_image = mask_image.repeat(num_images_per_prompt, 1, 1, 1)
-    source_image = source_image.repeat(num_images_per_prompt, 1, 1, 1)
+    # NOTE: We DO NOT repeat mask_image and source_image here.
+    # They will be handled inside the loop to avoid double-repeating.
     
     # 2. Prepare Latents
     # Generate a unique noise for each sample
@@ -140,9 +139,12 @@ def perform_rollout(
         # --- RL Inpainting Adaptation ---
         # Create the packed hidden states required by the inpainting transformer
         b, c, h, w = latents.shape
+        
+        # NOTE: Pass the original, un-repeated mask and source image from the batch.
+        # The `prepare_mask_latents4training` function is expected to handle the batching internally.
         mask_latents, masked_image_latents = prepare_mask_latents4training(
-            mask=mask_image,
-            masked_image=source_image * (1 - mask_image),
+            mask=batch["mask"].to(device, dtype=weight_dtype),
+            masked_image=batch["source_image"].to(device, dtype=weight_dtype) * (1 - batch["mask"].to(device, dtype=weight_dtype)),
             batch_size=b,
             height=args.resolution,
             width=args.resolution,

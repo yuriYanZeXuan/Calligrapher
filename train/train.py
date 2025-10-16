@@ -874,6 +874,8 @@ def main():
                 source_image_unrepeated = batch["source_image"]
                 mask_unrepeated = batch["mask"]
 
+                num_repeats = args.rl_num_images_per_prompt
+
                 all_samples.append({
                     "prompts": prompts_for_reward,
                     "latents": latents_tensor[:, :-1], # x_t
@@ -881,10 +883,10 @@ def main():
                     "log_probs": log_probs_tensor,
                     "rewards": rewards_tensor,
                     # --- RL Inpainting Adaptation ---
-                    "source_image": source_image_unrepeated,
-                    "mask": mask_unrepeated,
-                    "clip_images": batch["clip_images"],
-                    "drop_image_embeds": batch["drop_image_embeds"],
+                    "source_image": source_image_unrepeated.repeat(num_repeats, 1, 1, 1),
+                    "mask": mask_unrepeated.repeat(num_repeats, 1, 1, 1),
+                    "clip_images": batch["clip_images"].repeat(num_repeats, 1, 1, 1),
+                    "drop_image_embeds": batch["drop_image_embeds"].repeat(num_repeats),
                     # --- End RL Inpainting Adaptation ---
                 })
             

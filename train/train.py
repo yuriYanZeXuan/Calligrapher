@@ -825,6 +825,10 @@ def main():
                 for k in all_samples[0].keys()
             }
             
+            # ---Explicitly free memory from the rollout phase before starting training---
+            del all_samples
+            torch.cuda.empty_cache()
+
             logger.info("RL Epoch: Rollout Phase Finished.")
             
             # ----------------- COMPUTE ADVANTAGES -----------------

@@ -25,7 +25,7 @@ import torch
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from accelerate.utils import set_seed
+from accelerate.utils import set_seed, gather_object
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_density_for_timestep_sampling, compute_loss_weighting_for_sd3

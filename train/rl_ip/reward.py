@@ -6,6 +6,7 @@ import numpy as np
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +20,8 @@ class RewardClient:
         self.ocr_weight = ocr_weight
         self.vlm_weight = vlm_weight
         self.executor = ThreadPoolExecutor(max_workers=len(server_urls))
-        self.next_server_idx = 0
+        # Start at a random server index to better distribute load when multiple clients start
+        self.next_server_idx = random.randint(0, len(self.server_urls) - 1) if self.server_urls else 0
         logger.info(f"RewardClient initialized for {len(server_urls)} server(s). OCR weight: {ocr_weight}, VLM weight: {vlm_weight}")
 
     def get_reward_single(self, server_url: str, image: Image.Image, prompt: str) -> dict:
@@ -60,9 +62,15 @@ class RewardClient:
         using a round-robin distribution.
         """
         futures = []
-        for i, (image, prompt) in enumerate(zip(images, prompts)):
-            # Distribute requests to servers in a round-robin fashion
-            server_url = self.server_urls[i % len(self.server_urls)]
+        # The loop iterates through each image/prompt pair in the batch.
+        for image, prompt in zip(images, prompts):
+            # Distribute requests to servers in a round-robin fashion.
+            # We use a stateful index `self.next_server_idx` to ensure that
+            # requests are distributed across *multiple calls* to this method,
+            # which is crucial when the batch size is small.
+            server_url = self.server_urls[self.next_server_idx]
+            self.next_server_idx = (self.next_server_idx + 1) % len(self.server_urls)
+            
             futures.append(self.executor.submit(self.get_reward_single, server_url, image, prompt))
         
         results = [future.result() for future in futures]

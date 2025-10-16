@@ -140,11 +140,17 @@ def perform_rollout(
         # Create the packed hidden states required by the inpainting transformer
         b, c, h, w = latents.shape
         
-        # NOTE: Pass the original, un-repeated mask and source image from the batch.
-        # The `prepare_mask_latents4training` function is expected to handle the batching internally.
+        # Create the masked image for the VAE. This needs to be pre-repeated to match the batch size `b`.
+        source_image_repeated = batch["source_image"].to(device, dtype=weight_dtype).repeat(b, 1, 1, 1)
+        mask_repeated_for_mult = batch["mask"].to(device, dtype=weight_dtype).repeat(b, 1, 1, 1)
+        masked_image_for_prep = source_image_repeated * (1 - mask_repeated_for_mult)
+        
+        # Call the utils function with the correct inputs:
+        # - mask: The original, un-repeated mask (the util handles its batching).
+        # - masked_image: The pre-repeated image (the util does not handle its batching).
         mask_latents, masked_image_latents = prepare_mask_latents4training(
             mask=batch["mask"].to(device, dtype=weight_dtype),
-            masked_image=batch["source_image"].to(device, dtype=weight_dtype) * (1 - batch["mask"].to(device, dtype=weight_dtype)),
+            masked_image=masked_image_for_prep,
             batch_size=b,
             height=args.resolution,
             width=args.resolution,
@@ -290,12 +296,13 @@ def compute_log_prob(
     # as the latents come from the full trajectory of all generated images.
     num_images_per_prompt = latents.shape[0] // sample["source_image"].shape[0]
     
-    source_image_repeated = sample["source_image"].repeat(num_images_per_prompt, 1, 1, 1)
-    mask_repeated = sample["mask"].repeat(num_images_per_prompt, 1, 1, 1)
+    source_image_repeated = sample["source_image"].to(device, dtype=weight_dtype).repeat(num_images_per_prompt, 1, 1, 1)
+    mask_repeated_for_mult = sample["mask"].to(device, dtype=weight_dtype).repeat(num_images_per_prompt, 1, 1, 1)
+    masked_image_for_prep = source_image_repeated * (1 - mask_repeated_for_mult)
 
     mask_latents, masked_image_latents = prepare_mask_latents4training(
-        mask=mask_repeated.to(device, dtype=weight_dtype),
-        masked_image=source_image_repeated.to(device, dtype=weight_dtype) * (1 - mask_repeated.to(device, dtype=weight_dtype)),
+        mask=sample["mask"].to(device, dtype=weight_dtype), # Pass original mask
+        masked_image=masked_image_for_prep, # Pass pre-repeated masked image
         batch_size=b,
         height=args.resolution,
         width=args.resolution,

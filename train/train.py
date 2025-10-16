@@ -446,7 +446,7 @@ def parse_args():
     parser.add_argument("--rl_timestep_fraction", type=float, default=1.0, help="Fraction of timesteps to train on per trajectory.")
     parser.add_argument("--rl_num_inner_epochs", type=int, default=1, help="Number of training epochs on the sampled data.")
     parser.add_argument("--rl_adv_clip_max", type=float, default=5, help="Max value for advantage clipping.")
-    parser.add_argument("--rl_pggo_clip_range", type=float, default=0.2, help="PPO clipping range.")
+    parser.add_argument("--rl_grpo_clip_range", type=float, default=0.2, help="PPO clipping range for GRPO.")
     parser.add_argument("--rl_kl_beta", type=float, default=0.1, help="Beta coefficient for the KL penalty term.")
     
     
@@ -942,13 +942,13 @@ def main():
                                 image_encoder, noise_scheduler, mini_batch, j, weight_dtype, accelerator.device
                             )
                             
-                            # PGGO/PPO loss calculation
+                            # GRPO/PPO loss calculation
                             ratio = torch.exp(log_prob - mini_batch["log_probs"][:, j])
                             advantages_batch = mini_batch["advantages"]
                             
                             unclipped_loss = -advantages_batch * ratio
                             clipped_loss = -advantages_batch * torch.clamp(
-                                ratio, 1.0 - args.rl_pggo_clip_range, 1.0 + args.rl_pggo_clip_range
+                                ratio, 1.0 - args.rl_grpo_clip_range, 1.0 + args.rl_grpo_clip_range
                             )
                             policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
                             

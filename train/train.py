@@ -64,6 +64,8 @@ def perform_rollout(
     """
     Performs a single rollout to generate trajectories (images, latents, log_probs).
     """
+    num_images_per_prompt = args.rl_num_images_per_prompt
+    
     # 1. Prepare Inputs
     prompts = batch["prompts"]
     
@@ -101,8 +103,19 @@ def perform_rollout(
     # VAE encode the source image to get latents that will be combined with noise.
     source_latents = vae.encode(source_image * (1 - mask_image)).latent_dist.sample() * vae.config.scaling_factor
     source_latents = source_latents.to(dtype=weight_dtype)
+
+    # --- Repeat inputs for multiple samples per prompt ---
+    prompt_embeds = prompt_embeds.repeat(num_images_per_prompt, 1, 1)
+    pooled_prompt_embeds = pooled_prompt_embeds.repeat(num_images_per_prompt, 1)
+    ip_tokens = ip_tokens.repeat(num_images_per_prompt, 1, 1)
+    source_latents = source_latents.repeat(num_images_per_prompt, 1, 1, 1)
+
+    # Repeat mask and source_image for the denoising loop
+    mask_image = mask_image.repeat(num_images_per_prompt, 1, 1, 1)
+    source_image = source_image.repeat(num_images_per_prompt, 1, 1, 1)
     
     # 2. Prepare Latents
+    # Generate a unique noise for each sample
     noise = torch.randn_like(source_latents)
     # Start the diffusion process from the noised source image latents
     # Manually add noise for the first timestep, as FlowMatchEulerDiscreteScheduler lacks a .add_noise() method.
@@ -197,6 +210,14 @@ def perform_rollout(
     # 4. Decode Final Latent to Image
     latents = latents / vae.config.scaling_factor
     images_tensor = vae.decode(latents.to(vae.dtype)).sample
+
+    # --- Sanitize and Normalize Output ---
+    # Replace any NaNs or Infs that can occur during RL training with a stable value.
+    images_tensor = torch.nan_to_num(images_tensor)
+    # Clamp the values to the expected [-1, 1] range, then normalize to [0, 1]
+    images_tensor = (images_tensor / 2 + 0.5).clamp(0, 1)
+    
+    # Convert to PIL images
     images_pil = [(t.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8) for t in images_tensor]
     images_pil = [Image.fromarray(img) for img in images_pil]
 
@@ -417,6 +438,7 @@ def parse_args():
     parser.add_argument("--logging_dir", type=str, default="logs")
 
     # --- RL Sampling and Training ---
+    parser.add_argument("--rl_num_images_per_prompt", type=int, default=1, help="Number of images to generate per prompt during RL.")
     parser.add_argument("--rl_per_prompt_stat_tracking", action="store_true", help="Enable per-prompt advantage normalization (GRPO).")
     parser.add_argument("--rl_num_batches_per_epoch", type=int, default=1, help="Number of batches to sample per RL epoch.")
     parser.add_argument("--rl_num_inference_steps", type=int, default=50, help="Number of diffusion steps for sampling.")
@@ -822,15 +844,17 @@ def main():
 
                 # Get rewards
                 prompts = batch["prompts"]
-                rewards_data = reward_client.get_rewards_batch(images_pil, prompts)
+                # Repeat prompts for each generated image to match the reward client's input format
+                prompts_for_reward = [p for p in prompts for _ in range(args.rl_num_images_per_prompt)]
+                rewards_data = reward_client.get_rewards_batch(images_pil, prompts_for_reward)
                 
                 # Collate data
-                latents_tensor = torch.stack(all_latents, dim=1) # (B, T+1, C, H, W)
-                log_probs_tensor = torch.stack(all_log_probs, dim=1) # (B, T)
+                latents_tensor = torch.stack(all_latents, dim=1) # (B * N, T+1, C, H, W)
+                log_probs_tensor = torch.stack(all_log_probs, dim=1) # (B * N, T)
                 rewards_tensor = torch.tensor([r['combined_score'] for r in rewards_data], device=accelerator.device, dtype=torch.float32)
                 
                 all_samples.append({
-                    "prompts": prompts,
+                    "prompts": prompts_for_reward,
                     "latents": latents_tensor[:, :-1], # x_t
                     "next_latents": latents_tensor[:, 1:],  # x_{t-1}
                     "log_probs": log_probs_tensor,
@@ -948,10 +972,14 @@ def main():
                                 )
                                 accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                             
+                                if args.enable_memory_profiler:
+                                    log_memory_breakdown(accelerator, f"Step {global_step} - Before Optimizer", models_dict, params_to_optimize)
+
                             optimizer.step()
                             lr_scheduler.step()
                             optimizer.zero_grad()
 
+                        # Checks if the accelerator has performed an optimization step behind the scenes
                         if accelerator.sync_gradients:
                             progress_bar.update(1)
                             global_step += 1
@@ -972,7 +1000,7 @@ def main():
                 if global_step >= args.max_train_steps:
                     break
             
-            # Checkpointing logic
+            # Checkpointing logic should be outside the inner loops but inside the main while loop
             if global_step % args.checkpointing_steps == 0:
                 if accelerator.is_main_process:
                     save_path = Path(args.output_dir) / f"checkpoint-{global_step}"

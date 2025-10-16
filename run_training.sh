@@ -17,7 +17,7 @@ OUTPUT_DIR="./output_flux"
 MODEL_TYPE="flux" # "flux" or "qwen"
 
 # -- Training Mode --
-USE_RL=false
+USE_RL=true
 USE_8BIT_ADAM=true
 # Set to "true" to disable connecting to the reward server and use random rewards instead.
 DISABLE_RL_REWARD_MODEL=false
@@ -54,6 +54,7 @@ VLM_REWARD_WEIGHT=0.3
 
 # -- New RL Sampling and Training Parameters --
 RL_NUM_BATCHES_PER_EPOCH=1
+RL_NUM_IMAGES_PER_PROMPT=12
 RL_NUM_INFERENCE_STEPS=3
 RL_TIMESTEP_FRACTION=0.5
 RL_NUM_INNER_EPOCHS=1
@@ -137,6 +138,7 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   --enable_memory_profiler \
   --rl_per_prompt_stat_tracking \
   --rl_num_batches_per_epoch=$RL_NUM_BATCHES_PER_EPOCH \
+  --rl_num_images_per_prompt=$RL_NUM_IMAGES_PER_PROMPT \
   --rl_num_inference_steps=$RL_NUM_INFERENCE_STEPS \
   --rl_timestep_fraction=$RL_TIMESTEP_FRACTION \
   --rl_num_inner_epochs=$RL_NUM_INNER_EPOCHS \

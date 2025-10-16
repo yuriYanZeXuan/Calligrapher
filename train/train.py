@@ -67,9 +67,17 @@ def perform_rollout(
     # 1. Prepare Inputs
     prompts = batch["prompts"]
     
+    # --- Offload logic for text_encoder_two ---
+    text_encoder_one, text_encoder_two = text_encoders
+    text_encoder_two.to(device, dtype=weight_dtype)
+    
     prompt_embeds, pooled_prompt_embeds = encode_prompt(
-        text_encoders, tokenizers, prompts, device, max_sequence_length=args.max_sequence_length
+        [text_encoder_one, text_encoder_two], tokenizers, prompts, device, max_sequence_length=args.max_sequence_length
     )
+    
+    text_encoder_two.to("cpu")
+    torch.cuda.empty_cache()
+    # --- End Offload logic ---
     
     with torch.no_grad():
         image_embeds = image_encoder(batch["clip_images"].to(device, dtype=weight_dtype)).pooler_output
@@ -204,9 +212,17 @@ def compute_log_prob(
     # 1. Prepare Inputs from the sampled data
     prompts = sample["prompts"]
     
+    # --- Offload logic for text_encoder_two ---
+    text_encoder_one, text_encoder_two = text_encoders
+    text_encoder_two.to(device, dtype=weight_dtype)
+
     prompt_embeds, pooled_prompt_embeds = encode_prompt(
-        text_encoders, tokenizers, prompts, device, max_sequence_length=args.max_sequence_length
+        [text_encoder_one, text_encoder_two], tokenizers, prompts, device, max_sequence_length=args.max_sequence_length
     )
+
+    text_encoder_two.to("cpu")
+    torch.cuda.empty_cache()
+    # --- End Offload logic ---
     
     with torch.no_grad():
         image_embeds = image_encoder(sample["clip_images"].to(device, dtype=weight_dtype)).pooler_output
@@ -481,9 +497,13 @@ def main():
     
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder_one.to(accelerator.device, dtype=weight_dtype)
-    text_encoder_two.to(accelerator.device, dtype=weight_dtype)
     image_encoder.to(accelerator.device, dtype=weight_dtype)
     transformer.to(accelerator.device, dtype=weight_dtype)
+    
+    # Offload text_encoder_two to CPU to save VRAM. It will be moved to the GPU only when needed.
+    if accelerator.is_main_process:
+        logger.info("Offloading text_encoder_two to CPU to save VRAM.")
+    text_encoder_two.to("cpu")
     
     if args.gradient_checkpointing:
         transformer.gradient_checkpointing = True
@@ -613,10 +633,15 @@ def main():
                 prompts = batch["prompts"]
                 
                 # Get text embeddings
+                # --- Offload logic for text_encoder_two ---
+                text_encoder_two.to(accelerator.device, dtype=weight_dtype)
                 prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two], 
                     prompts, accelerator.device, max_sequence_length=args.max_sequence_length
                 )
+                text_encoder_two.to("cpu")
+                torch.cuda.empty_cache()
+                # --- End Offload logic ---
 
                 # VAE encode
                 latents = vae.encode(pixel_values).latent_dist.sample() * vae.config.scaling_factor

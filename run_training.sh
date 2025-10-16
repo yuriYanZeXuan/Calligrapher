@@ -17,7 +17,7 @@ OUTPUT_DIR="./output_flux"
 MODEL_TYPE="flux" # "flux" or "qwen"
 
 # -- Training Mode --
-USE_RL=true
+USE_RL=false
 USE_8BIT_ADAM=true
 # Set to "true" to disable connecting to the reward server and use random rewards instead.
 DISABLE_RL_REWARD_MODEL=false
@@ -26,7 +26,7 @@ DISABLE_RL_REWARD_MODEL=false
 # Specify the GPU IDs to use for training, e.g., "0,1,2,3".
 # If empty, `accelerate` will use its default configuration from `accelerate config`.
 TRAINING_GPU_IDS="0,1,2,3"
-GRADIENT_ACCUMULATION_STEPS=8
+GRADIENT_ACCUMULATION_STEPS=2
 GRADIENT_CHECKPOINTING=true
 
 # --- 2. Reward Server Configuration ---
@@ -38,7 +38,7 @@ REWARD_SERVER_PORT=8000
 # --- 3. Training Parameters ---
 
 # -- Basic Parameters --
-RESOLUTION=256
+RESOLUTION=512
 TRAIN_BATCH_SIZE=1
 NUM_TRAIN_EPOCHS=10
 CHECKPOINTING_STEPS=500

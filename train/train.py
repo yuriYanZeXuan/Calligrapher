@@ -507,15 +507,8 @@ def main():
     # --- RL Setup ---
     if args.use_rl:
         if not args.no_rl_reward_model:
-            from urllib.parse import urlparse, urlunparse
-            parsed_url = urlparse(args.reward_server_url)
-            base_port = parsed_url.port
-            # Assume we have as many reward servers as training processes for optimal parallelism
-            num_reward_servers = accelerator.num_processes
-            reward_server_urls = [
-                urlunparse(parsed_url._replace(netloc=f"{parsed_url.hostname}:{base_port + i}"))
-                for i in range(num_reward_servers)
-            ]
+            # FIX: The shell script now provides a comma-separated list. Simply split it.
+            reward_server_urls = args.reward_server_url.split(',')
             logger.info(f"Process {accelerator.process_index} connecting to reward servers: {reward_server_urls}")
             reward_client = RewardClient(
                 server_urls=reward_server_urls, 

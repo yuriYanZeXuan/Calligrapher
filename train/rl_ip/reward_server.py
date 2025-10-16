@@ -7,6 +7,7 @@ from PIL import Image
 import uvicorn
 from pydantic import BaseModel
 import logging
+import os
 
 # Import both scorers
 from qwenvl import QwenVLScorer
@@ -36,6 +37,9 @@ async def startup_event():
 @app.post("/score")
 async def get_score(request: ScoreRequest):
     try:
+        gpu_id = os.environ.get('CUDA_VISIBLE_DEVICES', 'N/A')
+        logger.info(f"Received score request on GPU: {gpu_id}")
+
         image_data = base64.b64decode(request.image)
         image_pil = Image.open(io.BytesIO(image_data))
         

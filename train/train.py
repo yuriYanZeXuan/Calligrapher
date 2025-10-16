@@ -840,22 +840,9 @@ def main():
             # Gather rewards and prompts across all processes
             gathered_rewards = accelerator.gather(samples["rewards"]).cpu().numpy()
             
-            # We need to gather prompts too for per-prompt stat tracking
-            # Since prompts are strings, we can't use accelerator.gather directly.
-            # A common trick is to gather some tensor that has the same batch dimension
-            # and then use that to figure out which process sent which prompt.
-            # For simplicity, let's assume each process can send its prompts to the main process.
-            # This part might need a more robust implementation for multi-node.
-            all_prompts = ["" for _ in range(len(gathered_rewards))]
+            # --- Gather prompts from all processes using the modern `gather_object` utility ---
             prompts_this_process = samples["prompts"]
-            
-            # Create a placeholder tensor to gather and find out the order
-            order_tensor = torch.arange(len(prompts_this_process), device=accelerator.device) + accelerator.process_index * 1000
-            gathered_order = accelerator.gather(order_tensor).cpu().numpy()
-            
-            # This is a bit of a hack to reconstruct the prompt list on each process
-            # A better way would be to use accelerate.gather_object (if available and performant)
-            all_gathered_prompts = accelerator.gather_object(prompts_this_process)
+            all_gathered_prompts = gather_object(prompts_this_process)
 
             if accelerator.is_main_process:
                 if args.rl_per_prompt_stat_tracking:

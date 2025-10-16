@@ -43,7 +43,6 @@ def get_t5_prompt_embeds(
     tokenizer_2,
     prompt: Union[str, List[str]] = None,
     num_images_per_prompt: int = 1,
-    max_sequence_length: int = 512,
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
 ):
@@ -54,7 +53,7 @@ def get_t5_prompt_embeds(
     text_inputs = tokenizer_2(
         prompt,
         padding="max_length",
-        max_length=max_sequence_length,
+        max_length=tokenizer_2.model_max_length,
         truncation=True,
         return_length=False,
         return_overflowing_tokens=False,
@@ -122,7 +121,6 @@ def encode_prompt(
         tokenizers[1],
         prompt=prompt,
         num_images_per_prompt=num_images_per_prompt,
-        max_sequence_length=max_sequence_length,
         device=device,
     )
     return prompt_embeds, pooled_prompt_embeds

@@ -513,6 +513,39 @@ def main():
         project_dir=logging_dir,
     )
 
+    # --- FIX: Create a hook to save the final model weights for inference ---
+    def save_model_hook(models, weights, output_dir):
+        """
+        This hook is called just before saving the state.
+        It saves the IP-Adapter weights in a separate, inference-ready file.
+        """
+        if accelerator.is_main_process:
+            # 1. Save the image projection model
+            image_proj_model_state_dict = accelerator.unwrap_model(image_proj_model).state_dict()
+            torch.save(image_proj_model_state_dict, os.path.join(output_dir, "image_proj.safetensors"))
+
+            # 2. Save the attention processors from the unwrapped transformer
+            unwrapped_transformer = accelerator.unwrap_model(transformer)
+            attn_processors = unwrapped_transformer.attn_processors
+            attn_processors_state_dict = {}
+            for attn_processor_name, attn_processor in attn_processors.items():
+                for k, v in attn_processor.state_dict().items():
+                    attn_processors_state_dict[f"{attn_processor_name}.{k}"] = v
+            torch.save(attn_processors_state_dict, os.path.join(output_dir, "ip_adapter.safetensors"))
+
+            logger.info(f"Saved IP-Adapter state for inference to {output_dir}")
+
+    # --- FIX: Create a hook for loading weights ---
+    def load_model_hook(models, input_dir):
+        """
+        This hook is called just before loading the state.
+        It loads the IP-Adapter weights from our custom saved files.
+        """
+        # This hook is less critical for this problem but good practice for completeness.
+        # For now, we only log that it's being called.
+        logger.info(f"Attempting to load model from hook at {input_dir}, but not implemented.")
+        pass
+
     # --- FIX: Explicitly initialize the trackers on the main process ---
     # This ensures the logging directory is created and TensorBoard is ready to receive data.
     if accelerator.is_main_process:
@@ -650,6 +683,11 @@ def main():
     transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler
     )
+
+    # --- FIX: Register the save and load hooks ---
+    # The hook will be called automatically when accelerator.save_state is called.
+    accelerator.register_save_state_pre_hook(save_model_hook)
+    accelerator.register_load_state_pre_hook(load_model_hook)
 
     # --- Training ---
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -1062,6 +1100,10 @@ def main():
                             accelerator.log(log_data, step=global_step)
                             progress_bar.set_postfix(**log_data)
                             
+                            # --- FIX: Flush RL logs to TensorBoard for real-time monitoring ---
+                            if accelerator.is_main_process:
+                                accelerator.get_tracker("tensorboard").tracker.flush()
+                            
                             if global_step >= args.max_train_steps:
                                 break
                     if global_step >= args.max_train_steps:
@@ -1077,6 +1119,13 @@ def main():
                     logger.info(f"Saved state to {save_path}")
 
     accelerator.wait_for_everyone()
+    
+    # --- FIX: Save the final state at the end of training ---
+    if accelerator.is_main_process:
+        final_save_path = Path(args.output_dir) / "final_checkpoint"
+        accelerator.save_state(final_save_path)
+        logger.info(f"Saved final state to {final_save_path}")
+
     accelerator.end_training()
 
 def cli_main():

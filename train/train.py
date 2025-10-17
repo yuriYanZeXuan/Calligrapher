@@ -619,12 +619,13 @@ def main():
             logger.info(f"Loading initial IP-Adapter weights from: {args.initial_ip_adapter_path}")
         state_dict = torch.load(args.initial_ip_adapter_path, map_location="cpu")
         
-        # Load image_proj_model weights
-        image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
+        # --- FIX: Use the correct keys from the provided .bin file ---
+        # Load image_proj_model weights from the 'image_proj_mlp' key
+        image_proj_model.load_state_dict(state_dict["image_proj_mlp"], strict=True)
         
-        # Load attn_processors weights
+        # Load attn_processors weights from the 'attn_adapter' key
         adapter_modules = torch.nn.ModuleList(transformer.attn_processors.values())
-        adapter_modules.load_state_dict(state_dict["ip_adapter"])
+        adapter_modules.load_state_dict(state_dict["attn_adapter"])
         
         if accelerator.is_main_process:
             logger.info("Successfully loaded initial IP-Adapter weights.")

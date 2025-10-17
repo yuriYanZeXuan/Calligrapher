@@ -19,6 +19,7 @@ MODEL_TYPE="flux" # "flux" or "qwen"
 # -- Training Mode --
 USE_RL=true
 USE_8BIT_ADAM=true
+OFFLOAD_TEXT_ENCODER_TWO=true
 # Set to "true" to disable connecting to the reward server and use random rewards instead.
 DISABLE_RL_REWARD_MODEL=false
 
@@ -137,6 +138,7 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   $( [ "$USE_8BIT_ADAM" = true ] && echo "--use_8bit_adam" )\
   --gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS \
   $( [ "$GRADIENT_CHECKPOINTING" = true ] && echo "--gradient_checkpointing" ) \
+  $( [ "$OFFLOAD_TEXT_ENCODER_TWO" = true ] && echo "--offload_text_encoder_two" ) \
   --enable_memory_profiler \
   --rl_per_prompt_stat_tracking \
   --rl_num_batches_per_epoch=$RL_NUM_BATCHES_PER_EPOCH \

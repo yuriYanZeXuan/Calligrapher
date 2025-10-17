@@ -71,14 +71,16 @@ def perform_rollout(
     
     # --- Offload logic for text_encoder_two ---
     text_encoder_one, text_encoder_two = text_encoders
-    text_encoder_two.to(device, dtype=weight_dtype)
+    if args.offload_text_encoder_two:
+        text_encoder_two.to(device, dtype=weight_dtype)
     
     prompt_embeds, pooled_prompt_embeds = encode_prompt(
         [text_encoder_one, text_encoder_two], tokenizers, prompts, device, max_sequence_length=args.max_sequence_length
     )
     
-    text_encoder_two.to("cpu")
-    torch.cuda.empty_cache()
+    if args.offload_text_encoder_two:
+        text_encoder_two.to("cpu")
+        torch.cuda.empty_cache()
     # --- End Offload logic ---
     
     with torch.no_grad():
@@ -248,14 +250,16 @@ def compute_log_prob(
     
     # --- Offload logic for text_encoder_two ---
     text_encoder_one, text_encoder_two = text_encoders
-    text_encoder_two.to(device, dtype=weight_dtype)
+    if args.offload_text_encoder_two:
+        text_encoder_two.to(device, dtype=weight_dtype)
 
     prompt_embeds, pooled_prompt_embeds = encode_prompt(
         [text_encoder_one, text_encoder_two], tokenizers, prompts, device, max_sequence_length=args.max_sequence_length
     )
 
-    text_encoder_two.to("cpu")
-    torch.cuda.empty_cache()
+    if args.offload_text_encoder_two:
+        text_encoder_two.to("cpu")
+        torch.cuda.empty_cache()
     # --- End Offload logic ---
     
     with torch.no_grad():
@@ -450,6 +454,7 @@ def parse_args():
 
     # --- Memory/Speed Optimizations ---
     parser.add_argument("--gradient_checkpointing", action="store_true", help="Enable gradient checkpointing.")
+    parser.add_argument("--offload_text_encoder_two", action="store_true", help="Offload text_encoder_two to CPU to save VRAM.")
     parser.add_argument("--no_rl_reward_model", action="store_true", help="Disable loading the VLM reward model and use random rewards for testing.")
     parser.add_argument("--use_8bit_adam", action="store_true", help="Use 8-bit AdamW optimizer.")
     parser.add_argument("--enable_memory_profiler", action="store_true", help="Enable detailed memory usage logging.")
@@ -544,9 +549,12 @@ def main():
     transformer.to(accelerator.device, dtype=weight_dtype)
     
     # Offload text_encoder_two to CPU to save VRAM. It will be moved to the GPU only when needed.
-    if accelerator.is_main_process:
-        logger.info("Offloading text_encoder_two to CPU to save VRAM.")
-    text_encoder_two.to("cpu")
+    if args.offload_text_encoder_two:
+        if accelerator.is_main_process:
+            logger.info("Offloading text_encoder_two to CPU to save VRAM.")
+        text_encoder_two.to("cpu")
+    else:
+        text_encoder_two.to(accelerator.device, dtype=weight_dtype)
     
     if args.gradient_checkpointing:
         transformer.gradient_checkpointing = True
@@ -677,13 +685,15 @@ def main():
                 
                 # Get text embeddings
                 # --- Offload logic for text_encoder_two ---
-                text_encoder_two.to(accelerator.device, dtype=weight_dtype)
+                if args.offload_text_encoder_two:
+                    text_encoder_two.to(accelerator.device, dtype=weight_dtype)
                 prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two], 
                     prompts, accelerator.device, max_sequence_length=args.max_sequence_length
                 )
-                text_encoder_two.to("cpu")
-                torch.cuda.empty_cache()
+                if args.offload_text_encoder_two:
+                    text_encoder_two.to("cpu")
+                    torch.cuda.empty_cache()
                 # --- End Offload logic ---
 
                 # VAE encode
@@ -828,11 +838,14 @@ def main():
                         *(p.parameters() for p in attn_processors_unwrapped)
                     )
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
-                
-                if args.enable_memory_profiler and accelerator.sync_gradients:
-                    log_memory_breakdown(accelerator, f"Step {global_step} - Before Optimizer", models_dict, params_to_optimize)
 
                 optimizer.step()
+
+                if args.enable_memory_profiler and accelerator.sync_gradients:
+                    log_memory_breakdown(
+                        accelerator, f"Step {global_step} - After Step / Before Zero Grad", models_dict, params_to_optimize
+                    )
+
                 lr_scheduler.step()
                 optimizer.zero_grad()
             
@@ -916,6 +929,12 @@ def main():
             # Gather rewards and prompts across all processes
             gathered_rewards = accelerator.gather(samples["rewards"]).cpu().numpy()
             
+            # --- NEW TENSORBOARD LOGGING ---
+            if accelerator.is_main_process:
+                mean_reward = gathered_rewards.mean()
+                accelerator.log({"rl_epoch/mean_reward": mean_reward}, step=global_step)
+            # --- END NEW TENSORBOARD LOGGING ---
+
             # --- Gather prompts from all processes using the modern `gather_object` utility ---
             prompts_this_process = samples["prompts"]
             all_gathered_prompts = gather_object(prompts_this_process)
@@ -1006,11 +1025,14 @@ def main():
                                     *(p.parameters() for p in accelerator.unwrap_model(transformer).attn_processors.values())
                                 )
                                 accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
-                            
-                                if args.enable_memory_profiler:
-                                    log_memory_breakdown(accelerator, f"Step {global_step} - Before Optimizer", models_dict, params_to_optimize)
 
                             optimizer.step()
+
+                            if accelerator.sync_gradients and args.enable_memory_profiler:
+                                log_memory_breakdown(
+                                    accelerator, f"Step {global_step} - After Step / Before Zero Grad", models_dict, params_to_optimize
+                                )
+
                             lr_scheduler.step()
                             optimizer.zero_grad()
 

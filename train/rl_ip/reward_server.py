@@ -75,7 +75,7 @@ def main():
     ocr_scorer = OCRScorer()
     logger.info("OCRScorer model loaded successfully.")
     
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port, log_config=None)
 
 if __name__ == "__main__":
     main()

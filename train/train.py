@@ -861,6 +861,12 @@ def main():
                 logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
                 accelerator.log(logs, step=global_step)
+
+                # --- FIX: Explicitly flush the tracker to disk ---
+                # This forces the log data from the memory buffer to be written to the
+                # events file immediately, making it visible to TensorBoard.
+                if accelerator.is_main_process:
+                    accelerator.get_tracker("tensorboard").tracker.flush()
             
         else:
             # =======================================================

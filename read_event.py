@@ -50,3 +50,5 @@ if __name__ == "__main__":
     else:
         file_path = sys.argv[1]
         read_event_file(file_path)
+
+# python read_event.py ./output_flux/logs/calligrapher_rl_training/events.out.tfevents.1760674820.bsud-quicksilver-whht-2.2134537.0

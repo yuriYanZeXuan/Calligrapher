@@ -38,6 +38,10 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+# --- Create Log Directory ---
+LOG_DIR="logs"
+mkdir -p "$LOG_DIR"
+
 # --- Launch Server(s) ---
 echo "--- Launching Reward Server(s) ---"
 echo "Model Path: $VLM_MODEL_PATH"
@@ -48,6 +52,7 @@ echo "---------------------------------"
 # Convert comma-separated string to an array of GPUs
 IFS=',' read -r -a GPUS <<< "$GPU_IDS"
 PIDS=()
+LOG_FILES=()
 
 # Define a function to clean up all server processes on exit
 cleanup() {
@@ -68,7 +73,8 @@ trap cleanup EXIT
 
 CURRENT_PORT=$PORT
 for gpu_id in "${GPUS[@]}"; do
-  echo "Launching server on GPU $gpu_id at $HOST:$CURRENT_PORT..."
+  LOG_FILE="${LOG_DIR}/reward_server_gpu_${gpu_id}.log"
+  echo "Launching server on GPU $gpu_id at $HOST:$CURRENT_PORT, appending logs to ${LOG_FILE}"
   
   # Set CUDA_VISIBLE_DEVICES to isolate the GPU for the process.
   # The python script can then use "cuda:0" to refer to this isolated GPU.
@@ -76,13 +82,18 @@ for gpu_id in "${GPUS[@]}"; do
     --model_path "$VLM_MODEL_PATH" \
     --host "$HOST" \
     --port "$CURRENT_PORT" \
-    --device "cuda:0" &
+    --device "cuda:0" >> "$LOG_FILE" 2>&1 &
   
   PIDS+=($!)
+  LOG_FILES+=("$LOG_FILE")
   CURRENT_PORT=$((CURRENT_PORT + 1))
 done
 
 echo "Reward server(s) started with PIDs: ${PIDS[*]}"
+echo "Logs are being appended to: ${LOG_FILES[*]}"
+echo "You can monitor a log file in a new terminal, for example:"
+echo "tail -f ${LOG_FILES[0]}"
+echo
 echo "Press Ctrl+C to stop all servers."
 
 # Wait for all background PIDs to finish. The `trap` will handle cleanup.

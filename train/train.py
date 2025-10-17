@@ -131,7 +131,8 @@ def perform_rollout(
     
     # --- FIX: Use the specified number of inference steps for the rollout ---
     # This is much more efficient than using the full 1000 steps from the scheduler.
-    noise_scheduler.set_timesteps(args.rl_num_inference_steps, device=device)
+    # For FlowMatchEulerDiscreteScheduler with dynamic shifting, `mu` must be provided.
+    noise_scheduler.set_timesteps(args.rl_num_inference_steps, device=device, mu=args.rl_guidance_scale - 1.0)
     
     scheduler_timesteps = noise_scheduler.timesteps
     

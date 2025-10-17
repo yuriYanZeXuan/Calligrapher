@@ -128,7 +128,7 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   --checkpointing_steps=$CHECKPOINTING_STEPS \
   --learning_rate=$LEARNING_RATE \
   --mixed_precision=$MIXED_PRECISION \
-  --report_to="tensorboard" \
+  --report_to="wandb" \
   $( [ "$USE_RL" = true ] && echo "--use_rl" ) \
   --rl_warmup_steps=$RL_WARMUP_STEPS \
   --ocr_weight=$OCR_REWARD_WEIGHT \

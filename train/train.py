@@ -898,13 +898,13 @@ def main():
                 global_step += 1
                 logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
-                accelerator.log(logs, step=global_step)
-
-                # --- FIX: Explicitly flush the tracker to disk ---
-                # This forces the log data from the memory buffer to be written to the
-                # events file immediately, making it visible to TensorBoard.
+                # --- FIX: Explicitly log only on the main process for clarity ---
                 if accelerator.is_main_process:
-                    accelerator.get_tracker("tensorboard").tracker.flush()
+                    accelerator.log(logs, step=global_step)
+
+                # -- FIX: The explicit flush is no longer needed for wandb --
+                # if accelerator.is_main_process:
+                #     accelerator.get_tracker("tensorboard").tracker.flush()
             
         else:
             # =======================================================
@@ -1097,12 +1097,14 @@ def main():
                                 "ratio_mean": ratio.mean().item(),
                                 "adv_mean": advantages_batch.mean().item(),
                             }
-                            accelerator.log(log_data, step=global_step)
+                            # --- FIX: Explicitly log only on the main process for clarity ---
+                            if accelerator.is_main_process:
+                                accelerator.log(log_data, step=global_step)
                             progress_bar.set_postfix(**log_data)
                             
-                            # --- FIX: Flush RL logs to TensorBoard for real-time monitoring ---
-                            if accelerator.is_main_process:
-                                accelerator.get_tracker("tensorboard").tracker.flush()
+                            # -- FIX: The explicit flush is no longer needed for wandb --
+                            # if accelerator.is_main_process:
+                            #    accelerator.get_tracker("tensorboard").tracker.flush()
                             
                             if global_step >= args.max_train_steps:
                                 break

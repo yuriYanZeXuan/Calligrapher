@@ -475,6 +475,8 @@ def parse_args():
     parser.add_argument("--rl_grpo_clip_range", type=float, default=0.2, help="PPO clipping range for GRPO.")
     parser.add_argument("--rl_kl_beta", type=float, default=0.1, help="Beta coefficient for the KL penalty term.")
     
+    # --- New argument for initial IP-Adapter weights ---
+    parser.add_argument("--initial_ip_adapter_path", type=str, default=None, help="Path to initial IP-Adapter weights (.bin file).")
     
     args = parser.parse_args()
     
@@ -513,41 +515,49 @@ def main():
         project_dir=logging_dir,
     )
 
-    # --- FIX: Create a hook to save the final model weights for inference ---
+    # --- HELPER FUNCTION TO UNWRAP MODELS ---
+    def unwrap_model(model):
+        model = accelerator.unwrap_model(model)
+        model = model._orig_mod if is_compiled_module(model) else model
+        return model
+
+    # --- REVISED: Create a save hook aligned with flux_ip ---
     def save_model_hook(models, weights, output_dir):
         """
-        This hook is called just before saving the state.
-        It saves the IP-Adapter weights in a separate, inference-ready file.
+        Saves the IP-Adapter weights into a single .bin file, compatible with flux_ip.
         """
         if accelerator.is_main_process:
-            # 1. Save the image projection model
-            image_proj_model_state_dict = accelerator.unwrap_model(image_proj_model).state_dict()
-            torch.save(image_proj_model_state_dict, os.path.join(output_dir, "image_proj.safetensors"))
+            state_dict = {}
+            # We need to find the correct models from the `models` list passed in.
+            # The models are transformer and image_proj_model.
+            
+            unwrapped_transformer = unwrap_model(transformer)
+            unwrapped_image_proj_model = unwrap_model(image_proj_model)
 
-            # 2. Save the attention processors from the unwrapped transformer
-            unwrapped_transformer = accelerator.unwrap_model(transformer)
-            attn_processors = unwrapped_transformer.attn_processors
-            attn_processors_state_dict = {}
-            for attn_processor_name, attn_processor in attn_processors.items():
-                for k, v in attn_processor.state_dict().items():
-                    attn_processors_state_dict[f"{attn_processor_name}.{k}"] = v
-            torch.save(attn_processors_state_dict, os.path.join(output_dir, "ip_adapter.safetensors"))
+            state_dict['image_proj'] = unwrapped_image_proj_model.state_dict()
+            state_dict['ip_adapter'] = torch.nn.ModuleList(unwrapped_transformer.attn_processors.values()).state_dict()
 
-            logger.info(f"Saved IP-Adapter state for inference to {output_dir}")
+            output_file = os.path.join(output_dir, 'ip-adapter.bin')
+            torch.save(state_dict, output_file)
+            logger.info(f"Saved IP-Adapter state to {output_file}")
+            
+            # Pop weights so accelerator doesn't save them again
+            # We pop for each model prepared by accelerator
+            if len(weights) > 0: weights.pop() # For transformer
+            if len(weights) > 0: weights.pop() # For image_proj_model
 
-    # --- FIX: Create a hook for loading weights ---
+
+    # --- REVISED: Create a load hook (placeholder, logic is mainly for initial load) ---
     def load_model_hook(models, input_dir):
         """
-        This hook is called just before loading the state.
-        It loads the IP-Adapter weights from our custom saved files.
+        This hook is for resuming training from an accelerator checkpoint.
+        The initial weight loading is handled separately.
         """
-        # This hook is less critical for this problem but good practice for completeness.
-        # For now, we only log that it's being called.
-        logger.info(f"Attempting to load model from hook at {input_dir}, but not implemented.")
+        logger.info(f"Resuming from accelerator checkpoint at {input_dir}. IP-Adapter weights will be loaded from the checkpoint.")
+        # We can implement custom loading here if `accelerator.load_state` is not sufficient
         pass
 
-    # --- FIX: Explicitly initialize the trackers on the main process ---
-    # This ensures the logging directory is created and TensorBoard is ready to receive data.
+    # --- Explicitly initialize the trackers on the main process ---
     if accelerator.is_main_process:
         # The project name can be anything you like.
         accelerator.init_trackers("calligrapher_rl_training")
@@ -602,6 +612,23 @@ def main():
         image_encoder.gradient_checkpointing_enable()
 
     image_proj_model = setup_ip_adapter(transformer, accelerator, weight_dtype, args)
+
+    # --- NEW: Logic to load initial IP-Adapter weights ---
+    if args.initial_ip_adapter_path:
+        if accelerator.is_main_process:
+            logger.info(f"Loading initial IP-Adapter weights from: {args.initial_ip_adapter_path}")
+        state_dict = torch.load(args.initial_ip_adapter_path, map_location="cpu")
+        
+        # Load image_proj_model weights
+        image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
+        
+        # Load attn_processors weights
+        adapter_modules = torch.nn.ModuleList(transformer.attn_processors.values())
+        adapter_modules.load_state_dict(state_dict["ip_adapter"])
+        
+        if accelerator.is_main_process:
+            logger.info("Successfully loaded initial IP-Adapter weights.")
+
 
     if args.enable_memory_profiler:
         models_dict = {
@@ -684,8 +711,7 @@ def main():
         transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler
     )
 
-    # --- FIX: Register the save and load hooks ---
-    # The hook will be called automatically when accelerator.save_state is called.
+    # --- REVISED: Register the new save and load hooks ---
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
 

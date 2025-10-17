@@ -12,6 +12,8 @@ PRETRAINED_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill"
 SIGLIP_MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip" 
 TRAIN_DATA_DIR="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
 OUTPUT_DIR="./output_flux"
+# --- Path to optionally initialize IP-Adapter from ---
+INITIAL_IP_ADAPTER_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/calligrapher/calligrapher.bin" # e.g., "/path/to/flux_ip/output/checkpoint-XXXX/ip-adapter.bin"
 
 # -- Model Selection --
 MODEL_TYPE="flux" # "flux" or "qwen"
@@ -129,6 +131,7 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
   --learning_rate=$LEARNING_RATE \
   --mixed_precision=$MIXED_PRECISION \
   --report_to="wandb" \
+  $( [ -n "$INITIAL_IP_ADAPTER_PATH" ] && echo "--initial_ip_adapter_path=$INITIAL_IP_ADAPTER_PATH" ) \
   $( [ "$USE_RL" = true ] && echo "--use_rl" ) \
   --rl_warmup_steps=$RL_WARMUP_STEPS \
   --ocr_weight=$OCR_REWARD_WEIGHT \

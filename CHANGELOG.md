@@ -57,3 +57,13 @@ The training pipeline was completely re-architected to support a full reinforcem
   - If disabled, advantages are calculated using standard normalization across the entire batch (standard **PPO**).
 - **PPO-Clip Loss Function**: A `compute_log_prob` function was implemented to re-evaluate actions with the current policy. The training loop then calculates the importance sampling ratio (`ratio`) and applies the PPO-Clip surrogate objective function to compute a stable `policy_loss`.
 - **Inner Epochs**: The collected data is reused for multiple training iterations (`--rl_num_inner_epochs`), improving data efficiency.
+
+
+INFO:__main__:mask_latents shape: torch.Size([1, 1, 64,64]) 0/400 [00:00<?, ?it/s]
+INFO:__main__:masked_image_latents shape: torch.Size([1, 16, 64, 64])
+INFO:__main__:packed_noisy_latents shape: torch.Size([1, 1024, 64])
+INFO:__main__:packed_masked_image_latents shape: torch.Size([1, 1024, 64])
+INFO:__main__:mask_latents shape: torch.Size([1, 1, 64, 64])
+INFO:__main__:masked_image_latents shape: torch.Size([1, 16, 64, 64])
+INFO:__main__:packed_noisy_latents shape: torch.Size([1, 1024, 64])
+INFO:__main__:packed_masked_image_latents shape: torch.Size([1, 1024, 64])

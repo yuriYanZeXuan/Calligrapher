@@ -13,8 +13,8 @@ import os
 from qwenvl import QwenVLScorer
 from ocr import OCRScorer
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging - THIS IS NO LONGER NEEDED as Uvicorn will handle it.
+# logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
@@ -75,7 +75,7 @@ def main():
     ocr_scorer = OCRScorer()
     logger.info("OCRScorer model loaded successfully.")
     
-    uvicorn.run(app, host=args.host, port=args.port, log_config=None)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 if __name__ == "__main__":
     main()

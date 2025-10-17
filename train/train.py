@@ -513,6 +513,12 @@ def main():
         project_dir=logging_dir,
     )
 
+    # --- FIX: Explicitly initialize the trackers on the main process ---
+    # This ensures the logging directory is created and TensorBoard is ready to receive data.
+    if accelerator.is_main_process:
+        # The project name can be anything you like.
+        accelerator.init_trackers("calligrapher_rl_training")
+
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",

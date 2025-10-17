@@ -129,6 +129,10 @@ def perform_rollout(
     all_latents = [latents]
     all_log_probs = []
     
+    # --- FIX: Use the specified number of inference steps for the rollout ---
+    # This is much more efficient than using the full 1000 steps from the scheduler.
+    noise_scheduler.set_timesteps(args.rl_num_inference_steps, device=device)
+    
     scheduler_timesteps = noise_scheduler.timesteps
     
     for i, t in tqdm(enumerate(scheduler_timesteps), total=len(scheduler_timesteps), desc="Rollout step", leave=False):
@@ -724,12 +728,15 @@ def main():
                         vae=vae,
                         vae_scale_factor=8,
                     )
+                    logger.info(f"mask_latents shape: {mask_latents.shape}")
+                    logger.info(f"masked_image_latents shape: {masked_image_latents.shape}")
                     
                     # 1. Pack noisy_latents, masked_image_latents, and mask separately, mimicking the official flux-fill pipeline.
                     packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w) # (B, L, 64)
+                    logger.info(f"packed_noisy_latents shape: {packed_noisy_latents.shape}")
                     
                     packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w) # (B, L, 64)
-                    
+                    logger.info(f"packed_masked_image_latents shape: {packed_masked_image_latents.shape}")
                     # The mask is 1 channel, but needs to be packed. The official pipeline expands it to vae_scale_factor^2 channels.
                     vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
                     mask_c = vae_scale_factor ** 2 # Should be 8*8 = 64

@@ -15,7 +15,7 @@ from ocr import OCRScorer
 
 # Configure logging - THIS IS NO LONGER NEEDED as Uvicorn will handle it.
 # logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn")
 
 app = FastAPI()
 

@@ -12,7 +12,7 @@ class OCRScorer:
         #     use_doc_unwarping=False, # 通过 use_doc_unwarping 参数指定不使用文本图像矫正模型
         #     use_textline_orientation=False, # 通过 use_textline_orientation 参数指定不使用文本行方向分类模型
         # )
-        self.ocr_model = PaddleOCRVL(model_dir=det_model_dir)
+        self.ocr_model = PaddleOCRVL(vl_rec_model_dir=det_model_dir)
         print("Initialized PaddleOCR Model.")
 
     def score(self, image_pil: Image.Image) -> tuple[str, float]:

@@ -17,6 +17,8 @@ class PerPromptStatTracker:
             prompt_rewards = rewards[prompts == prompt]
             if prompt not in self.stats:
                 self.stats[prompt] = []
+            if isinstance(self.stats[prompt], np.ndarray):
+                self.stats[prompt] = self.stats[prompt].tolist()
             self.stats[prompt].extend(prompt_rewards)
             self.history_prompts.add(hash(prompt))  # Add hash of prompt to history_prompts
         for prompt in unique:

@@ -1,16 +1,18 @@
 from paddleocr import PaddleOCR
 from PIL import Image
 import numpy as np
+from paddleocr import PaddleOCRVL
 
 class OCRScorer:
-    def __init__(self, device=None):
+    def __init__(self, device=None, det_model_dir="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/PaddleOCRVL"):
         # Initialize PaddleOCR based on the reference script to disable unnecessary modules.
         # 'ch' lang model supports both Chinese and English.
-        self.ocr_model = PaddleOCR(
-            use_doc_orientation_classify=False, # 通过 use_doc_orientation_classify 参数指定不使用文档方向分类模型
-            use_doc_unwarping=False, # 通过 use_doc_unwarping 参数指定不使用文本图像矫正模型
-            use_textline_orientation=False, # 通过 use_textline_orientation 参数指定不使用文本行方向分类模型
-        )
+        # self.ocr_model = PaddleOCR(
+        #     use_doc_orientation_classify=False, # 通过 use_doc_orientation_classify 参数指定不使用文档方向分类模型
+        #     use_doc_unwarping=False, # 通过 use_doc_unwarping 参数指定不使用文本图像矫正模型
+        #     use_textline_orientation=False, # 通过 use_textline_orientation 参数指定不使用文本行方向分类模型
+        # )
+        self.ocr_model = PaddleOCRVL(det_model_dir=det_model_dir)
         print("Initialized PaddleOCR Model.")
 
     def score(self, image_pil: Image.Image) -> tuple[str, float]:

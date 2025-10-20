@@ -53,7 +53,7 @@ def save_debug_sample(image_pil, prompt, vlm_score, ocr_text, ocr_confidence):
         fcntl.flock(f, fcntl.LOCK_UN)
     
     # Save a sample every 100 images
-    if new_count % 100 == 0:
+    if new_count % 1 == 0:
         try:
             filename_base = f"{new_count:06d}_vlm_{vlm_score:.2f}_ocr_{ocr_confidence:.2f}"
             image_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}.png")

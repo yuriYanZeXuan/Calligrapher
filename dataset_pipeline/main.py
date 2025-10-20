@@ -82,13 +82,19 @@ def main():
         default='remote',
         help="Choose the image generation service to use ('local' or 'remote')."
     )
+    parser.add_argument(
+        '--instructions-file',
+        type=str,
+        default=os.path.join(os.path.dirname(__file__), 'instructions.txt'),
+        help="Path to the file containing instructions."
+    )
     args = parser.parse_args()
 
     # Create output directory if it doesn't exist
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     
     # Read instructions from the file
-    instructions_file = os.path.join(os.path.dirname(__file__), 'instructions.txt')
+    instructions_file = args.instructions_file
     with open(instructions_file, 'r', encoding='utf-8') as f:
         instructions = [line.strip() for line in f if line.strip()]
     

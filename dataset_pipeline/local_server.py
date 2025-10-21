@@ -12,6 +12,13 @@ import torch
 from diffusers import QwenImagePipeline
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import config
+import asyncio
+
+# --- Concurrency Control ---
+# Create a semaphore to limit concurrent access to the GPU for image generation.
+# H800 has a lot of memory, but concurrent inference can still lead to OOM due to activations.
+# A value of 2-4 is a safe starting point.
+GPU_SEMAPHORE = asyncio.Semaphore(2)
 
 # --- FastAPI App Initialization ---
 app = FastAPI()
@@ -170,10 +177,6 @@ async def generate_image_endpoint(request: ImageGenerationRequest, http_request:
     """OpenAI-compatible endpoint for image generation."""
     print(f"Received image generation request with prompt: '{request.prompt}'")
     
-    # --- Model Inference (Placeholder) ---
-    # In a real implementation, you would call your QwenImageEdit model here.
-    # The model would take the `request.prompt` and other parameters.
-    
     image_filename = f"{uuid.uuid4()}.png"
     output_path = os.path.join(STATIC_DIR, image_filename)
     
@@ -184,8 +187,11 @@ async def generate_image_endpoint(request: ImageGenerationRequest, http_request:
         width, height = 1024, 1024 # Default size
 
     # ====================================================================
-    # This is where the real model is called
-    image_generator(request.prompt, (width, height), output_path)
+    # Acquire the semaphore before running the GPU-intensive task
+    async with GPU_SEMAPHORE:
+        print(f"GPU slot acquired for prompt: '{request.prompt}'")
+        # This is where the real model is called
+        image_generator(request.prompt, (width, height), output_path)
     # ====================================================================
     
     # --- Construct Response ---

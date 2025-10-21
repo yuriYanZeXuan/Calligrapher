@@ -1,61 +1,75 @@
 #!/bin/bash
 # ==============================================================================
-# Simplified script to run the local data generation pipeline.
-# It starts the necessary model servers, runs the pipeline, and then shuts
-# down the servers automatically.
+# Script to run the data generation pipeline with multiple parallel service pairs.
+# It launches 4 independent pairs of (Image Service + LLM Service), each on
+# dedicated GPUs, and then runs a parallel client to communicate with them.
 # ==============================================================================
 
 # --- Configuration ---
-# You can customize the GPU allocation and ports here.
-IMAGE_SERVER_PORT=8000
-IMAGE_SERVER_GPUS="0,1,2,3"
-
-LLM_SERVER_PORT=8001
-LLM_SERVER_GPUS="4,5,6,7"
+NUM_PAIRS=4
+IMAGE_BASE_PORT=8000
+LLM_BASE_PORT=9000
 LOG_FILE="server.log"
-NUM_WORKERS=16 # Number of parallel workers for the main pipeline
+NUM_WORKERS=4 # Number of parallel client workers
 
 # --- Cleanup Function ---
-# This function is called when the script exits to ensure background services are stopped.
 cleanup() {
     echo -e "\nShutting down background services..."
-    # This command kills all child processes started by this script.
-    # It's a robust way to clean up without managing PID files.
     pkill -P $$
     echo "Services stopped."
 }
 
-# Trap signals to ensure cleanup runs even if the script is interrupted (e.g., with Ctrl+C)
 trap cleanup EXIT SIGINT SIGTERM
 
 # --- Main Execution ---
 
-echo "Starting local model services in the background..."
-# Clear the log file for a fresh run
-> $LOG_FILE
+echo "Starting $NUM_PAIRS local model service pairs in the background..."
+> $LOG_FILE # Clear the log file
 
-# Start Image Service, redirecting its output to the log file
-echo "-> Launching Image Service on port $IMAGE_SERVER_PORT (GPUs: $IMAGE_SERVER_GPUS)..."
-python local_server.py --service image --port $IMAGE_SERVER_PORT --device_ids $IMAGE_SERVER_GPUS >> $LOG_FILE 2>&1 &
+IMAGE_PORTS=()
+LLM_PORTS=()
 
-# Start LLM Service, redirecting its output to the log file
-echo "-> Launching LLM Service on port $LLM_SERVER_PORT (GPUs: $LLM_SERVER_GPUS)..."
-python local_server.py --service llm --port $LLM_SERVER_PORT --device_ids $LLM_SERVER_GPUS >> $LOG_FILE 2>&1 &
+for i in $(seq 0 $(($NUM_PAIRS - 1)))
+do
+    LLM_GPU_ID=$(($i * 2))
+    IMAGE_GPU_ID=$(($i * 2 + 1))
+    
+    IMAGE_PORT=$(($IMAGE_BASE_PORT + $i))
+    LLM_PORT=$(($LLM_BASE_PORT + $i))
 
-echo "Service logs are being written to '$LOG_FILE'. You can tail it in another terminal."
+    IMAGE_PORTS+=($IMAGE_PORT)
+    LLM_PORTS+=($LLM_PORT)
+
+    echo "-> Launching Pair $i: Image Service on GPU $IMAGE_GPU_ID (Port: $IMAGE_PORT) and LLM Service on GPU $LLM_GPU_ID (Port: $LLM_PORT)..."
+
+    # Start Image Service for the pair
+    python local_server.py --service image --port $IMAGE_PORT --device_ids $IMAGE_GPU_ID >> $LOG_FILE 2>&1 &
+    
+    # Start LLM Service for the pair
+    python local_server.py --service llm --port $LLM_PORT --device_ids $LLM_GPU_ID >> $LOG_FILE 2>&1 &
+done
+
+echo "Service logs are being written to '$LOG_FILE'."
 echo -e "\nWaiting for models to load. This can take several minutes..."
-# We use a simple sleep timer. If your models load faster or slower, you can
-# adjust this value (in seconds).
-sleep 120
+sleep 180 # Increased wait time for multiple model loading
+
+# Convert arrays to comma-separated strings for passing as arguments
+IMAGE_PORTS_STR=$(IFS=,; echo "${IMAGE_PORTS[*]}")
+LLM_PORTS_STR=$(IFS=,; echo "${LLM_PORTS[*]}")
 
 echo -e "\n----------------------------------------"
-echo "Services are assumed to be ready. Running the main pipeline with $NUM_WORKERS workers..."
+echo "Services are assumed to be ready. Running the main pipeline with $NUM_WORKERS workers across $NUM_PAIRS service pairs..."
+echo "Image Ports: $IMAGE_PORTS_STR | LLM Ports: $LLM_PORTS_STR"
 echo "----------------------------------------\n"
-python main.py --service local --num-workers $NUM_WORKERS --instructions-file /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/dataset_pipeline/instructions_20000_generated.txt
+
+python main.py --service local \
+               --num-workers $NUM_WORKERS \
+               --image-ports $IMAGE_PORTS_STR \
+               --llm-ports $LLM_PORTS_STR \
+               --instructions-file /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/dataset_pipeline/instructions_20000_generated.txt
 
 echo -e "\n----------------------------------------"
 echo "Pipeline execution finished."
 echo "----------------------------------------"
 
-# The cleanup function will be called automatically when the script exits.
 exit 0

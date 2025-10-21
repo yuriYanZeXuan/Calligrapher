@@ -5,7 +5,7 @@ from PIL import Image
 from io import BytesIO
 import config
 
-def generate_image(prompt: str, output_path: str, service: str = "remote") -> bool:
+def generate_image(prompt: str, output_path: str, service: str = "remote", image_port: int = None) -> bool:
     """
     Generates an image based on a prompt using a T2I model and saves it.
 
@@ -13,6 +13,7 @@ def generate_image(prompt: str, output_path: str, service: str = "remote") -> bo
         prompt (str): The text prompt for image generation.
         output_path (str): The path to save the generated image.
         service (str): The service to use ('local' or 'remote').
+        image_port (int): The specific port for the image service (for local).
 
     Returns:
         bool: True if the image was generated and saved successfully, False otherwise.
@@ -22,7 +23,9 @@ def generate_image(prompt: str, output_path: str, service: str = "remote") -> bo
         
         # Determine the correct base URL
         if service == "local":
-            base_url = service_config["api_base_url_image"]
+            if image_port is None:
+                raise ValueError("image_port must be provided for local service.")
+            base_url = f"http://127.0.0.1:{image_port}/v1"
         else: # remote
             base_url = service_config["api_base_url"]
 

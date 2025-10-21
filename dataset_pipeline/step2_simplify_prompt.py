@@ -2,7 +2,7 @@ from openai import OpenAI
 import config
 import re
 
-def simplify_prompt(prompt: str, service: str = "remote") -> str:
+def simplify_prompt(prompt: str, service: str = "remote", llm_port: int = None) -> str:
     """
     Uses an LLM to simplify a complex prompt into a concise text string,
     which is expected to be visually present in the generated image.
@@ -10,6 +10,7 @@ def simplify_prompt(prompt: str, service: str = "remote") -> str:
     Args:
         prompt (str): The complex input prompt.
         service (str): The service to use ('local' or 'remote').
+        llm_port (int): The specific port for the LLM service (for local).
 
     Returns:
         str: The simplified text, or None if an error occurs.
@@ -19,7 +20,9 @@ def simplify_prompt(prompt: str, service: str = "remote") -> str:
         
         # Determine the correct base URL
         if service == "local":
-            base_url = service_config["api_base_url_llm"]
+            if llm_port is None:
+                raise ValueError("llm_port must be provided for local service.")
+            base_url = f"http://127.0.0.1:{llm_port}/v1"
         else: # remote
             base_url = service_config["api_base_url"]
 

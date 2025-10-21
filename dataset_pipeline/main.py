@@ -8,12 +8,14 @@ from step2_simplify_prompt import simplify_prompt
 from step3_ocr import ocr_image_paddle
 from multiprocessing import Pool, cpu_count
 from tqdm import tqdm
+import itertools
 
-def create_dataset_entry(human_written_instruction: str, service: str):
+def create_dataset_entry(human_written_instruction: str, service: str, image_port: int, llm_port: int):
     """
     Runs the full pipeline for a single instruction to create a dataset entry.
+    Connects to a specific image_port and llm_port.
     """
-    print(f"--- Starting pipeline for instruction: '{human_written_instruction}' using '{service}' service ---")
+    print(f"--- Starting pipeline for instruction: '{human_written_instruction}' using service pair (img:{image_port}, llm:{llm_port}) ---")
     
     # In a real pipeline, you would have a more sophisticated prompt augmentation step
     augmented_prompt = human_written_instruction 
@@ -23,13 +25,13 @@ def create_dataset_entry(human_written_instruction: str, service: str):
     image_filename = f"{unique_id}.png"
     image_path = os.path.join(config.OUTPUT_DIR, image_filename)
     
-    if not generate_image(augmented_prompt, image_path, service=service):
+    if not generate_image(augmented_prompt, image_path, service=service, image_port=image_port):
         print("--- Pipeline failed at Step 1: Image Generation ---")
         return
 
     # === Step 2: Simplify Prompt ===
     # This is the reference text we expect to find in the image.
-    reference_text = simplify_prompt(augmented_prompt, service=service)
+    reference_text = simplify_prompt(augmented_prompt, service=service, llm_port=llm_port)
     if not reference_text:
         print("--- Pipeline failed at Step 2: Simplify Prompt ---")
         return
@@ -79,9 +81,9 @@ def process_instruction(args_tuple):
     """
     Wrapper function for multiprocessing.Pool to call create_dataset_entry.
     """
-    instruction, service = args_tuple
+    instruction, service, image_port, llm_port = args_tuple
     try:
-        create_dataset_entry(instruction, service)
+        create_dataset_entry(instruction, service, image_port, llm_port)
     except Exception as e:
         print(f"--- ERROR processing instruction: '{instruction}'. Reason: {e} ---")
 
@@ -106,7 +108,28 @@ def main():
         default=16,
         help="Number of parallel processes to run."
     )
+    parser.add_argument(
+        '--image-ports',
+        type=str,
+        required=True,
+        help="Comma-separated list of ports for the image generation services."
+    )
+    parser.add_argument(
+        '--llm-ports',
+        type=str,
+        required=True,
+        help="Comma-separated list of ports for the LLM services."
+    )
     args = parser.parse_args()
+
+    image_ports = [int(p) for p in args.image_ports.split(',')]
+    llm_ports = [int(p) for p in args.llm_ports.split(',')]
+    
+    if len(image_ports) != len(llm_ports):
+        raise ValueError("The number of image ports must match the number of LLM ports.")
+    
+    num_pairs = len(image_ports)
+    service_pairs = list(zip(image_ports, llm_ports))
 
     # Create output directory if it doesn't exist
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
@@ -136,8 +159,12 @@ def main():
     tasks_to_run = [inst for inst in instructions if inst not in processed_instructions]
     print(f"Total instructions to process: {len(tasks_to_run)}")
 
-    # Create a list of arguments for the worker function
-    work_args = [(instruction, args.service) for instruction in tasks_to_run]
+    # Create a list of arguments for the worker function, distributing tasks across service pairs
+    work_args = []
+    for i, instruction in enumerate(tasks_to_run):
+        pair_index = i % num_pairs
+        image_port, llm_port = service_pairs[pair_index]
+        work_args.append((instruction, args.service, image_port, llm_port))
 
     # Use multiprocessing Pool to run tasks in parallel
     with Pool(args.num_workers) as p:

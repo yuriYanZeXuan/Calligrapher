@@ -13,6 +13,7 @@ IMAGE_SERVER_GPUS="0,1,2,3"
 LLM_SERVER_PORT=8001
 LLM_SERVER_GPUS="4,5,6,7"
 LOG_FILE="server.log"
+NUM_WORKERS=16 # Number of parallel workers for the main pipeline
 
 # --- Cleanup Function ---
 # This function is called when the script exits to ensure background services are stopped.
@@ -48,9 +49,9 @@ echo -e "\nWaiting for models to load. This can take several minutes..."
 sleep 120
 
 echo -e "\n----------------------------------------"
-echo "Services are assumed to be ready. Running the main pipeline..."
+echo "Services are assumed to be ready. Running the main pipeline with $NUM_WORKERS workers..."
 echo "----------------------------------------\n"
-python main.py --service local --instructions-file /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/dataset_pipeline/instructions_20000_generated.txt
+python main.py --service local --num-workers $NUM_WORKERS --instructions-file /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/dataset_pipeline/instructions_20000_generated.txt
 
 echo -e "\n----------------------------------------"
 echo "Pipeline execution finished."

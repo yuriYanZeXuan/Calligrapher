@@ -6,6 +6,8 @@ import config
 from step1_generate_image import generate_image
 from step2_simplify_prompt import simplify_prompt
 from step3_ocr import ocr_image_paddle
+from multiprocessing import Pool, cpu_count
+from tqdm import tqdm
 
 def create_dataset_entry(human_written_instruction: str, service: str):
     """
@@ -73,6 +75,16 @@ def create_dataset_entry(human_written_instruction: str, service: str):
 
     print(f"--- Pipeline completed successfully. Dataset entry saved to {json_path} ---")
 
+def process_instruction(args_tuple):
+    """
+    Wrapper function for multiprocessing.Pool to call create_dataset_entry.
+    """
+    instruction, service = args_tuple
+    try:
+        create_dataset_entry(instruction, service)
+    except Exception as e:
+        print(f"--- ERROR processing instruction: '{instruction}'. Reason: {e} ---")
+
 def main():
     parser = argparse.ArgumentParser(description="Run the dataset generation pipeline.")
     parser.add_argument(
@@ -87,6 +99,12 @@ def main():
         type=str,
         default=os.path.join(os.path.dirname(__file__), 'instructions.txt'),
         help="Path to the file containing instructions."
+    )
+    parser.add_argument(
+        '--num-workers',
+        type=int,
+        default=16,
+        help="Number of parallel processes to run."
     )
     args = parser.parse_args()
 
@@ -113,12 +131,19 @@ def main():
     instructions_file = args.instructions_file
     with open(instructions_file, 'r', encoding='utf-8') as f:
         instructions = [line.strip() for line in f if line.strip()]
-    
-    for instruction in instructions:
-        if instruction in processed_instructions:
-            print(f"Skipping: '{instruction}'")
-            continue
-        create_dataset_entry(instruction, service=args.service)
+
+    # Filter out already processed instructions
+    tasks_to_run = [inst for inst in instructions if inst not in processed_instructions]
+    print(f"Total instructions to process: {len(tasks_to_run)}")
+
+    # Create a list of arguments for the worker function
+    work_args = [(instruction, args.service) for instruction in tasks_to_run]
+
+    # Use multiprocessing Pool to run tasks in parallel
+    with Pool(args.num_workers) as p:
+        list(tqdm(p.imap(process_instruction, work_args), total=len(work_args)))
+
+    print("\n--- All instructions have been processed. ---")
 
 if __name__ == "__main__":
     main()

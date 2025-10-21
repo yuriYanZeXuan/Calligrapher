@@ -92,6 +92,22 @@ def main():
 
     # Create output directory if it doesn't exist
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+
+    # --- Resume Logic: Scan for already processed instructions ---
+    print("Scanning for existing dataset entries to resume...")
+    processed_instructions = set()
+    for filename in os.listdir(config.OUTPUT_DIR):
+        if filename.endswith(".json"):
+            json_path = os.path.join(config.OUTPUT_DIR, filename)
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if 'human_instruction' in data:
+                        processed_instructions.add(data['human_instruction'])
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"Warning: Could not read or parse {json_path}: {e}")
+    
+    print(f"Found {len(processed_instructions)} already processed instructions. They will be skipped.")
     
     # Read instructions from the file
     instructions_file = args.instructions_file
@@ -99,6 +115,9 @@ def main():
         instructions = [line.strip() for line in f if line.strip()]
     
     for instruction in instructions:
+        if instruction in processed_instructions:
+            print(f"Skipping: '{instruction}'")
+            continue
         create_dataset_entry(instruction, service=args.service)
 
 if __name__ == "__main__":

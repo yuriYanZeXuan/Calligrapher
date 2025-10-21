@@ -33,7 +33,7 @@ SERVICES = {
 
 # --- Shared Configuration ---
 IMAGE_SIZE = "1024x1024"
-OUTPUT_DIR = "generated_dataset_local"
+OUTPUT_DIR = "generated_dataset_local_20000"
 
 # --- Other Steps Configuration ---
 OCR_LANGUAGES = ['ch_sim', 'en'] # For step 3

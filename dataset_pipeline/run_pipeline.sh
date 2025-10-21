@@ -50,7 +50,7 @@ sleep 120
 echo -e "\n----------------------------------------"
 echo "Services are assumed to be ready. Running the main pipeline..."
 echo "----------------------------------------\n"
-python main.py --service local
+python main.py --service local --instructions-file /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/dataset_pipeline/instructions_20000_generated.txt
 
 echo -e "\n----------------------------------------"
 echo "Pipeline execution finished."

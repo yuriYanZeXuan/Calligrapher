@@ -75,11 +75,11 @@ async def load_image_model():
     print("Loading Image Model...")
     model_path = config.SERVICES["local"]["image_model_path"]
     
-    # Use bfloat16 for better stability and add device_map="auto" for multi-GPU loading
+    # Use bfloat16 for better stability and add device_map="balanced" for multi-GPU loading
     ModelHolder.image_pipeline = QwenImagePipeline.from_pretrained(
         model_path, 
         torch_dtype=torch.bfloat16,
-        device_map="auto"
+        device_map="balanced" # Use 'balanced' for multi-GPU distribution in diffusers
     )
     print(f"Image Model loaded from {model_path} and distributed across available GPUs.")
 

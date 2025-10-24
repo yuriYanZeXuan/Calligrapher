@@ -11,12 +11,6 @@ from collections import defaultdict
 from PIL import Image
 import numpy as np
 
-# Add the project's root directory ('Calligrapher') to the Python path.
-# This allows for absolute imports from the project root.
-project_root = str(Path(__file__).resolve().parents[1])
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
 import itertools
 from functools import partial
 import torch.nn.functional as F
@@ -26,32 +20,35 @@ import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed, gather_object
+try:
+    from accelerate.utils import is_compiled_module
+except ImportError:
+    # Fallback for older accelerate versions
+    # 兼容旧版本 accelerate 库，检查模型是否被 torch.compile() 编译
+    def is_compiled_module(module):
+        return hasattr(module, "_orig_mod")
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_density_for_timestep_sampling, compute_loss_weighting_for_sd3
 from tqdm.auto import tqdm
 from transformers import AutoProcessor
 
-from train.dataset import SimpleDataset, collate_fn
-from train.model import (
+# --- 使用相对导入，适合远程服务器部署 ---
+from .dataset import SimpleDataset, collate_fn
+from .model import (
     load_text_encoders_and_tokenizers,
     load_vae_and_transformer,
     load_image_encoder,
     setup_ip_adapter,
 )
 # Note: utils will be conditionally imported based on model type.
-# from utils import (
-#     encode_prompt,
-#     pack_latents,
-#     unpack_latents,
-#     prepare_latent_image_ids,
-#     get_sigmas,
-#     prepare_mask_latents4training,
-# )
-# --- New RL Imports ---
-from train.rl_ip.reward import RewardClient
-from train.rl_ip.stat_tracking import PerPromptStatTracker
-from train.rl_ip.grpo_utils import sde_step_with_logprob
+# --- RL 模块导入（相对路径） ---
+from .rl_ip.reward import RewardClient
+from .rl_ip.stat_tracking import PerPromptStatTracker
+from .rl_ip.grpo_utils import sde_step_with_logprob
+from .rl_ip.ema import EMAModuleWrapper
+from .rl_logic.grpo_trainer import GRPOTrainer
+from .rl_logic.nft_trainer import NFTTrainer, update_old_model
 
 
 logger = get_logger(__name__)
@@ -475,14 +472,32 @@ def parse_args():
     parser.add_argument("--rl_grpo_clip_range", type=float, default=0.2, help="PPO clipping range for GRPO.")
     parser.add_argument("--rl_kl_beta", type=float, default=0.1, help="Beta coefficient for the KL penalty term.")
     
+    # --- RL Training Method ---
+    parser.add_argument("--rl_method", type=str, default="grpo", choices=["grpo", "nft"], 
+                        help="RL training method: 'grpo' for GRPO, 'nft' for DiffusionNFT")
+    
+    # --- EMA (Exponential Moving Average) ---
+    parser.add_argument("--use_ema", action="store_true", help="Use EMA for model parameters.")
+    parser.add_argument("--ema_decay", type=float, default=0.9999, help="Decay rate for EMA.")
+    parser.add_argument("--ema_update_interval", type=int, default=1, help="Update EMA every N steps.")
+    
+    # --- NFT-specific parameters ---
+    parser.add_argument("--nft_beta", type=float, default=0.5, help="Beta coefficient for NFT training (mixing of positive/negative).")
+    parser.add_argument("--nft_adv_mode", type=str, default="normal", 
+                        choices=["normal", "positive_only", "negative_only", "one_only", "binary"],
+                        help="Advantage processing mode for NFT.")
+    parser.add_argument("--nft_decay_type", type=int, default=0, choices=[0, 1, 2],
+                        help="Decay type for old model update in NFT (0: no decay, 1: slow, 2: fast).")
+    
     # --- New argument for initial IP-Adapter weights ---
     parser.add_argument("--initial_ip_adapter_path", type=str, default=None, help="Path to initial IP-Adapter weights (.bin file).")
     
     args = parser.parse_args()
     
+    # 动态导入 utils（根据模型类型使用相对路径）
     if args.model_type == 'flux':
         global encode_prompt, pack_latents, unpack_latents, prepare_latent_image_ids, get_sigmas, prepare_mask_latents4training
-        from train.flux_ip.utils import (
+        from .flux_ip.utils import (
             encode_prompt, pack_latents, unpack_latents, prepare_latent_image_ids, get_sigmas, prepare_mask_latents4training
         )
     elif args.model_type == 'qwen':
@@ -491,7 +506,7 @@ def parse_args():
         # For now, we'll try to use flux's utils as placeholders.
         logger.warning("Using placeholder utils from 'flux_ip' for 'qwen' model. These may need to be adapted.")
         global encode_prompt, pack_latents, unpack_latents, prepare_latent_image_ids, get_sigmas, prepare_mask_latents4training
-        from train.flux_ip.utils import (
+        from .flux_ip.utils import (
             encode_prompt, pack_latents, unpack_latents, prepare_latent_image_ids, get_sigmas, prepare_mask_latents4training
         )
     else:
@@ -619,13 +634,22 @@ def main():
             logger.info(f"Loading initial IP-Adapter weights from: {args.initial_ip_adapter_path}")
         state_dict = torch.load(args.initial_ip_adapter_path, map_location="cpu")
         
-        # --- FIX: Use the correct keys from the provided .bin file ---
-        # Load image_proj_model weights from the 'image_proj_mlp' key
-        image_proj_model.load_state_dict(state_dict["image_proj_mlp"], strict=True)
-        
-        # Load attn_processors weights from the 'attn_adapter' key
-        adapter_modules = torch.nn.ModuleList(transformer.attn_processors.values())
-        adapter_modules.load_state_dict(state_dict["attn_adapter"])
+        # --- UNIFIED KEY LOADING: Support both old and new key formats ---
+        # Try to load with unified keys first (compatible with save_model_hook and inference)
+        if "image_proj" in state_dict:
+            # Standard format (same as save_model_hook and inference)
+            image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
+            adapter_modules = torch.nn.ModuleList(transformer.attn_processors.values())
+            adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=True)
+            logger.info("Loaded IP-Adapter with standard keys: 'image_proj' and 'ip_adapter'")
+        elif "image_proj_mlp" in state_dict:
+            # Legacy format (for backward compatibility)
+            image_proj_model.load_state_dict(state_dict["image_proj_mlp"], strict=True)
+            adapter_modules = torch.nn.ModuleList(transformer.attn_processors.values())
+            adapter_modules.load_state_dict(state_dict["attn_adapter"], strict=True)
+            logger.info("Loaded IP-Adapter with legacy keys: 'image_proj_mlp' and 'attn_adapter'")
+        else:
+            raise KeyError(f"Unknown IP-Adapter checkpoint format. Expected keys: 'image_proj' or 'image_proj_mlp'")
         
         if accelerator.is_main_process:
             logger.info("Successfully loaded initial IP-Adapter weights.")
@@ -643,6 +667,9 @@ def main():
         log_memory_breakdown(accelerator, "After Model Loading", models_dict)
 
     # --- RL Setup ---
+    ema = None
+    rl_trainer = None
+    
     if args.use_rl:
         if not args.no_rl_reward_model:
             # FIX: The shell script now provides a comma-separated list. Simply split it.
@@ -663,6 +690,42 @@ def main():
 
         if args.rl_per_prompt_stat_tracking:
             stat_tracker = PerPromptStatTracker()
+        
+        # --- Initialize RL Training Method ---
+        logger.info(f"Using RL method: {args.rl_method}")
+        
+        if args.rl_method == "grpo":
+            rl_trainer = GRPOTrainer(
+                clip_range=args.rl_grpo_clip_range,
+                kl_beta=args.rl_kl_beta,
+                adv_clip_max=args.rl_adv_clip_max,
+            )
+            logger.info("Initialized GRPO trainer")
+        elif args.rl_method == "nft":
+            rl_trainer = NFTTrainer(
+                beta=args.nft_beta,
+                adv_clip_max=args.rl_adv_clip_max,
+                kl_beta=args.rl_kl_beta,
+                adv_mode=args.nft_adv_mode,
+            )
+            logger.info(f"Initialized NFT trainer with beta={args.nft_beta}, adv_mode={args.nft_adv_mode}")
+        
+        # --- Initialize EMA if requested ---
+        if args.use_ema:
+            # Get trainable parameters
+            attn_processors = transformer.attn_processors.values()
+            params_for_ema = list(itertools.chain(
+                image_proj_model.parameters(),
+                *(p.parameters() for p in attn_processors)
+            ))
+            
+            ema = EMAModuleWrapper(
+                parameters=params_for_ema,
+                decay=args.ema_decay,
+                update_step_interval=args.ema_update_interval,
+                device=accelerator.device,
+            )
+            logger.info(f"Initialized EMA with decay={args.ema_decay}, update_interval={args.ema_update_interval}")
 
     # --- Optimizer ---
     if args.use_8bit_adam:
@@ -732,6 +795,31 @@ def main():
     
     # The dataloader iterator for getting prompts
     train_iter = iter(train_dataloader)
+    
+    # --- Initialize old model for NFT ---
+    old_image_proj_model = None
+    old_attn_processors = None
+    
+    if args.use_rl and args.rl_method == "nft":
+        logger.info("Creating old model copy for NFT training...")
+        
+        # Create a copy of image_proj_model for old model
+        from copy import deepcopy
+        old_image_proj_model = deepcopy(unwrap_model(image_proj_model))
+        old_image_proj_model.requires_grad_(False)
+        old_image_proj_model.to(accelerator.device, dtype=weight_dtype)
+        
+        # Create a copy of attn_processors for old model
+        # Note: We'll store them separately and use them when needed
+        transformer_unwrapped = unwrap_model(transformer)
+        old_attn_processors = {}
+        
+        for name, processor in transformer_unwrapped.attn_processors.items():
+            old_attn_processors[name] = deepcopy(processor)
+            old_attn_processors[name].requires_grad_(False)
+            old_attn_processors[name].to(accelerator.device, dtype=weight_dtype)
+        
+        logger.info("Old model created for NFT")
 
     # RL training loop
     while global_step < args.max_train_steps:
@@ -1067,23 +1155,189 @@ def main():
 
                     for j in tqdm(range(num_train_timesteps), desc="Timestep", leave=False):
                         with accelerator.accumulate(transformer, image_proj_model):
-                            log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
-                                args, vae, transformer, image_proj_model,
-                                [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
-                                image_encoder, noise_scheduler, mini_batch, j, weight_dtype, accelerator.device
-                            )
+                            # ========== COMPUTE LOSS BASED ON RL METHOD ==========
                             
-                            # GRPO/PPO loss calculation
-                            ratio = torch.exp(log_prob - mini_batch["log_probs"][:, j])
-                            advantages_batch = mini_batch["advantages"]
-                            
-                            unclipped_loss = -advantages_batch * ratio
-                            clipped_loss = -advantages_batch * torch.clamp(
-                                ratio, 1.0 - args.rl_grpo_clip_range, 1.0 + args.rl_grpo_clip_range
-                            )
-                            policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                            
-                            loss = policy_loss
+                            if args.rl_method == "grpo":
+                                # --- GRPO Method ---
+                                log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
+                                    args, vae, transformer, image_proj_model,
+                                    [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
+                                    image_encoder, noise_scheduler, mini_batch, j, weight_dtype, accelerator.device
+                                )
+                                
+                                # Use GRPO trainer to compute loss
+                                loss, loss_terms = rl_trainer.compute_grpo_loss(
+                                    log_prob=log_prob,
+                                    old_log_prob=mini_batch["log_probs"][:, j],
+                                    advantages=mini_batch["advantages"],
+                                )
+                                
+                                # Prepare log data
+                                log_data = {k: v.item() if torch.is_tensor(v) else v for k, v in loss_terms.items()}
+                                
+                            elif args.rl_method == "nft":
+                                # --- NFT Method ---
+                                # We need to compute predictions from three models:
+                                # 1. Current model (forward)
+                                # 2. Old model (for implicit negative)
+                                # 3. Reference model (frozen, for KL)
+                                
+                                # Get current latents and timestep
+                                latents = mini_batch["latents"][:, j]
+                                t = noise_scheduler.timesteps[j]
+                                t_batch = t.repeat(latents.shape[0]).to(accelerator.device)
+                                
+                                # Prepare inputs (same as in compute_log_prob)
+                                prompts = mini_batch["prompts"]
+                                
+                                if args.offload_text_encoder_two:
+                                    text_encoder_two.to(accelerator.device, dtype=weight_dtype)
+                                
+                                prompt_embeds, pooled_prompt_embeds = encode_prompt(
+                                    [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
+                                    prompts, accelerator.device, max_sequence_length=args.max_sequence_length
+                                )
+                                
+                                if args.offload_text_encoder_two:
+                                    text_encoder_two.to("cpu")
+                                    torch.cuda.empty_cache()
+                                
+                                with torch.no_grad():
+                                    image_embeds = image_encoder(mini_batch["clip_images"].to(accelerator.device, dtype=weight_dtype)).pooler_output
+                                
+                                image_embeds_ = []
+                                for image_embed, drop_image_embed in zip(image_embeds, mini_batch["drop_image_embeds"]):
+                                    if drop_image_embed == 1:
+                                        image_embeds_.append(torch.zeros_like(image_embed))
+                                    else:
+                                        image_embeds_.append(image_embed)
+                                image_embeds = torch.stack(image_embeds_)
+                                
+                                ip_tokens = image_proj_model(image_embeds)
+                                
+                                # Prepare mask and masked image latents
+                                b, c, h, w = latents.shape
+                                num_images_per_prompt = latents.shape[0] // mini_batch["source_image"].shape[0]
+                                
+                                source_image_repeated = mini_batch["source_image"].to(accelerator.device, dtype=weight_dtype).repeat(num_images_per_prompt, 1, 1, 1)
+                                mask_repeated_for_mult = mini_batch["mask"].to(accelerator.device, dtype=weight_dtype).repeat(num_images_per_prompt, 1, 1, 1)
+                                masked_image_for_prep = source_image_repeated * (1 - mask_repeated_for_mult)
+                                
+                                mask_latents, masked_image_latents = prepare_mask_latents4training(
+                                    mask=mini_batch["mask"].to(accelerator.device, dtype=weight_dtype),
+                                    masked_image=masked_image_for_prep,
+                                    batch_size=b,
+                                    height=args.resolution,
+                                    width=args.resolution,
+                                    dtype=prompt_embeds.dtype,
+                                    device=accelerator.device,
+                                    vae=vae,
+                                    vae_scale_factor=8,
+                                )
+                                
+                                # Prepare common inputs
+                                guidance = torch.tensor([args.rl_guidance_scale], device=accelerator.device).expand(latents.shape[0])
+                                height, width = latents.shape[2], latents.shape[3]
+                                img_ids = prepare_latent_image_ids(height, width, accelerator.device, weight_dtype)
+                                text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=accelerator.device, dtype=weight_dtype)
+                                
+                                packed_noisy_latents = pack_latents(latents, b, c, h, w)
+                                packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+                                
+                                vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+                                mask_c = vae_scale_factor ** 2
+                                packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
+                                
+                                transformer_hidden_states = torch.cat(
+                                    [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
+                                )
+                                
+                                # 1. Forward prediction (current model)
+                                forward_pred = transformer(
+                                    hidden_states=transformer_hidden_states,
+                                    timestep=t_batch / 1000,
+                                    guidance=guidance,
+                                    pooled_projections=pooled_prompt_embeds,
+                                    encoder_hidden_states=prompt_embeds,
+                                    image_emb=ip_tokens,
+                                    txt_ids=text_ids,
+                                    img_ids=img_ids,
+                                    return_dict=False,
+                                )[0]
+                                forward_pred = unpack_latents(forward_pred, height * 8, width * 8, 16)
+                                
+                                with torch.no_grad():
+                                    # 2. Old prediction (for implicit negative)
+                                    old_ip_tokens = old_image_proj_model(image_embeds)
+                                    
+                                    # Temporarily swap attention processors
+                                    current_processors = unwrap_model(transformer).attn_processors
+                                    unwrap_model(transformer).set_attn_processor(old_attn_processors)
+                                    
+                                    old_pred = transformer(
+                                        hidden_states=transformer_hidden_states,
+                                        timestep=t_batch / 1000,
+                                        guidance=guidance,
+                                        pooled_projections=pooled_prompt_embeds,
+                                        encoder_hidden_states=prompt_embeds,
+                                        image_emb=old_ip_tokens,
+                                        txt_ids=text_ids,
+                                        img_ids=img_ids,
+                                        return_dict=False,
+                                    )[0]
+                                    old_pred = unpack_latents(old_pred, height * 8, width * 8, 16)
+                                    
+                                    # Restore current processors
+                                    unwrap_model(transformer).set_attn_processor(current_processors)
+                                    
+                                    # 3. Reference prediction (frozen base model without IP)
+                                    ref_pred = transformer(
+                                        hidden_states=transformer_hidden_states,
+                                        timestep=t_batch / 1000,
+                                        guidance=guidance,
+                                        pooled_projections=pooled_prompt_embeds,
+                                        encoder_hidden_states=prompt_embeds,
+                                        image_emb=torch.zeros_like(ip_tokens),  # Zero out IP tokens for reference
+                                        txt_ids=text_ids,
+                                        img_ids=img_ids,
+                                        return_dict=False,
+                                    )[0]
+                                    ref_pred = unpack_latents(ref_pred, height * 8, width * 8, 16)
+                                
+                                # Get sigmas and convert to velocity
+                                sigmas = get_sigmas(noise_scheduler, t_batch, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
+                                forward_velocity = forward_pred * (-sigmas) + latents
+                                old_velocity = old_pred * (-sigmas) + latents
+                                ref_velocity = ref_pred * (-sigmas) + latents
+                                
+                                # Get clean x0 from next_latents (this is an approximation)
+                                # In NFT, we reconstruct x0 from the noisy latents
+                                next_latents = mini_batch["next_latents"][:, j]
+                                t_next_idx = min(j + 1, len(noise_scheduler.timesteps) - 1)
+                                t_next = noise_scheduler.timesteps[t_next_idx]
+                                sigmas_next = get_sigmas(noise_scheduler, t_next.repeat(next_latents.shape[0]).to(accelerator.device), 
+                                                        n_dim=next_latents.ndim, dtype=next_latents.dtype, device=next_latents.device)
+                                
+                                # Approximate x0 from next latents
+                                # For flow matching: x_t = (1-t)*x_0 + t*noise, so x_0 ≈ (x_t - t*v) / (1-t)
+                                # where v is the velocity prediction
+                                t_value = (t / 1000.0).view(-1, 1, 1, 1)
+                                x0 = forward_velocity  # In flow matching, the velocity prediction is the denoised prediction
+                                
+                                # Compute NFT loss
+                                loss, loss_terms = rl_trainer.compute_nft_loss(
+                                    forward_prediction=forward_velocity,
+                                    old_prediction=old_velocity,
+                                    ref_prediction=ref_velocity,
+                                    x0=x0,
+                                    xt=latents,
+                                    t=t_batch / 1000.0,
+                                    advantages=mini_batch["advantages"],
+                                    valid_mask=None,
+                                )
+                                
+                                # Prepare log data
+                                log_data = {k: v.item() if torch.is_tensor(v) else v for k, v in loss_terms.items()}
                             
                             # Optional KL penalty
                             if args.rl_kl_beta > 0:
@@ -1112,6 +1366,15 @@ def main():
 
                             lr_scheduler.step()
                             optimizer.zero_grad()
+                            
+                            # --- Update EMA if enabled ---
+                            if args.use_ema and ema is not None:
+                                attn_processors_for_ema = accelerator.unwrap_model(transformer).attn_processors.values()
+                                params_for_ema = list(itertools.chain(
+                                    accelerator.unwrap_model(image_proj_model).parameters(),
+                                    *(p.parameters() for p in attn_processors_for_ema)
+                                ))
+                                ema.step(params_for_ema, global_step)
 
                         # Checks if the accelerator has performed an optimization step behind the scenes
                         if accelerator.sync_gradients:
@@ -1139,6 +1402,31 @@ def main():
                         break
                 if global_step >= args.max_train_steps:
                     break
+            
+            # --- Update old model for NFT ---
+            if args.rl_method == "nft":
+                # Get current parameters
+                current_image_proj_params = list(unwrap_model(image_proj_model).parameters())
+                current_attn_params = list(itertools.chain(
+                    *(p.parameters() for p in unwrap_model(transformer).attn_processors.values())
+                ))
+                current_params = current_image_proj_params + current_attn_params
+                
+                # Get old parameters
+                old_image_proj_params = list(old_image_proj_model.parameters())
+                old_attn_params = list(itertools.chain(
+                    *(p.parameters() for p in old_attn_processors.values())
+                ))
+                old_params = old_image_proj_params + old_attn_params
+                
+                # Update old model with decay
+                update_old_model(
+                    current_params=current_params,
+                    old_params=old_params,
+                    decay=0.0,  # Will be computed inside based on decay_type
+                    global_step=global_step,
+                    decay_type=args.nft_decay_type,
+                )
             
             # Checkpointing logic should be outside the inner loops but inside the main while loop
             if global_step % args.checkpointing_steps == 0:

@@ -62,9 +62,9 @@ def load_vae_and_transformer(args):
     if args.model_type == 'flux':
         # Import the custom transformer model that supports IP-Adapter (image_emb).
         # from diffusers.models import FluxTransformer2DModel as TransformerModel
-        from train.flux_ip.transformer_flux_inpainting import FluxTransformer2DModel as TransformerModel
+        from .flux_ip.transformer_flux_inpainting import FluxTransformer2DModel as TransformerModel
     elif args.model_type == 'qwen':
-        from qwen_ip.transformer import QwenTransformer2DModel as TransformerModel
+        from .qwen_ip.transformer import QwenTransformer2DModel as TransformerModel
     else:
         raise ValueError(f"Unknown model_type: {args.model_type}")
 
@@ -97,10 +97,10 @@ class MLPProjModel(nn.Module):
 
 def setup_ip_adapter(transformer, accelerator, weight_dtype, args):
     if args.model_type == 'flux':
-        from flux_ip.attention_processor import IPAFluxAttnProcessor2_0 as IPAttentionProcessor
+        from .flux_ip.attention_processor import IPAFluxAttnProcessor2_0 as IPAttentionProcessor
         num_tokens = 128
     elif args.model_type == 'qwen':
-        from qwen_ip.attention_processor import IPAQwenAttnProcessor as IPAttentionProcessor
+        from .qwen_ip.attention_processor import IPAQwenAttnProcessor as IPAttentionProcessor
         # NOTE: Placeholder, adjust as needed for Qwen
         num_tokens = 16 
     else:

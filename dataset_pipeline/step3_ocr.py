@@ -109,20 +109,30 @@ def _ocr_image_paddle_vl(image_path: str) -> List[Tuple[List[int], str]]:
         ocr_results = []
         if output:
             for res in output:
-                # Assuming res.data is a list of {'box': [[x1,y1]...], 'text': '...'}
-                for item in res.data:
-                    box = item.get('box')
-                    text = item.get('text')
-                    if not box or not text:
-                        continue
+                # The result is in res.json which is a dictionary.
+                # It contains keys like 'res', 'page_no'.
+                # The actual OCR results are in res.json['res'].
+                json_result = res.json
+                if not json_result or 'res' not in json_result:
+                    continue
+                
+                for item in json_result['res']:
+                    # Each item is a dictionary with 'dt_polys' and 'rec_texts'.
+                    # This structure is similar to the old PaddleOCR output.
+                    if 'dt_polys' in item and 'rec_texts' in item:
+                        box = item.get('dt_polys')
+                        text = item.get('rec_texts')
 
-                    xs = [p[0] for p in box]
-                    ys = [p[1] for p in box]
-                    min_x, min_y = int(min(xs)), int(min(ys))
-                    max_x, max_y = int(max(xs)), int(max(ys))
-                    
-                    formatted_bbox = [min_x, min_y, max_x, max_y]
-                    ocr_results.append((formatted_bbox, text))
+                        if not box or not text:
+                            continue
+
+                        xs = [p[0] for p in box]
+                        ys = [p[1] for p in box]
+                        min_x, min_y = int(min(xs)), int(min(ys))
+                        max_x, max_y = int(max(xs)), int(max(ys))
+                        
+                        formatted_bbox = [min_x, min_y, max_x, max_y]
+                        ocr_results.append((formatted_bbox, text))
 
         print(f"PaddleOCRVL found {len(ocr_results)} text block(s).")
         return ocr_results

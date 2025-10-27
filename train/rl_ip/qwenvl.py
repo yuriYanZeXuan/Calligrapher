@@ -17,7 +17,7 @@ class QwenVLScorer:
         self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, use_fast=True)
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path, 
-            device_map="auto", 
+            device_map=self.device, 
             trust_remote_code=True
         ).eval()
         self.task = '''

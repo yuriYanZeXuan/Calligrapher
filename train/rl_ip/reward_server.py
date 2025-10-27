@@ -9,6 +9,7 @@ from pydantic import BaseModel
 import logging
 import os
 import fcntl # For process-safe file locking
+from contextlib import asynccontextmanager
 
 # Import both scorers
 from qwenvl import QwenVLScorer
@@ -18,7 +19,16 @@ from ocr import OCRScorer
 # logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn")
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Application startup...")
+    # This is where we would initialize the model, but we do it before `uvicorn.run`
+    # to pass arguments to the scorer.
+    yield
+    # Code to run on shutdown - can be empty if not needed
+    logger.info("Application shutdown.")
+
+app = FastAPI(lifespan=lifespan)
 
 # Global variables to hold the scorers
 qwen_scorer = None
@@ -74,13 +84,6 @@ def save_debug_sample(image_pil, prompt, vlm_score, ocr_text, ocr_confidence):
 class ScoreRequest(BaseModel):
     image: str  # Base64 encoded image string
     prompt: str
-
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Application startup...")
-    # This is where we would initialize the model, but we do it before `uvicorn.run`
-    # to pass arguments to the scorer.
-    pass
 
 @app.post("/score")
 async def get_score(request: ScoreRequest):

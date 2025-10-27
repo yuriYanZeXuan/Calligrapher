@@ -105,19 +105,27 @@ def _ocr_image_paddle_vl(image_path: str) -> List[Tuple[List[int], str]]:
     try:
         print(f"Performing OCR with PaddleOCRVL on {image_path}")
         output = paddle_vl_reader.predict(image_path)
+        print(f"DEBUG: Raw output from paddle_vl_reader.predict: {output}")
         
         ocr_results = []
         if output:
-            for res in output:
+            print(f"DEBUG: Looping through {len(output)} result object(s).")
+            for i, res in enumerate(output):
                 json_result = res.json
-                if not json_result or 'parsing_res_list' not in json_result:
+                print(f"DEBUG: JSON result for object {i}: {json_result}")
+
+                if not json_result or 'parsing_res_list' not in json_result or not json_result['parsing_res_list']:
+                    print(f"DEBUG: 'parsing_res_list' is missing, empty, or not found in JSON result {i}.")
                     continue
 
-                for item in json_result['parsing_res_list']:
+                print(f"DEBUG: Found {len(json_result['parsing_res_list'])} items in 'parsing_res_list' for object {i}.")
+                for j, item in enumerate(json_result['parsing_res_list']):
+                    print(f"DEBUG: Processing item {j} from 'parsing_res_list': {item}")
                     text = item.get('block_content')
                     box = item.get('block_bbox')
 
                     if not text or not box or len(box) != 4:
+                        print(f"DEBUG: Skipping item {j} due to missing text, box, or incorrect box format.")
                         continue
                     
                     try:
@@ -125,8 +133,9 @@ def _ocr_image_paddle_vl(image_path: str) -> List[Tuple[List[int], str]]:
                         # Ensure they are integers
                         formatted_bbox = [int(p) for p in box]
                         ocr_results.append((formatted_bbox, text))
+                        print(f"DEBUG: Successfully parsed and added item {j}.")
                     except (ValueError, TypeError):
-                        print(f"Warning: could not parse bbox: {box}")
+                        print(f"Warning: could not parse bbox for item {j}: {box}")
                         continue
 
         print(f"PaddleOCRVL found {len(ocr_results)} text block(s).")

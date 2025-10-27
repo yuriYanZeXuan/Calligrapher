@@ -118,7 +118,7 @@ echo "Connecting to Reward Server(s) at: $REWARD_SERVER_URLS"
 
 export CUDA_LAUNCH_BLOCKING=1
 
-accelerate launch $ACCELERATE_LAUNCH_ARGS train/train.py \
+accelerate launch $ACCELERATE_LAUNCH_ARGS train.train \
   --pretrained_model_name_or_path=$PRETRAINED_MODEL_PATH \
   --siglip_path=$SIGLIP_MODEL_PATH \
   --train_data_json=$TRAIN_DATA_DIR \

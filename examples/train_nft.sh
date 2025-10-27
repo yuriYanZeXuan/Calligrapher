@@ -105,7 +105,7 @@ else
     TRAIN_CMD="python -m"
 fi
 
-$TRAIN_CMD train/train.py \
+$TRAIN_CMD train.train \
     --model_type flux \
     --pretrained_model_name_or_path "$MODEL_PATH" \
     --siglip_path "$SIGLIP_PATH" \

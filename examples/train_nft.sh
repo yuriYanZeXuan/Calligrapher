@@ -1,4 +1,5 @@
 #!/bin/bash
+export PYTHONPATH=$(pwd)
 
 # DiffusionNFT 训练示例脚本
 # 使用 NFT 方法进行 RL 训练，适合追求稳定性和资源充足的场景
@@ -105,7 +106,7 @@ else
     TRAIN_CMD="python -m"
 fi
 
-$TRAIN_CMD train.train \
+$TRAIN_CMD train/train.py \
     --model_type flux \
     --pretrained_model_name_or_path "$MODEL_PATH" \
     --siglip_path "$SIGLIP_PATH" \

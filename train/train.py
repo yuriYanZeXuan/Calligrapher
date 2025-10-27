@@ -50,6 +50,10 @@ from .rl_ip.ema import EMAModuleWrapper
 from .rl_logic.grpo_trainer import GRPOTrainer
 from .rl_logic.nft_trainer import NFTTrainer, update_old_model
 
+# --- [Fix] Add project root to sys.path for relative imports ---
+# This ensures that the script can be run from anywhere and still find its modules.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# ---
 
 logger = get_logger(__name__)
 

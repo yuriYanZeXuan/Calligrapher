@@ -105,27 +105,26 @@ def _ocr_image_paddle_vl(image_path: str) -> List[Tuple[List[int], str]]:
     try:
         print(f"Performing OCR with PaddleOCRVL on {image_path}")
         output = paddle_vl_reader.predict(image_path)
-        print(f"DEBUG: Raw output from paddle_vl_reader.predict: {output}")
         
         ocr_results = []
         if output:
-            print(f"DEBUG: Looping through {len(output)} result object(s).")
-            for i, res in enumerate(output):
+            for res in output:
                 json_result = res.json
-                print(f"DEBUG: JSON result for object {i}: {json_result}")
-
-                if not json_result or 'parsing_res_list' not in json_result or not json_result['parsing_res_list']:
-                    print(f"DEBUG: 'parsing_res_list' is missing, empty, or not found in JSON result {i}.")
+                
+                # The actual result data is nested under the 'res' key.
+                if not json_result or 'res' not in json_result:
                     continue
 
-                print(f"DEBUG: Found {len(json_result['parsing_res_list'])} items in 'parsing_res_list' for object {i}.")
-                for j, item in enumerate(json_result['parsing_res_list']):
-                    print(f"DEBUG: Processing item {j} from 'parsing_res_list': {item}")
+                actual_result = json_result['res']
+
+                if 'parsing_res_list' not in actual_result or not actual_result['parsing_res_list']:
+                    continue
+
+                for item in actual_result['parsing_res_list']:
                     text = item.get('block_content')
                     box = item.get('block_bbox')
 
                     if not text or not box or len(box) != 4:
-                        print(f"DEBUG: Skipping item {j} due to missing text, box, or incorrect box format.")
                         continue
                     
                     try:
@@ -133,9 +132,8 @@ def _ocr_image_paddle_vl(image_path: str) -> List[Tuple[List[int], str]]:
                         # Ensure they are integers
                         formatted_bbox = [int(p) for p in box]
                         ocr_results.append((formatted_bbox, text))
-                        print(f"DEBUG: Successfully parsed and added item {j}.")
                     except (ValueError, TypeError):
-                        print(f"Warning: could not parse bbox for item {j}: {box}")
+                        print(f"Warning: could not parse bbox: {box}")
                         continue
 
         print(f"PaddleOCRVL found {len(ocr_results)} text block(s).")

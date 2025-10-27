@@ -10,15 +10,26 @@ cd "$PROJECT_ROOT"
 
 echo "Working directory: $(pwd)"
 
-# 基本参数（根据实际服务器路径修改）
+# =========================================================================
+# 基本配置（参考 run_training.sh）
+# =========================================================================
+
+# 基本参数
 MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill"
 SIGLIP_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip"
 DATA_JSON="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
 OUTPUT_DIR="./output_grpo"
-REWARD_SERVER_URL="http://127.0.0.1:8000/score"
 
 # (可选) 从预训练的 IP-Adapter 开始
 # INITIAL_IP_ADAPTER_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/calligrapher/calligrapher.bin"
+
+# Reward Server 配置（需与 run_server.sh 匹配）
+REWARD_SERVER_HOST="127.0.0.1"
+REWARD_SERVER_PORT=8000
+
+# 硬件配置
+# 训练 GPU（例如 "0,1,2,3"，如果为空则使用单 GPU）
+TRAINING_GPU_IDS="0,1,2,3"
 
 # 训练参数
 RESOLUTION=512
@@ -51,8 +62,48 @@ EMA_UPDATE_INTERVAL=1
 OCR_WEIGHT=0.7
 VLM_WEIGHT=0.3
 
-# 执行训练（使用模块方式运行，适合远程服务器）
-python -m train.train \
+# =========================================================================
+# 构建 Reward Server URLs（与 run_training.sh 逻辑一致）
+# =========================================================================
+
+# 计算进程数
+ACCELERATE_LAUNCH_ARGS=""
+NUM_PROCESSES=1
+if [ -n "$TRAINING_GPU_IDS" ]; then
+    NUM_PROCESSES=$(echo "$TRAINING_GPU_IDS" | awk -F',' '{print NF}')
+    ACCELERATE_LAUNCH_ARGS="--num_processes=$NUM_PROCESSES --gpu_ids=$TRAINING_GPU_IDS"
+fi
+
+# 构建多个 reward server URLs（每个训练进程连接一个 server）
+REWARD_SERVER_URLS=""
+for i in $(seq 0 $((NUM_PROCESSES - 1))); do
+    port=$((REWARD_SERVER_PORT + i))
+    url="http://${REWARD_SERVER_HOST}:${port}/score"
+    if [ -z "$REWARD_SERVER_URLS" ]; then
+        REWARD_SERVER_URLS="$url"
+    else
+        REWARD_SERVER_URLS="$REWARD_SERVER_URLS,$url"
+    fi
+done
+
+echo "Training will run on GPU(s): ${TRAINING_GPU_IDS:-"Default GPU"}"
+echo "Connecting to Reward Server(s) at: $REWARD_SERVER_URLS"
+echo ""
+
+# =========================================================================
+# 执行训练
+# =========================================================================
+
+# 使用 accelerate launch（支持多GPU）或 python -m（单GPU）
+if [ -n "$TRAINING_GPU_IDS" ] && [ "$NUM_PROCESSES" -gt 1 ]; then
+    echo "Using accelerate launch for multi-GPU training"
+    TRAIN_CMD="accelerate launch $ACCELERATE_LAUNCH_ARGS"
+else
+    echo "Using single-GPU training"
+    TRAIN_CMD="python -m"
+fi
+
+$TRAIN_CMD train.train \
     --model_type flux \
     --pretrained_model_name_or_path "$MODEL_PATH" \
     --siglip_path "$SIGLIP_PATH" \
@@ -80,7 +131,7 @@ python -m train.train \
     --rl_kl_beta $RL_KL_BETA \
     --rl_adv_clip_max $RL_ADV_CLIP_MAX \
     --rl_per_prompt_stat_tracking \
-    --reward_server_url "$REWARD_SERVER_URL" \
+    --reward_server_url "$REWARD_SERVER_URLS" \
     --ocr_weight $OCR_WEIGHT \
     --vlm_weight $VLM_WEIGHT \
     $USE_EMA \

@@ -630,6 +630,9 @@ def main():
         text_encoder_two.gradient_checkpointing_enable()
         image_encoder.gradient_checkpointing_enable()
 
+    # --- FIX: Move IP-Adapter setup BEFORE accelerator.prepare ---
+    # This ensures attn_processors are set on the raw model, so they can be
+    # correctly copied for the NFT 'old_model'.
     image_proj_model = setup_ip_adapter(transformer, accelerator, weight_dtype, args)
 
     # --- NEW: Logic to load initial IP-Adapter weights ---
@@ -658,7 +661,7 @@ def main():
         if accelerator.is_main_process:
             logger.info("Successfully loaded initial IP-Adapter weights.")
 
-
+    # --- FIX: Moved this from before IP-Adapter setup to after ---
     if args.enable_memory_profiler:
         models_dict = {
             "VAE": vae,
@@ -669,8 +672,52 @@ def main():
             "IP Proj Model": image_proj_model,
         }
         log_memory_breakdown(accelerator, "After Model Loading", models_dict)
+    
+    # --- Optimizer ---
+    if args.use_8bit_adam:
+        try:
+            import bitsandbytes.optim as bnb_optim
+        except ImportError:
+            raise ImportError(
+                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
+            )
+        logger.info("Using 8-bit AdamW optimizer.")
+        optimizer_cls = bnb_optim.AdamW8bit
+    else:
+        optimizer_cls = torch.optim.AdamW
 
-    # --- RL Setup ---
+    attn_processors = transformer.attn_processors.values()
+    params_to_optimize = itertools.chain(image_proj_model.parameters(), *(p.parameters() for p in attn_processors))
+    optimizer = optimizer_cls(params_to_optimize, lr=args.learning_rate)
+
+    # --- Dataset ---
+    train_dataset = SimpleDataset(args, accelerator)
+    clip_image_processor = AutoProcessor.from_pretrained(args.siglip_path, use_fast=True)
+    
+    # We need to use functools.partial to pass the clip_image_processor to the collate_fn
+    collate_fn_with_processor = partial(collate_fn, clip_image_processor=clip_image_processor)
+
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=args.train_batch_size,
+        shuffle=True,
+        collate_fn=collate_fn_with_processor,
+        num_workers=args.dataloader_num_workers,
+    )
+    
+    # --- Scheduler and Accelerator ---
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if args.max_train_steps is None:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+    
+    lr_scheduler = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+    )
+    
+    # --- RL Setup (must be after optimizer, before prepare) ---
     ema = None
     rl_trainer = None
     
@@ -731,50 +778,6 @@ def main():
             )
             logger.info(f"Initialized EMA with decay={args.ema_decay}, update_interval={args.ema_update_interval}")
 
-    # --- Optimizer ---
-    if args.use_8bit_adam:
-        try:
-            import bitsandbytes.optim as bnb_optim
-        except ImportError:
-            raise ImportError(
-                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
-            )
-        logger.info("Using 8-bit AdamW optimizer.")
-        optimizer_cls = bnb_optim.AdamW8bit
-    else:
-        optimizer_cls = torch.optim.AdamW
-
-    attn_processors = transformer.attn_processors.values()
-    params_to_optimize = itertools.chain(image_proj_model.parameters(), *(p.parameters() for p in attn_processors))
-    optimizer = optimizer_cls(params_to_optimize, lr=args.learning_rate)
-
-    # --- Dataset ---
-    train_dataset = SimpleDataset(args, accelerator)
-    clip_image_processor = AutoProcessor.from_pretrained(args.siglip_path, use_fast=True)
-    
-    # We need to use functools.partial to pass the clip_image_processor to the collate_fn
-    collate_fn_with_processor = partial(collate_fn, clip_image_processor=clip_image_processor)
-
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=args.train_batch_size,
-        shuffle=True,
-        collate_fn=collate_fn_with_processor,
-        num_workers=args.dataloader_num_workers,
-    )
-    
-    # --- Scheduler and Accelerator ---
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if args.max_train_steps is None:
-        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
-    
-    lr_scheduler = get_scheduler(
-        args.lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-    )
-    
     transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         transformer, image_proj_model, optimizer, train_dataloader, lr_scheduler
     )
@@ -815,16 +818,18 @@ def main():
         
         # Create a copy of attn_processors for old model
         # Note: We'll store them separately and use them when needed
-        transformer_unwrapped = unwrap_model(transformer)
+        
+        # --- FIX: No need to unwrap here, as `prepare` has not been called on transformer yet ---
+        # We access the raw model directly.
         old_attn_processors = {}
         
         # --- FIX: Ensure we are accessing the processors from the unwrapped model ---
-        for name, processor in transformer_unwrapped.attn_processors.items():
+        for name, processor in transformer.attn_processors.items():
             old_attn_processors[name] = deepcopy(processor)
             old_attn_processors[name].requires_grad_(False)
             old_attn_processors[name].to(accelerator.device, dtype=weight_dtype)
         
-        logger.info("Old model created for NFT")
+        logger.info(f"Old model created for NFT with {len(old_attn_processors)} processors.")
 
     # RL training loop
     while global_step < args.max_train_steps:

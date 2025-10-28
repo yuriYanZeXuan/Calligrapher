@@ -1386,11 +1386,6 @@ def main():
                             global_step += 1
                             
                             # Logging
-                            log_data = {
-                                "policy_loss": policy_loss.item(),
-                                "ratio_mean": ratio.mean().item(),
-                                "adv_mean": advantages_batch.mean().item(),
-                            }
                             # --- FIX: Explicitly log only on the main process for clarity ---
                             if accelerator.is_main_process:
                                 accelerator.log(log_data, step=global_step)

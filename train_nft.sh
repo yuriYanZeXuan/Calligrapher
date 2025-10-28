@@ -28,7 +28,7 @@ TRAINING_GPU_IDS="0,1,2,3"
 # 训练参数
 RESOLUTION=512
 BATCH_SIZE=1
-GRADIENT_ACCUMULATION=2
+GRADIENT_ACCUMULATION=1
 LEARNING_RATE=1e-5
 MAX_STEPS=10000
 
@@ -89,7 +89,49 @@ echo ""
 # =========================================================================
 # 执行训练
 # =========================================================================
+# 显存不自由
+# accelerate launch $ACCELERATE_LAUNCH_ARGS -m train.train \
+#     --model_type flux \
+#     --pretrained_model_name_or_path "$MODEL_PATH" \
+#     --siglip_path "$SIGLIP_PATH" \
+#     --train_data_json "$DATA_JSON" \
+#     --output_dir "$OUTPUT_DIR" \
+#     $([ -n "$INITIAL_IP_ADAPTER_PATH" ] && echo "--initial_ip_adapter_path=$INITIAL_IP_ADAPTER_PATH") \
+#     --resolution $RESOLUTION \
+#     --train_batch_size $BATCH_SIZE \
+#     --gradient_accumulation_steps $GRADIENT_ACCUMULATION \
+#     --learning_rate $LEARNING_RATE \
+#     --max_train_steps $MAX_STEPS \
+#     --mixed_precision fp16 \
+#     --gradient_checkpointing \
+#     --offload_text_encoder_two \
+#     --use_rl \
+#     --rl_method $RL_METHOD \
+#     --rl_warmup_steps $RL_WARMUP_STEPS \
+#     --rl_num_images_per_prompt $RL_NUM_IMAGES_PER_PROMPT \
+#     --rl_num_batches_per_epoch $RL_NUM_BATCHES_PER_EPOCH \
+#     --rl_num_inference_steps $RL_NUM_INFERENCE_STEPS \
+#     --rl_guidance_scale $RL_GUIDANCE_SCALE \
+#     --rl_timestep_fraction $RL_TIMESTEP_FRACTION \
+#     --rl_num_inner_epochs $RL_NUM_INNER_EPOCHS \
+#     --rl_adv_clip_max $RL_ADV_CLIP_MAX \
+#     --nft_beta $NFT_BETA \
+#     --nft_adv_mode $NFT_ADV_MODE \
+#     --nft_decay_type $NFT_DECAY_TYPE \
+#     --rl_kl_beta $RL_KL_BETA \
+#     --rl_per_prompt_stat_tracking \
+#     --reward_server_url "$REWARD_SERVER_URLS" \
+#     --ocr_weight $OCR_WEIGHT \
+#     --vlm_weight $VLM_WEIGHT \
+#     $USE_EMA \
+#     --ema_decay $EMA_DECAY \
+#     --ema_update_interval $EMA_UPDATE_INTERVAL \
+#     --checkpointing_steps 500 \
+#     --report_to wandb \
+#     --logging_dir logs \
+#     --use_8bit_adam
 
+# 显存自由
 accelerate launch $ACCELERATE_LAUNCH_ARGS -m train.train \
     --model_type flux \
     --pretrained_model_name_or_path "$MODEL_PATH" \
@@ -104,7 +146,6 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS -m train.train \
     --max_train_steps $MAX_STEPS \
     --mixed_precision fp16 \
     --gradient_checkpointing \
-    --offload_text_encoder_two \
     --use_rl \
     --rl_method $RL_METHOD \
     --rl_warmup_steps $RL_WARMUP_STEPS \
@@ -128,6 +169,4 @@ accelerate launch $ACCELERATE_LAUNCH_ARGS -m train.train \
     --ema_update_interval $EMA_UPDATE_INTERVAL \
     --checkpointing_steps 500 \
     --report_to wandb \
-    --logging_dir logs \
-    --use_8bit_adam
-
+    --logging_dir logs 

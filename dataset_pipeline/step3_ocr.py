@@ -1,10 +1,20 @@
 import os
-from paddleocr import PaddleOCR, PaddleOCRVL
+from paddleocr import PaddleOCR
 from typing import List, Tuple
+
+# Try to import PaddleOCRVL, but handle the case where it doesn't exist
+try:
+    from paddleocr import PaddleOCRVL
+    PADDLE_VL_AVAILABLE = True
+    print("PaddleOCRVL is available in this PaddleOCR version.")
+except ImportError:
+    PADDLE_VL_AVAILABLE = False
+    print("PaddleOCRVL is not available in this PaddleOCR version. Will use standard PaddleOCR only.")
 
 # --- Configuration for PaddleOCR ---
 # Set to True to use PaddleOCRVL, False to use standard PaddleOCR
-USE_PADDLE_VL = True
+# This will be automatically adjusted based on availability
+USE_PADDLE_VL = True and PADDLE_VL_AVAILABLE
 # URL for the deployed PaddleOCRVL backend server
 PADDLE_VL_SERVER_URL = "http://127.0.0.1:8118/v1"
 # --- End Configuration ---

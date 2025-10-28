@@ -818,6 +818,7 @@ def main():
         transformer_unwrapped = unwrap_model(transformer)
         old_attn_processors = {}
         
+        # --- FIX: Ensure we are accessing the processors from the unwrapped model ---
         for name, processor in transformer_unwrapped.attn_processors.items():
             old_attn_processors[name] = deepcopy(processor)
             old_attn_processors[name].requires_grad_(False)
@@ -1274,9 +1275,10 @@ def main():
                                     # 2. Old prediction (for implicit negative)
                                     old_ip_tokens = old_image_proj_model(image_embeds)
                                     
-                                    # Temporarily swap attention processors
-                                    current_processors = unwrap_model(transformer).attn_processors
-                                    unwrap_model(transformer).set_attn_processor(old_attn_processors)
+                                    # --- FIX: Temporarily swap attention processors on the UNWRAPPED model ---
+                                    transformer_unwrapped = unwrap_model(transformer)
+                                    current_processors = transformer_unwrapped.attn_processors
+                                    transformer_unwrapped.set_attn_processor(old_attn_processors)
                                     
                                     old_pred = transformer(
                                         hidden_states=transformer_hidden_states,
@@ -1291,8 +1293,8 @@ def main():
                                     )[0]
                                     old_pred = unpack_latents(old_pred, height * 8, width * 8, 16)
                                     
-                                    # Restore current processors
-                                    unwrap_model(transformer).set_attn_processor(current_processors)
+                                    # --- FIX: Restore current processors on the UNWRAPPED model ---
+                                    transformer_unwrapped.set_attn_processor(current_processors)
                                     
                                     # 3. Reference prediction (frozen base model without IP)
                                     ref_pred = transformer(

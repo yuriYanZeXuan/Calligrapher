@@ -1,7 +1,12 @@
 from paddleocr import PaddleOCR
 from PIL import Image
 import numpy as np
-from paddleocr import PaddleOCRVL
+try:
+    from paddleocr import PaddleOCRVL
+    PADDLEOCRVL_AVAILABLE = True
+except ImportError:
+    PADDLEOCRVL_AVAILABLE = False
+    print("PaddleOCRVL is not available in this PaddleOCR installation.")
 
 class OCRScorer:
     def __init__(self, device=None):
@@ -12,7 +17,9 @@ class OCRScorer:
             use_doc_unwarping=False, # 通过 use_doc_unwarping 参数指定不使用文本图像矫正模型
             use_textline_orientation=False, # 通过 use_textline_orientation 参数指定不使用文本行方向分类模型
         )
-        # self.ocr_model = PaddleOCRVL()
+        # Alternative initialization with PaddleOCRVL if available
+        # if PADDLEOCRVL_AVAILABLE:
+        #     self.ocr_model = PaddleOCRVL()
         print("Initialized PaddleOCR Model.")
 
     def score(self, image_pil: Image.Image) -> tuple[str, float]:

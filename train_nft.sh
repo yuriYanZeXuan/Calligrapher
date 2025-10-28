@@ -90,16 +90,7 @@ echo ""
 # 执行训练
 # =========================================================================
 
-# 使用 accelerate launch（支持多GPU）或 python -m（单GPU）
-if [ -n "$TRAINING_GPU_IDS" ] && [ "$NUM_PROCESSES" -gt 1 ]; then
-    echo "Using accelerate launch for multi-GPU training"
-    TRAIN_CMD="accelerate launch $ACCELERATE_LAUNCH_ARGS"
-else
-    echo "Using single-GPU training"
-    TRAIN_CMD="python -m"
-fi
-
-$TRAIN_CMD train/train.py \
+accelerate launch $ACCELERATE_LAUNCH_ARGS -m train.train \
     --model_type flux \
     --pretrained_model_name_or_path "$MODEL_PATH" \
     --siglip_path "$SIGLIP_PATH" \

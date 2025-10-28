@@ -819,12 +819,12 @@ def main():
         # Create a copy of attn_processors for old model
         # Note: We'll store them separately and use them when needed
         
-        # --- FIX: No need to unwrap here, as `prepare` has not been called on transformer yet ---
-        # We access the raw model directly.
+        # --- FIX: Transformer is already wrapped by `prepare`, so we must unwrap it here ---
+        transformer_unwrapped = unwrap_model(transformer)
         old_attn_processors = {}
         
-        # --- FIX: Ensure we are accessing the processors from the unwrapped model ---
-        for name, processor in transformer.attn_processors.items():
+        # Access the processors from the unwrapped model
+        for name, processor in transformer_unwrapped.attn_processors.items():
             old_attn_processors[name] = deepcopy(processor)
             old_attn_processors[name].requires_grad_(False)
             old_attn_processors[name].to(accelerator.device, dtype=weight_dtype)

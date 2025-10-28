@@ -4,13 +4,6 @@ export PYTHONPATH=$(pwd)
 # DiffusionNFT 训练示例脚本
 # 使用 NFT 方法进行 RL 训练，适合追求稳定性和资源充足的场景
 
-# 确保在项目根目录运行
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
-cd "$PROJECT_ROOT"
-
-echo "Working directory: $(pwd)"
-
 # =========================================================================
 # 基本配置（参考 run_training.sh）
 # =========================================================================

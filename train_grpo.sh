@@ -3,13 +3,6 @@
 # GRPO 训练示例脚本
 # 使用 GRPO 方法进行 RL 训练，适合快速实验和资源受限场景
 
-# 确保在项目根目录运行
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
-cd "$PROJECT_ROOT"
-
-echo "Working directory: $(pwd)"
-
 # =========================================================================
 # 基本配置（参考 run_training.sh）
 # =========================================================================
@@ -103,7 +96,7 @@ else
     TRAIN_CMD="python -m"
 fi
 
-$TRAIN_CMD train.train \
+$TRAIN_CMD train/train.py \
     --model_type flux \
     --pretrained_model_name_or_path "$MODEL_PATH" \
     --siglip_path "$SIGLIP_PATH" \

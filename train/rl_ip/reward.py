@@ -37,6 +37,8 @@ class RewardClient:
             response.raise_for_status()
             
             data = response.json()
+            if isinstance(data, list):
+                data = data[0] if data else {}
             
             vlm_score = float(data.get('vlm_score', 0.0))
             ocr_confidence = float(data.get('ocr_confidence', 0.0))

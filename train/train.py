@@ -19,7 +19,7 @@ import torch
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from accelerate.utils import set_seed, gather_object, broadcast
+from accelerate.utils import set_seed, gather_object, broadcast_object_list
 try:
     from accelerate.utils import is_compiled_module
 except ImportError:
@@ -819,19 +819,22 @@ def main():
         # --- FIX: Transformer is already wrapped by `prepare`, so we must unwrap it here ---
         transformer_unwrapped = unwrap_model(transformer)
         
-        # --- FIX for Multi-GPU: Create on main process and broadcast to others ---
+        # --- FIX for Multi-GPU: Create on main process and broadcast to others using broadcast_object_list ---
         if accelerator.is_main_process:
             old_attn_processors = {}
             # Access the processors from the unwrapped model
             for name, processor in transformer_unwrapped.attn_processors.items():
                 old_attn_processors[name] = deepcopy(processor)
                 old_attn_processors[name].requires_grad_(False)
-                # Note: We don't move to device here, broadcast will handle it.
+            
+            # Pack into a list for broadcasting
+            object_list = [old_attn_processors]
         else:
-            old_attn_processors = None
-
-        # Broadcast the created dictionary from main process to all others
-        old_attn_processors = broadcast(old_attn_processors)
+            object_list = [None]
+        
+        # Broadcast the list containing the dictionary object. This uses pickle and works for arbitrary objects.
+        broadcast_object_list(object_list, from_process=0)
+        old_attn_processors = object_list[0] # Unpack
         
         # Now, move all processors to the correct device on each process
         for name in old_attn_processors:

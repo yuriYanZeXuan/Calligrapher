@@ -15,7 +15,7 @@ DATA_JSON="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_te
 OUTPUT_DIR="./output_nft"
 
 # (可选) 从预训练的 IP-Adapter 开始
-# INITIAL_IP_ADAPTER_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/calligrapher/calligrapher.bin"
+INITIAL_IP_ADAPTER_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/calligrapher/calligrapher.bin"
 
 # Reward Server 配置（需与 run_server.sh 匹配）
 REWARD_SERVER_HOST="127.0.0.1"

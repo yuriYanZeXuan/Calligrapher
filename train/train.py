@@ -241,7 +241,19 @@ def perform_rollout(
     images_pil = [(t.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8) for t in images_tensor]
     images_pil = [Image.fromarray(img) for img in images_pil]
 
-    return images_pil, all_latents, all_log_probs
+    # --- Prepare masks for reward evaluation ---
+    masks_tensor = batch["mask"].detach().cpu()
+    base_masks = []
+    for mask_slice in masks_tensor:
+        mask_array = (mask_slice[0].numpy() * 255.0).astype(np.uint8)
+        base_masks.append(Image.fromarray(mask_array, mode="L"))
+
+    masks_pil = []
+    for mask_img in base_masks:
+        for _ in range(num_images_per_prompt):
+            masks_pil.append(mask_img.copy())
+
+    return images_pil, masks_pil, all_latents, all_log_probs
 
 def compute_log_prob(
     args, vae, transformer, image_proj_model, text_encoders, tokenizers, image_encoder,
@@ -766,7 +778,7 @@ def main():
         else:
             # This is a dummy client if rewards are disabled.
             class DummyRewardClient:
-                def get_rewards_batch(self, images, prompts):
+                def get_rewards_batch(self, images, prompts, masks=None):
                     logger.warning("Using dummy reward client. Generating random rewards.")
                     return [{'combined_score': random.random()} for _ in images]
             reward_client = DummyRewardClient()
@@ -1052,7 +1064,7 @@ def main():
                     batch = next(train_iter)
                 
                 # Generate trajectories
-                images_pil, all_latents, all_log_probs = perform_rollout(
+                images_pil, masks_pil, all_latents, all_log_probs = perform_rollout(
                     args, vae, transformer, image_proj_model, 
                     [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
                     image_encoder, noise_scheduler, batch, weight_dtype, accelerator.device
@@ -1062,7 +1074,7 @@ def main():
                 prompts = batch["prompts"]
                 # Repeat prompts for each generated image to match the reward client's input format
                 prompts_for_reward = [p for p in prompts for _ in range(args.rl_num_images_per_prompt)]
-                rewards_data = reward_client.get_rewards_batch(images_pil, prompts_for_reward)
+                rewards_data = reward_client.get_rewards_batch(images_pil, prompts_for_reward, masks_pil)
                 
                 # Collate data
                 latents_tensor = torch.stack(all_latents, dim=1) # (B * N, T+1, C, H, W)

@@ -1,6 +1,7 @@
 from paddleocr import PaddleOCR
 from PIL import Image
 import numpy as np
+from typing import Optional
 try:
     from paddleocr import PaddleOCRVL
     PADDLEOCRVL_AVAILABLE = True
@@ -22,13 +23,18 @@ class OCRScorer:
         #     self.ocr_model = PaddleOCRVL()
         print("Initialized PaddleOCR Model.")
 
-    def score(self, image_pil: Image.Image) -> tuple[str, float]:
+    def score(self, image_pil: Image.Image, mask_pil: Optional[Image.Image] = None) -> tuple[str, float]:
         """
         Performs OCR on a PIL image using the .predict() method
         and returns the recognized text and average confidence score.
         """
         # Convert PIL image to numpy array for PaddleOCR
         image_np = np.array(image_pil.convert('RGB'))
+        if mask_pil is not None:
+            mask_resized = mask_pil.resize(image_pil.size, Image.NEAREST)
+            mask_array = (np.array(mask_resized) > 127).astype(np.uint8)
+            image_np = image_np.copy()
+            image_np[mask_array == 0] = 255
         
         try:
             # Use the predict method as specified in the reference

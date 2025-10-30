@@ -10,6 +10,8 @@ import logging
 import os
 import fcntl # For process-safe file locking
 from contextlib import asynccontextmanager
+from typing import Optional
+import numpy as np
 
 # Import both scorers
 from qwenvl import QwenVLScorer
@@ -44,7 +46,7 @@ if not os.path.exists(COUNTER_FILE):
         f.write("0")
 # --- End of new globals ---
 
-def save_debug_sample(image_pil, prompt, vlm_score, ocr_text, ocr_confidence):
+def save_debug_sample(image_pil, masked_image_pil, prompt, vlm_score, ocr_text, ocr_confidence):
     """
     Process-safe function to increment a counter and save a debug sample every 100 images.
     """
@@ -67,9 +69,11 @@ def save_debug_sample(image_pil, prompt, vlm_score, ocr_text, ocr_confidence):
         try:
             filename_base = f"{new_count:06d}_vlm_{vlm_score:.2f}_ocr_{ocr_confidence:.2f}"
             image_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}.png")
+            masked_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}_masked.png")
             info_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}.txt")
 
             image_pil.save(image_path)
+            masked_image_pil.save(masked_path)
 
             with open(info_path, "w", encoding="utf-8") as info_f:
                 info_f.write(f"Prompt: {prompt}\n")
@@ -84,6 +88,7 @@ def save_debug_sample(image_pil, prompt, vlm_score, ocr_text, ocr_confidence):
 class ScoreRequest(BaseModel):
     image: str  # Base64 encoded image string
     prompt: str
+    mask: Optional[str] = None
 
 @app.post("/score")
 async def get_score(request: ScoreRequest):
@@ -92,16 +97,31 @@ async def get_score(request: ScoreRequest):
         logger.info(f"Received score request on GPU: {gpu_id}")
 
         image_data = base64.b64decode(request.image)
-        image_pil = Image.open(io.BytesIO(image_data))
-        
+        image_pil = Image.open(io.BytesIO(image_data)).convert("RGB")
+
+        mask_pil = None
+        if request.mask:
+            mask_data = base64.b64decode(request.mask)
+            mask_pil = Image.open(io.BytesIO(mask_data)).convert("L")
+            if mask_pil.size != image_pil.size:
+                mask_pil = mask_pil.resize(image_pil.size, Image.NEAREST)
+
+        masked_image_pil = image_pil
+        if mask_pil is not None:
+            mask_array = (np.array(mask_pil) > 127).astype(np.uint8)
+            image_array = np.array(image_pil)
+            masked_array = image_array.copy()
+            masked_array[mask_array == 0] = 255
+            masked_image_pil = Image.fromarray(masked_array)
+
         # Get scores from both models
         vlm_score = qwen_scorer.score(image_pil, request.prompt)
-        ocr_text, ocr_confidence = ocr_scorer.score(image_pil)
+        ocr_text, ocr_confidence = ocr_scorer.score(masked_image_pil, mask_pil)
         
         logger.info(f"Scored prompt: '{request.prompt[:30]}...' -> VLM: {vlm_score:.4f}, OCR: '{ocr_text}', OCR Conf: {ocr_confidence:.4f}")
         
         # --- Call the new debug saving function ---
-        save_debug_sample(image_pil, request.prompt, vlm_score, ocr_text, ocr_confidence)
+        save_debug_sample(image_pil, masked_image_pil, request.prompt, vlm_score, ocr_text, ocr_confidence)
 
         return {
             "vlm_score": vlm_score,

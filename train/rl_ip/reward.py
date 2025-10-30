@@ -5,7 +5,7 @@ from io import BytesIO
 import numpy as np
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import List
+from typing import List, Optional
 import random
 
 # Configure logging
@@ -24,7 +24,13 @@ class RewardClient:
         self.next_server_idx = random.randint(0, len(self.server_urls) - 1) if self.server_urls else 0
         logger.info(f"RewardClient initialized for {len(server_urls)} server(s). OCR weight: {ocr_weight}, VLM weight: {vlm_weight}")
 
-    def get_reward_single(self, server_url: str, image: Image.Image, prompt: str) -> dict:
+    def get_reward_single(
+        self,
+        server_url: str,
+        image: Image.Image,
+        prompt: str,
+        mask: Optional[Image.Image] = None,
+    ) -> dict:
         """Sends a single request to a specific server."""
         try:
             buffered = BytesIO()
@@ -32,6 +38,10 @@ class RewardClient:
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             
             payload = {"image": img_str, "prompt": prompt}
+            if mask is not None:
+                mask_buffered = BytesIO()
+                mask.convert("L").save(mask_buffered, format="PNG")
+                payload["mask"] = base64.b64encode(mask_buffered.getvalue()).decode("utf-8")
             
             response = requests.post(server_url, json=payload, timeout=60)
             response.raise_for_status()
@@ -58,14 +68,22 @@ class RewardClient:
             logger.error(f"An unexpected error occurred with server {server_url}: {e}")
             return {'vlm_score': 0.0, 'ocr_confidence': 0.0, 'combined_score': 0.0}
 
-    def get_rewards_batch(self, images: List[Image.Image], prompts: List[str]) -> List[dict]:
+    def get_rewards_batch(
+        self,
+        images: List[Image.Image],
+        prompts: List[str],
+        masks: Optional[List[Optional[Image.Image]]] = None,
+    ) -> List[dict]:
         """
         Sends a batch of images and prompts to the reward servers in parallel
         using a round-robin distribution.
         """
         futures = []
         # The loop iterates through each image/prompt pair in the batch.
-        for image, prompt in zip(images, prompts):
+        if masks is None:
+            masks = [None] * len(images)
+
+        for image, prompt, mask in zip(images, prompts, masks):
             # Distribute requests to servers in a round-robin fashion.
             # We use a stateful index `self.next_server_idx` to ensure that
             # requests are distributed across *multiple calls* to this method,
@@ -73,7 +91,7 @@ class RewardClient:
             server_url = self.server_urls[self.next_server_idx]
             self.next_server_idx = (self.next_server_idx + 1) % len(self.server_urls)
             
-            futures.append(self.executor.submit(self.get_reward_single, server_url, image, prompt))
+            futures.append(self.executor.submit(self.get_reward_single, server_url, image, prompt, mask))
         
         results = [future.result() for future in futures]
         return results

@@ -191,6 +191,8 @@ class AdapterizedMLPProjModel(nn.Module):
         return self.adapters[self.active_adapter](id_embeds)
 
 class AdapterizedIPAttentionProcessor(nn.Module):
+    supports_kwargs = True
+
     def __init__(
         self,
         hidden_size: int,

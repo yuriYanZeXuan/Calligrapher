@@ -19,7 +19,7 @@ import torch
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from accelerate.utils import set_seed, gather_object, broadcast_object_list
+from accelerate.utils import set_seed, gather_object
 try:
     from accelerate.utils import is_compiled_module
 except ImportError:
@@ -40,6 +40,9 @@ from .model import (
     load_vae_and_transformer,
     load_image_encoder,
     setup_ip_adapter,
+    set_ip_adapter_active,
+    use_ip_adapter,
+    get_ip_adapter_parameter_pairs,
 )
 # Note: utils will be conditionally imported based on model type.
 # --- RL 模块导入（相对路径） ---
@@ -553,12 +556,31 @@ def main():
             unwrapped_transformer = unwrap_model(transformer)
             unwrapped_image_proj_model = unwrap_model(image_proj_model)
 
+            # Ensure we save the primary adapter weights for compatibility
+            previous_image_proj_adapter = None
+            if hasattr(unwrapped_image_proj_model, "active_adapter"):
+                previous_image_proj_adapter = unwrapped_image_proj_model.active_adapter
+                unwrapped_image_proj_model.set_active_adapter("default")
+
+            previous_transformer_adapters = []
+            for processor in unwrapped_transformer.attn_processors.values():
+                if hasattr(processor, "get_active_adapter"):
+                    prev = processor.get_active_adapter()
+                    previous_transformer_adapters.append((processor, prev))
+                    processor.set_active_adapter("default")
+
             state_dict['image_proj'] = unwrapped_image_proj_model.state_dict()
             state_dict['ip_adapter'] = torch.nn.ModuleList(unwrapped_transformer.attn_processors.values()).state_dict()
 
             output_file = os.path.join(output_dir, 'ip-adapter.bin')
             torch.save(state_dict, output_file)
             logger.info(f"Saved IP-Adapter state to {output_file}")
+
+            # Restore previous adapter selections to avoid affecting training state
+            if previous_image_proj_adapter is not None:
+                unwrapped_image_proj_model.set_active_adapter(previous_image_proj_adapter)
+            for processor, prev in previous_transformer_adapters:
+                processor.set_active_adapter(prev)
             
             # Pop weights so accelerator doesn't save them again
             # We pop for each model prepared by accelerator
@@ -658,6 +680,13 @@ def main():
         else:
             raise KeyError(f"Unknown IP-Adapter checkpoint format. Expected keys: 'image_proj' or 'image_proj_mlp'")
         
+        # Synchronize auxiliary adapters with the freshly loaded default weights
+        image_proj_model.copy_adapter("default", "old")
+        for processor in transformer.attn_processors.values():
+            if hasattr(processor, "copy_adapter"):
+                processor.copy_adapter("default", "old")
+        set_ip_adapter_active(transformer, "default")
+
         if accelerator.is_main_process:
             logger.info("Successfully loaded initial IP-Adapter weights.")
 
@@ -803,45 +832,6 @@ def main():
     # The dataloader iterator for getting prompts
     train_iter = iter(train_dataloader)
     
-    # --- Initialize old model for NFT ---
-    old_image_proj_model = None
-    old_attn_processors = None
-    
-    if args.use_rl and args.rl_method == "nft":
-        logger.info("Creating old model copy for NFT training...")
-        
-        # Create a copy of image_proj_model for old model
-        from copy import deepcopy
-        old_image_proj_model = deepcopy(unwrap_model(image_proj_model))
-        old_image_proj_model.requires_grad_(False)
-        old_image_proj_model.to(accelerator.device, dtype=weight_dtype)
-        
-        # --- FIX: Transformer is already wrapped by `prepare`, so we must unwrap it here ---
-        transformer_unwrapped = unwrap_model(transformer)
-        
-        # --- FIX for Multi-GPU: Create on main process and broadcast to others using broadcast_object_list ---
-        if accelerator.is_main_process:
-            old_attn_processors = {}
-            # Access the processors from the unwrapped model
-            for name, processor in transformer_unwrapped.attn_processors.items():
-                old_attn_processors[name] = deepcopy(processor)
-                old_attn_processors[name].requires_grad_(False)
-            
-            # Pack into a list for broadcasting
-            object_list = [old_attn_processors]
-        else:
-            object_list = [None]
-        
-        # Broadcast the list containing the dictionary object. This uses pickle and works for arbitrary objects.
-        broadcast_object_list(object_list, from_process=0)
-        old_attn_processors = object_list[0] # Unpack
-        
-        # Now, move all processors to the correct device on each process
-        for name in old_attn_processors:
-            old_attn_processors[name].to(accelerator.device, dtype=weight_dtype)
-        
-        logger.info(f"Old model created for NFT with {len(old_attn_processors)} processors.")
-
     # RL training loop
     while global_step < args.max_train_steps:
         
@@ -1288,30 +1278,30 @@ def main():
                                 forward_pred = unpack_latents(forward_pred, height * 8, width * 8, 16)
                                 
                                 with torch.no_grad():
-                                    # 2. Old prediction (for implicit negative)
-                                    old_ip_tokens = old_image_proj_model(image_embeds)
-                                    
-                                    # --- FIX: Temporarily swap attention processors on the UNWRAPPED model ---
                                     transformer_unwrapped = unwrap_model(transformer)
-                                    current_processors = transformer_unwrapped.attn_processors
-                                    transformer_unwrapped.set_attn_processor(old_attn_processors)
-                                    
-                                    old_pred = transformer(
-                                        hidden_states=transformer_hidden_states,
-                                        timestep=t_batch / 1000,
-                                        guidance=guidance,
-                                        pooled_projections=pooled_prompt_embeds,
-                                        encoder_hidden_states=prompt_embeds,
-                                        image_emb=old_ip_tokens,
-                                        txt_ids=text_ids,
-                                        img_ids=img_ids,
-                                        return_dict=False,
-                                    )[0]
+                                    image_proj_unwrapped = unwrap_model(image_proj_model)
+
+                                    # 2. Old prediction (for implicit negative)
+                                    with image_proj_unwrapped.use_adapter("old"):
+                                        old_ip_tokens = image_proj_model(image_embeds)
+                                        with use_ip_adapter(transformer_unwrapped, "old"):
+                                            old_pred = transformer(
+                                                hidden_states=transformer_hidden_states,
+                                                timestep=t_batch / 1000,
+                                                guidance=guidance,
+                                                pooled_projections=pooled_prompt_embeds,
+                                                encoder_hidden_states=prompt_embeds,
+                                                image_emb=old_ip_tokens,
+                                                txt_ids=text_ids,
+                                                img_ids=img_ids,
+                                                return_dict=False,
+                                            )[0]
                                     old_pred = unpack_latents(old_pred, height * 8, width * 8, 16)
-                                    
-                                    # --- FIX: Restore current processors on the UNWRAPPED model ---
-                                    transformer_unwrapped.set_attn_processor(current_processors)
-                                    
+
+                                    # Ensure default adapter is active for subsequent computations
+                                    set_ip_adapter_active(transformer_unwrapped, "default")
+                                    image_proj_unwrapped.set_active_adapter("default")
+
                                     # 3. Reference prediction (frozen base model without IP)
                                     ref_pred = transformer(
                                         hidden_states=transformer_hidden_states,
@@ -1422,20 +1412,21 @@ def main():
             
             # --- Update old model for NFT ---
             if args.rl_method == "nft":
-                # Get current parameters
-                current_image_proj_params = list(unwrap_model(image_proj_model).parameters())
-                current_attn_params = list(itertools.chain(
-                    *(p.parameters() for p in unwrap_model(transformer).attn_processors.values())
-                ))
-                current_params = current_image_proj_params + current_attn_params
-                
-                # Get old parameters
-                old_image_proj_params = list(old_image_proj_model.parameters())
-                old_attn_params = list(itertools.chain(
-                    *(p.parameters() for p in old_attn_processors.values())
-                ))
-                old_params = old_image_proj_params + old_attn_params
-                
+                image_proj_unwrapped = unwrap_model(image_proj_model)
+                transformer_unwrapped = unwrap_model(transformer)
+
+                current_image_proj_params = list(image_proj_unwrapped.get_adapter_parameters("default"))
+                old_image_proj_params = list(image_proj_unwrapped.get_adapter_parameters("old"))
+
+                current_attn_params, old_attn_params = get_ip_adapter_parameter_pairs(
+                    transformer_unwrapped,
+                    source="default",
+                    target="old",
+                )
+
+                current_params = list(current_image_proj_params) + list(current_attn_params)
+                old_params = list(old_image_proj_params) + list(old_attn_params)
+
                 # Update old model with decay
                 update_old_model(
                     current_params=current_params,

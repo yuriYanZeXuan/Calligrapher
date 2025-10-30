@@ -43,6 +43,7 @@ from .model import (
     set_ip_adapter_active,
     use_ip_adapter,
     get_ip_adapter_parameter_pairs,
+    convert_legacy_ip_adapter_state_dict,
 )
 # Note: utils will be conditionally imported based on model type.
 # --- RL 模块导入（相对路径） ---
@@ -669,13 +670,15 @@ def main():
             # Standard format (same as save_model_hook and inference)
             image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
             adapter_modules = torch.nn.ModuleList(transformer.attn_processors.values())
-            adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=True)
+            ip_adapter_state = convert_legacy_ip_adapter_state_dict(state_dict["ip_adapter"])
+            adapter_modules.load_state_dict(ip_adapter_state, strict=True)
             logger.info("Loaded IP-Adapter with standard keys: 'image_proj' and 'ip_adapter'")
         elif "image_proj_mlp" in state_dict:
             # Legacy format (for backward compatibility)
             image_proj_model.load_state_dict(state_dict["image_proj_mlp"], strict=True)
             adapter_modules = torch.nn.ModuleList(transformer.attn_processors.values())
-            adapter_modules.load_state_dict(state_dict["attn_adapter"], strict=True)
+            ip_adapter_state = convert_legacy_ip_adapter_state_dict(state_dict["attn_adapter"])
+            adapter_modules.load_state_dict(ip_adapter_state, strict=True)
             logger.info("Loaded IP-Adapter with legacy keys: 'image_proj_mlp' and 'attn_adapter'")
         else:
             raise KeyError(f"Unknown IP-Adapter checkpoint format. Expected keys: 'image_proj' or 'image_proj_mlp'")

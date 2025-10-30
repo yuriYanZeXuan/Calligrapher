@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from collections import OrderedDict
 from contextlib import contextmanager
 from typing import Dict, Iterable, Tuple
 from transformers import (
@@ -391,3 +392,22 @@ def load_ip_adapter_state_dict(transformer, adapter_name: str, state_dict: Dict[
     for name, processor in transformer.attn_processors.items():
         if hasattr(processor, "load_adapter_state_dict") and name in state_dict:
             processor.load_adapter_state_dict(adapter_name, state_dict[name])
+
+
+def convert_legacy_ip_adapter_state_dict(state_dict: Dict[str, torch.Tensor], adapter_names: Tuple[str, ...] = ("default", "old")) -> Dict[str, torch.Tensor]:
+    if not state_dict:
+        return state_dict
+    if any(".adapters." in key for key in state_dict.keys()):
+        return state_dict
+
+    converted = OrderedDict()
+    for key, value in state_dict.items():
+        if "." not in key:
+            for adapter in adapter_names:
+                converted[f"{key}.adapters.{adapter}"] = value.clone() if torch.is_tensor(value) else value
+            continue
+        module_idx, param = key.split(".", 1)
+        for adapter in adapter_names:
+            new_key = f"{module_idx}.adapters.{adapter}.{param}"
+            converted[new_key] = value.clone() if torch.is_tensor(value) else value
+    return converted

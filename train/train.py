@@ -19,7 +19,7 @@ import torch
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from accelerate.utils import set_seed, gather_object
+from accelerate.utils import set_seed, gather_object, broadcast
 try:
     from accelerate.utils import is_compiled_module
 except ImportError:
@@ -816,17 +816,25 @@ def main():
         old_image_proj_model.requires_grad_(False)
         old_image_proj_model.to(accelerator.device, dtype=weight_dtype)
         
-        # Create a copy of attn_processors for old model
-        # Note: We'll store them separately and use them when needed
-        
         # --- FIX: Transformer is already wrapped by `prepare`, so we must unwrap it here ---
         transformer_unwrapped = unwrap_model(transformer)
-        old_attn_processors = {}
         
-        # Access the processors from the unwrapped model
-        for name, processor in transformer_unwrapped.attn_processors.items():
-            old_attn_processors[name] = deepcopy(processor)
-            old_attn_processors[name].requires_grad_(False)
+        # --- FIX for Multi-GPU: Create on main process and broadcast to others ---
+        if accelerator.is_main_process:
+            old_attn_processors = {}
+            # Access the processors from the unwrapped model
+            for name, processor in transformer_unwrapped.attn_processors.items():
+                old_attn_processors[name] = deepcopy(processor)
+                old_attn_processors[name].requires_grad_(False)
+                # Note: We don't move to device here, broadcast will handle it.
+        else:
+            old_attn_processors = None
+
+        # Broadcast the created dictionary from main process to all others
+        old_attn_processors = broadcast(old_attn_processors)
+        
+        # Now, move all processors to the correct device on each process
+        for name in old_attn_processors:
             old_attn_processors[name].to(accelerator.device, dtype=weight_dtype)
         
         logger.info(f"Old model created for NFT with {len(old_attn_processors)} processors.")

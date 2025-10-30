@@ -212,6 +212,7 @@ class AdapterizedIPAttentionProcessor(nn.Module):
         self.adapters = nn.ModuleDict()
         self.active_adapter = None
         self._trainable = set(trainable_adapters)
+        self.supports_kwargs = True
         for name in adapter_names:
             self.add_adapter(name, trainable=(name in self._trainable))
         if self.active_adapter is None:

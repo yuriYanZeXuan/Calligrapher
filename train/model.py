@@ -285,6 +285,26 @@ class AdapterizedIPAttentionProcessor(nn.Module):
     def full_state_dict(self, destination=None, prefix: str = "", keep_vars: bool = False):
         return super().state_dict(destination, prefix, keep_vars)
 
+    def __call__(
+        self,
+        attn,
+        hidden_states,
+        encoder_hidden_states=None,
+        attention_mask=None,
+        image_emb=None,
+        image_rotary_emb=None,
+        **cross_attention_kwargs,
+    ):
+        return self.forward(
+            attn,
+            hidden_states,
+            image_emb=image_emb,
+            encoder_hidden_states=encoder_hidden_states,
+            attention_mask=attention_mask,
+            image_rotary_emb=image_rotary_emb,
+            **cross_attention_kwargs,
+        )
+
     def forward(
         self,
         attn,

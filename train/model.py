@@ -282,9 +282,24 @@ class AdapterizedIPAttentionProcessor(nn.Module):
     def full_state_dict(self, destination=None, prefix: str = "", keep_vars: bool = False):
         return super().state_dict(destination, prefix, keep_vars)
 
-    def forward(self, attn, hidden_states, image_emb, encoder_hidden_states=None, attention_mask=None, image_rotary_emb=None):
+    def forward(
+        self,
+        attn,
+        hidden_states,
+        image_emb=None,
+        encoder_hidden_states=None,
+        attention_mask=None,
+        image_rotary_emb=None,
+        **cross_attention_kwargs,
+    ):
         if self.active_adapter is None:
             raise RuntimeError("Active adapter is not set for attention processor")
+
+        if image_emb is None and "image_emb" in cross_attention_kwargs:
+            image_emb = cross_attention_kwargs.pop("image_emb")
+        if image_rotary_emb is None and "image_rotary_emb" in cross_attention_kwargs:
+            image_rotary_emb = cross_attention_kwargs.pop("image_rotary_emb")
+
         processor = self.adapters[self.active_adapter]
         return processor(
             attn,
@@ -293,6 +308,7 @@ class AdapterizedIPAttentionProcessor(nn.Module):
             encoder_hidden_states=encoder_hidden_states,
             attention_mask=attention_mask,
             image_rotary_emb=image_rotary_emb,
+            **cross_attention_kwargs,
         )
 
 

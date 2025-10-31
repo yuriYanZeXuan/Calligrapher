@@ -10,46 +10,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from PIL import Image
 import uvicorn
-import os
-import fcntl
 import numpy as np
 
-
-DEBUG_SAVE_DIR = "reward_debug_output"
-COUNTER_FILE = os.path.join(DEBUG_SAVE_DIR, "counter.txt")
-os.makedirs(DEBUG_SAVE_DIR, exist_ok=True)
-if not os.path.exists(COUNTER_FILE):
-    with open(COUNTER_FILE, "w") as f:
-        f.write("0")
-
-
-def save_debug_sample(image_pil: Image.Image, masked_image_pil: Image.Image, prompt: str, vlm_score: float, ocr_confidence: float):
-    with open(COUNTER_FILE, "r+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        content = f.read()
-        current_count = int(content) if content else 0
-        new_count = current_count + 1
-        f.seek(0)
-        f.truncate()
-        f.write(str(new_count))
-        fcntl.flock(f, fcntl.LOCK_UN)
-
-    if new_count % 20 == 0:
-        try:
-            filename_base = f"{new_count:06d}_vlm_{vlm_score:.2f}_ocr_{ocr_confidence:.2f}_pseudo"
-            image_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}.png")
-            masked_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}_masked.png")
-            info_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}.txt")
-
-            image_pil.save(image_path)
-            masked_image_pil.save(masked_path)
-
-            with open(info_path, "w", encoding="utf-8") as info_f:
-                info_f.write(f"Prompt: {prompt}\n")
-                info_f.write(f"VLM Score (pseudo): {vlm_score}\n")
-                info_f.write(f"OCR Confidence (pseudo): {ocr_confidence}\n")
-        except Exception as exc:
-            logger.warning("Failed to save pseudo debug sample: %s", exc)
+from .debug_utils import save_debug_sample
 
 
 @asynccontextmanager
@@ -77,7 +40,7 @@ class PseudoRewardGenerator:
         vlm_score = self._rng.random()
         ocr_confidence = self._rng.random()
         combined = 0.5 * vlm_score + 0.5 * ocr_confidence
-        return vlm_score, ocr_confidence, combined
+        return vlm_score, ocr_confidence, combined_score
 
 
 generator: Optional[PseudoRewardGenerator] = None

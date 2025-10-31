@@ -7,8 +7,6 @@ from PIL import Image
 import uvicorn
 from pydantic import BaseModel
 import logging
-import os
-import fcntl # For process-safe file locking
 from contextlib import asynccontextmanager
 from typing import Optional
 import numpy as np
@@ -16,6 +14,7 @@ import numpy as np
 # Import both scorers
 from qwenvl import QwenVLScorer
 from ocr import OCRScorer
+from .debug_utils import save_debug_sample
 
 # Configure logging - THIS IS NO LONGER NEEDED as Uvicorn will handle it.
 # logging.basicConfig(level=logging.INFO)
@@ -35,55 +34,6 @@ app = FastAPI(lifespan=lifespan)
 # Global variables to hold the scorers
 qwen_scorer = None
 ocr_scorer = None
-
-# --- New: Globals for debug image saving ---
-DEBUG_SAVE_DIR = "reward_debug_output"
-COUNTER_FILE = os.path.join(DEBUG_SAVE_DIR, "counter.txt")
-# Ensure the directory and counter file exist on startup
-os.makedirs(DEBUG_SAVE_DIR, exist_ok=True)
-if not os.path.exists(COUNTER_FILE):
-    with open(COUNTER_FILE, "w") as f:
-        f.write("0")
-# --- End of new globals ---
-
-def save_debug_sample(image_pil, masked_image_pil, prompt, vlm_score, ocr_text, ocr_confidence):
-    """
-    Process-safe function to increment a counter and save a debug sample every 100 images.
-    """
-    with open(COUNTER_FILE, "r+") as f:
-        # Use a file lock to prevent race conditions between multiple server processes
-        fcntl.flock(f, fcntl.LOCK_EX)
-        
-        content = f.read()
-        current_count = int(content) if content else 0
-        new_count = current_count + 1
-        
-        f.seek(0)
-        f.truncate()
-        f.write(str(new_count))
-        
-        fcntl.flock(f, fcntl.LOCK_UN)
-    
-    # Save a sample every 100 images
-    if new_count % 20 == 0:
-        try:
-            filename_base = f"{new_count:06d}_vlm_{vlm_score:.2f}_ocr_{ocr_confidence:.2f}"
-            image_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}.png")
-            masked_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}_masked.png")
-            info_path = os.path.join(DEBUG_SAVE_DIR, f"{filename_base}.txt")
-
-            image_pil.save(image_path)
-            masked_image_pil.save(masked_path)
-
-            with open(info_path, "w", encoding="utf-8") as info_f:
-                info_f.write(f"Prompt: {prompt}\n")
-                info_f.write(f"VLM Score: {vlm_score}\n")
-                info_f.write(f"OCR Text: {ocr_text}\n")
-                info_f.write(f"OCR Confidence: {ocr_confidence}\n")
-
-            logger.info(f"Saved debug image and info for count {new_count} to {DEBUG_SAVE_DIR}")
-        except Exception as e:
-            logger.error(f"Failed to save debug image for count {new_count}: {e}")
 
 class ScoreRequest(BaseModel):
     image: str  # Base64 encoded image string
@@ -120,8 +70,15 @@ async def get_score(request: ScoreRequest):
         
         logger.info(f"Scored prompt: '{request.prompt[:30]}...' -> VLM: {vlm_score:.4f}, OCR: '{ocr_text}', OCR Conf: {ocr_confidence:.4f}")
         
-        # --- Call the new debug saving function ---
-        save_debug_sample(image_pil, masked_image_pil, request.prompt, vlm_score, ocr_text, ocr_confidence)
+        save_debug_sample(
+            image=image_pil,
+            masked_image=masked_image_pil,
+            prompt=request.prompt,
+            vlm_score=vlm_score,
+            ocr_confidence=ocr_confidence,
+            ocr_text=ocr_text,
+            prefix="reward",
+        )
 
         return {
             "vlm_score": vlm_score,

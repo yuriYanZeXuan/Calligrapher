@@ -1179,6 +1179,86 @@ def main():
                     # We need to handle this correctly. Let's adjust the data collation.
                     mini_batch = {k: (v[i:i+args.train_batch_size] if isinstance(v, (torch.Tensor, list)) else v) for k, v in shuffled_samples.items()}
 
+                    nft_cache = None
+                    if args.rl_method == "nft":
+                        nft_cache = {}
+
+                        if args.offload_text_encoder_two:
+                            text_encoder_two.to(accelerator.device, dtype=weight_dtype)
+                        prompt_embeds, pooled_prompt_embeds = encode_prompt(
+                            [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
+                            mini_batch["prompts"], accelerator.device, max_sequence_length=args.max_sequence_length
+                        )
+                        if args.offload_text_encoder_two:
+                            text_encoder_two.to("cpu")
+                            torch.cuda.empty_cache()
+
+                        with torch.no_grad():
+                            image_embeds = image_encoder(mini_batch["clip_images"].to(accelerator.device, dtype=weight_dtype)).pooler_output
+                        image_embeds_ = []
+                        for image_embed, drop_image_embed in zip(image_embeds, mini_batch["drop_image_embeds"]):
+                            if drop_image_embed == 1:
+                                image_embeds_.append(torch.zeros_like(image_embed))
+                            else:
+                                image_embeds_.append(image_embed)
+                        image_embeds = torch.stack(image_embeds_)
+
+                        image_proj_unwrapped = unwrap_model(image_proj_model)
+                        default_ip_tokens = image_proj_model(image_embeds)
+                        with torch.no_grad():
+                            with image_proj_unwrapped.use_adapter("old"):
+                                old_ip_tokens = image_proj_model(image_embeds).detach()
+                        zero_ip_tokens = torch.zeros_like(default_ip_tokens)
+
+                        base_latents = mini_batch["latents"][:, 0]
+                        b, c, h, w = base_latents.shape
+                        num_images_per_prompt = base_latents.shape[0] // mini_batch["source_image"].shape[0]
+
+                        mask = mini_batch["mask"].to(accelerator.device, dtype=weight_dtype)
+                        source_image = mini_batch["source_image"].to(accelerator.device, dtype=weight_dtype)
+                        source_image_repeated = source_image.repeat(num_images_per_prompt, 1, 1, 1)
+                        mask_repeated = mask.repeat(num_images_per_prompt, 1, 1, 1)
+                        masked_image_for_prep = source_image_repeated * (1 - mask_repeated)
+
+                        mask_latents, masked_image_latents = prepare_mask_latents4training(
+                            mask=mask,
+                            masked_image=masked_image_for_prep,
+                            batch_size=b,
+                            height=args.resolution,
+                            width=args.resolution,
+                            dtype=prompt_embeds.dtype,
+                            device=accelerator.device,
+                            vae=vae,
+                            vae_scale_factor=8,
+                        )
+                        packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
+                        vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+                        mask_c = vae_scale_factor ** 2
+                        packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
+
+                        guidance_template = torch.full((b,), args.rl_guidance_scale, device=accelerator.device)
+                        img_ids = prepare_latent_image_ids(h, w, accelerator.device, weight_dtype)
+                        text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=accelerator.device, dtype=weight_dtype)
+                        transformer_unwrapped = unwrap_model(transformer)
+
+                        nft_cache.update({
+                            "prompt_embeds": prompt_embeds,
+                            "pooled_prompt_embeds": pooled_prompt_embeds,
+                            "default_ip_tokens": default_ip_tokens,
+                            "old_ip_tokens": old_ip_tokens,
+                            "zero_ip_tokens": zero_ip_tokens,
+                            "packed_masked_image_latents": packed_masked_image_latents,
+                            "packed_mask": packed_mask,
+                            "guidance": guidance_template,
+                            "img_ids": img_ids,
+                            "text_ids": text_ids,
+                            "b": b,
+                            "c": c,
+                            "h": h,
+                            "w": w,
+                            "transformer_unwrapped": transformer_unwrapped,
+                        })
+
                     for j in tqdm(range(num_train_timesteps), desc="Timestep", leave=False):
                         with accelerator.accumulate(transformer, image_proj_model):
                             # ========== COMPUTE LOSS BASED ON RL METHOD ==========
@@ -1202,135 +1282,71 @@ def main():
                                 log_data = {k: v.item() if torch.is_tensor(v) else v for k, v in loss_terms.items()}
                                 
                             elif args.rl_method == "nft":
-                                # --- NFT Method ---
-                                # We need to compute predictions from three models:
-                                # 1. Current model (forward)
-                                # 2. Old model (for implicit negative)
-                                # 3. Reference model (frozen, for KL)
-                                
-                                # Get current latents and timestep
+                                cache = nft_cache
                                 latents = mini_batch["latents"][:, j]
                                 t = noise_scheduler.timesteps[j]
                                 t_batch = t.repeat(latents.shape[0]).to(accelerator.device)
-                                
-                                # Prepare inputs (same as in compute_log_prob)
-                                prompts = mini_batch["prompts"]
-                                
-                                if args.offload_text_encoder_two:
-                                    text_encoder_two.to(accelerator.device, dtype=weight_dtype)
-                                
-                                prompt_embeds, pooled_prompt_embeds = encode_prompt(
-                                    [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two],
-                                    prompts, accelerator.device, max_sequence_length=args.max_sequence_length
-                                )
-                                
-                                if args.offload_text_encoder_two:
-                                    text_encoder_two.to("cpu")
-                                    torch.cuda.empty_cache()
-                                
-                                with torch.no_grad():
-                                    image_embeds = image_encoder(mini_batch["clip_images"].to(accelerator.device, dtype=weight_dtype)).pooler_output
-                                
-                                image_embeds_ = []
-                                for image_embed, drop_image_embed in zip(image_embeds, mini_batch["drop_image_embeds"]):
-                                    if drop_image_embed == 1:
-                                        image_embeds_.append(torch.zeros_like(image_embed))
-                                    else:
-                                        image_embeds_.append(image_embed)
-                                image_embeds = torch.stack(image_embeds_)
-                                
-                                ip_tokens = image_proj_model(image_embeds)
-                                
-                                # Prepare mask and masked image latents
-                                b, c, h, w = latents.shape
-                                num_images_per_prompt = latents.shape[0] // mini_batch["source_image"].shape[0]
-                                
-                                source_image_repeated = mini_batch["source_image"].to(accelerator.device, dtype=weight_dtype).repeat(num_images_per_prompt, 1, 1, 1)
-                                mask_repeated_for_mult = mini_batch["mask"].to(accelerator.device, dtype=weight_dtype).repeat(num_images_per_prompt, 1, 1, 1)
-                                masked_image_for_prep = source_image_repeated * (1 - mask_repeated_for_mult)
-                                
-                                mask_latents, masked_image_latents = prepare_mask_latents4training(
-                                    mask=mini_batch["mask"].to(accelerator.device, dtype=weight_dtype),
-                                    masked_image=masked_image_for_prep,
-                                    batch_size=b,
-                                    height=args.resolution,
-                                    width=args.resolution,
-                                    dtype=prompt_embeds.dtype,
-                                    device=accelerator.device,
-                                    vae=vae,
-                                    vae_scale_factor=8,
-                                )
-                                
-                                # Prepare common inputs
-                                guidance = torch.tensor([args.rl_guidance_scale], device=accelerator.device).expand(latents.shape[0])
-                                height, width = latents.shape[2], latents.shape[3]
-                                img_ids = prepare_latent_image_ids(height, width, accelerator.device, weight_dtype)
-                                text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=accelerator.device, dtype=weight_dtype)
-                                
+
+                                guidance = cache["guidance"]
+                                prompt_embeds = cache["prompt_embeds"]
+                                pooled_prompt_embeds = cache["pooled_prompt_embeds"]
+                                packed_masked_image_latents = cache["packed_masked_image_latents"]
+                                packed_mask = cache["packed_mask"]
+                                default_ip_tokens = cache["default_ip_tokens"]
+                                old_ip_tokens = cache["old_ip_tokens"]
+                                zero_ip_tokens = cache["zero_ip_tokens"]
+                                img_ids = cache["img_ids"]
+                                text_ids = cache["text_ids"]
+                                b = cache["b"]
+                                c = cache["c"]
+                                h = cache["h"]
+                                w = cache["w"]
+                                transformer_unwrapped = cache["transformer_unwrapped"]
+
                                 packed_noisy_latents = pack_latents(latents, b, c, h, w)
-                                packed_masked_image_latents = pack_latents(masked_image_latents, b, c, h, w)
-                                
-                                vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
-                                mask_c = vae_scale_factor ** 2
-                                packed_mask = pack_latents(mask_latents.repeat(1, mask_c, 1, 1), b, mask_c, h, w)
-                                
-                                transformer_hidden_states = torch.cat(
-                                    [packed_noisy_latents, packed_masked_image_latents, packed_mask], dim=-1
-                                )
-                                
-                                # 1. Forward prediction (current model)
-                                forward_pred = transformer(
-                                    hidden_states=transformer_hidden_states,
-                                    timestep=t_batch / 1000,
-                                    guidance=guidance,
-                                    pooled_projections=pooled_prompt_embeds,
-                                    encoder_hidden_states=prompt_embeds,
-                                    image_emb=ip_tokens,
+                                transformer_hidden_states = torch.cat([
+                                    packed_noisy_latents,
+                                    packed_masked_image_latents,
+                                    packed_mask,
+                                ], dim=-1)
+
+                                # Current + reference predictions in one pass
+                                hidden_dual = torch.cat([transformer_hidden_states, transformer_hidden_states], dim=0)
+                                prompt_dual = torch.cat([prompt_embeds, prompt_embeds], dim=0)
+                                pooled_dual = torch.cat([pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
+                                guidance_dual = torch.cat([guidance, guidance], dim=0)
+                                image_dual = torch.cat([default_ip_tokens, zero_ip_tokens], dim=0)
+
+                                dual_output = transformer(
+                                    hidden_states=hidden_dual,
+                                    timestep=t_batch.repeat(2) / 1000,
+                                    guidance=guidance_dual,
+                                    pooled_projections=pooled_dual,
+                                    encoder_hidden_states=prompt_dual,
+                                    image_emb=image_dual,
                                     txt_ids=text_ids,
                                     img_ids=img_ids,
                                     return_dict=False,
                                 )[0]
-                                forward_pred = unpack_latents(forward_pred, height * 8, width * 8, 16)
-                                
+                                forward_pred_tensor, ref_pred_tensor = torch.chunk(dual_output, 2, dim=0)
+                                forward_pred = unpack_latents(forward_pred_tensor, h * 8, w * 8, 16)
+                                ref_pred = unpack_latents(ref_pred_tensor, h * 8, w * 8, 16)
+
                                 with torch.no_grad():
-                                    transformer_unwrapped = unwrap_model(transformer)
-                                    image_proj_unwrapped = unwrap_model(image_proj_model)
+                                    with use_ip_adapter(transformer_unwrapped, "old"):
+                                        old_pred_tensor = transformer(
+                                            hidden_states=transformer_hidden_states,
+                                            timestep=t_batch / 1000,
+                                            guidance=guidance,
+                                            pooled_projections=pooled_prompt_embeds,
+                                            encoder_hidden_states=prompt_embeds,
+                                            image_emb=old_ip_tokens,
+                                            txt_ids=text_ids,
+                                            img_ids=img_ids,
+                                            return_dict=False,
+                                        )[0]
+                                old_pred = unpack_latents(old_pred_tensor, h * 8, w * 8, 16)
 
-                                    # 2. Old prediction (for implicit negative)
-                                    with image_proj_unwrapped.use_adapter("old"):
-                                        old_ip_tokens = image_proj_model(image_embeds)
-                                        with use_ip_adapter(transformer_unwrapped, "old"):
-                                            old_pred = transformer(
-                                                hidden_states=transformer_hidden_states,
-                                                timestep=t_batch / 1000,
-                                                guidance=guidance,
-                                                pooled_projections=pooled_prompt_embeds,
-                                                encoder_hidden_states=prompt_embeds,
-                                                image_emb=old_ip_tokens,
-                                                txt_ids=text_ids,
-                                                img_ids=img_ids,
-                                                return_dict=False,
-                                            )[0]
-                                    old_pred = unpack_latents(old_pred, height * 8, width * 8, 16)
-
-                                    # Ensure default adapter is active for subsequent computations
-                                    set_ip_adapter_active(transformer_unwrapped, "default")
-                                    image_proj_unwrapped.set_active_adapter("default")
-
-                                    # 3. Reference prediction (frozen base model without IP)
-                                    ref_pred = transformer(
-                                        hidden_states=transformer_hidden_states,
-                                        timestep=t_batch / 1000,
-                                        guidance=guidance,
-                                        pooled_projections=pooled_prompt_embeds,
-                                        encoder_hidden_states=prompt_embeds,
-                                        image_emb=torch.zeros_like(ip_tokens),  # Zero out IP tokens for reference
-                                        txt_ids=text_ids,
-                                        img_ids=img_ids,
-                                        return_dict=False,
-                                    )[0]
-                                    ref_pred = unpack_latents(ref_pred, height * 8, width * 8, 16)
-                                
                                 # Get sigmas and convert to velocity
                                 sigmas = get_sigmas(noise_scheduler, t_batch, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
                                 forward_velocity = forward_pred * (-sigmas) + latents

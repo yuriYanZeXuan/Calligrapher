@@ -36,7 +36,7 @@ while [[ "$#" -gt 0 ]]; do
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
-end
+done
 
 LOG_DIR="logs"
 mkdir -p "$LOG_DIR"

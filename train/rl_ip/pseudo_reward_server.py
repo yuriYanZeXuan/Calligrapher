@@ -30,6 +30,7 @@ class ScoreRequest(BaseModel):
     image: str
     prompt: str
     mask: Optional[str] = None
+    timestep: Optional[str] = None
 
 
 class PseudoRewardGenerator:
@@ -79,7 +80,15 @@ async def score(request: ScoreRequest):
 
     vlm_score, ocr_confidence, combined_score = generator.sample_scores()
 
-    save_debug_sample(image_pil, masked_image_pil, request.prompt, vlm_score, ocr_confidence)
+    save_debug_sample(
+        image_pil,
+        masked_image_pil,
+        request.prompt,
+        vlm_score,
+        ocr_confidence,
+        prefix="reward",
+        timestep=request.timestep,
+    )
 
     return {
         "vlm_score": vlm_score,

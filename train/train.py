@@ -778,7 +778,7 @@ def main():
         else:
             # This is a dummy client if rewards are disabled.
             class DummyRewardClient:
-                def get_rewards_batch(self, images, prompts, masks=None):
+                def get_rewards_batch(self, images, prompts, masks=None, timesteps=None):
                     logger.warning("Using dummy reward client. Generating random rewards.")
                     return [{'combined_score': random.random()} for _ in images]
             reward_client = DummyRewardClient()
@@ -1074,7 +1074,27 @@ def main():
                 prompts = batch["prompts"]
                 # Repeat prompts for each generated image to match the reward client's input format
                 prompts_for_reward = [p for p in prompts for _ in range(args.rl_num_images_per_prompt)]
-                rewards_data = reward_client.get_rewards_batch(images_pil, prompts_for_reward, masks_pil)
+                scheduler_timesteps = noise_scheduler.timesteps
+                if isinstance(scheduler_timesteps, torch.Tensor):
+                    scheduler_timesteps_list = scheduler_timesteps.detach().cpu().tolist()
+                else:
+                    scheduler_timesteps_list = list(scheduler_timesteps)
+
+                if scheduler_timesteps_list:
+                    final_timestep_value = float(scheduler_timesteps_list[-1])
+                    timestep_index = len(scheduler_timesteps_list) - 1
+                else:
+                    final_timestep_value = 0.0
+                    timestep_index = -1
+                timestep_descriptor = f"idx={timestep_index},value={final_timestep_value:.6f}"
+                timesteps_for_reward = [timestep_descriptor] * len(images_pil)
+
+                rewards_data = reward_client.get_rewards_batch(
+                    images_pil,
+                    prompts_for_reward,
+                    masks_pil,
+                    timesteps_for_reward,
+                )
                 
                 # Collate data
                 latents_tensor = torch.stack(all_latents, dim=1) # (B * N, T+1, C, H, W)

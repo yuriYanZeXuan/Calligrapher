@@ -2,14 +2,16 @@
 import argparse
 import base64
 import io
+import logging
+import os
+from contextlib import asynccontextmanager
+from typing import Optional
+
+import numpy as np
 from fastapi import FastAPI, Request
 from PIL import Image
 import uvicorn
 from pydantic import BaseModel
-import logging
-from contextlib import asynccontextmanager
-from typing import Optional
-import numpy as np
 
 # Import both scorers
 from qwenvl import QwenVLScorer
@@ -39,6 +41,7 @@ class ScoreRequest(BaseModel):
     image: str  # Base64 encoded image string
     prompt: str
     mask: Optional[str] = None
+    timestep: Optional[str] = None
 
 @app.post("/score")
 async def get_score(request: ScoreRequest):
@@ -78,6 +81,7 @@ async def get_score(request: ScoreRequest):
             ocr_confidence=ocr_confidence,
             ocr_text=ocr_text,
             prefix="reward",
+            timestep=request.timestep,
         )
 
         return {

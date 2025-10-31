@@ -30,6 +30,7 @@ class RewardClient:
         image: Image.Image,
         prompt: str,
         mask: Optional[Image.Image] = None,
+        timestep: Optional[str] = None,
     ) -> dict:
         """Sends a single request to a specific server."""
         try:
@@ -42,6 +43,8 @@ class RewardClient:
                 mask_buffered = BytesIO()
                 mask.convert("L").save(mask_buffered, format="PNG")
                 payload["mask"] = base64.b64encode(mask_buffered.getvalue()).decode("utf-8")
+            if timestep is not None:
+                payload["timestep"] = timestep
             
             response = requests.post(server_url, json=payload, timeout=60)
             response.raise_for_status()
@@ -73,6 +76,7 @@ class RewardClient:
         images: List[Image.Image],
         prompts: List[str],
         masks: Optional[List[Optional[Image.Image]]] = None,
+        timesteps: Optional[List[Optional[str]]] = None,
     ) -> List[dict]:
         """
         Sends a batch of images and prompts to the reward servers in parallel
@@ -83,7 +87,10 @@ class RewardClient:
         if masks is None:
             masks = [None] * len(images)
 
-        for image, prompt, mask in zip(images, prompts, masks):
+        if timesteps is None:
+            timesteps = [None] * len(images)
+
+        for image, prompt, mask, timestep in zip(images, prompts, masks, timesteps):
             # Distribute requests to servers in a round-robin fashion.
             # We use a stateful index `self.next_server_idx` to ensure that
             # requests are distributed across *multiple calls* to this method,
@@ -91,7 +98,16 @@ class RewardClient:
             server_url = self.server_urls[self.next_server_idx]
             self.next_server_idx = (self.next_server_idx + 1) % len(self.server_urls)
             
-            futures.append(self.executor.submit(self.get_reward_single, server_url, image, prompt, mask))
+            futures.append(
+                self.executor.submit(
+                    self.get_reward_single,
+                    server_url,
+                    image,
+                    prompt,
+                    mask,
+                    timestep,
+                )
+            )
         
         results = [future.result() for future in futures]
         return results

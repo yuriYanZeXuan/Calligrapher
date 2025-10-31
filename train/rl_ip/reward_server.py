@@ -14,7 +14,7 @@ import numpy as np
 # Import both scorers
 from qwenvl import QwenVLScorer
 from ocr import OCRScorer
-from .debug_utils import save_debug_sample
+from debug_utils import save_debug_sample
 
 # Configure logging - THIS IS NO LONGER NEEDED as Uvicorn will handle it.
 # logging.basicConfig(level=logging.INFO)

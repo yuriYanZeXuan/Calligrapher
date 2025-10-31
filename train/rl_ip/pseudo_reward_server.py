@@ -12,7 +12,7 @@ from PIL import Image
 import uvicorn
 import numpy as np
 
-from .debug_utils import save_debug_sample
+from debug_utils import save_debug_sample
 
 
 @asynccontextmanager

@@ -23,7 +23,7 @@ REWARD_SERVER_PORT=8000
 
 # 硬件配置
 # 训练 GPU（例如 "0,1,2,3"，如果为空则使用单 GPU）
-TRAINING_GPU_IDS="0,1,2,3"
+TRAINING_GPU_IDS="0,1,2,3,4,5,6,7"
 
 # 训练参数
 RESOLUTION=512

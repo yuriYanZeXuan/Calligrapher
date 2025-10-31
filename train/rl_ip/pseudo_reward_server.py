@@ -39,7 +39,7 @@ class PseudoRewardGenerator:
     def sample_scores(self):
         vlm_score = self._rng.random()
         ocr_confidence = self._rng.random()
-        combined = 0.5 * vlm_score + 0.5 * ocr_confidence
+        combined_score = 0.5 * vlm_score + 0.5 * ocr_confidence
         return vlm_score, ocr_confidence, combined_score
 
 

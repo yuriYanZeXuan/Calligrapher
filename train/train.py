@@ -1204,11 +1204,6 @@ def main():
                         image_embeds = torch.stack(image_embeds_)
 
                         image_proj_unwrapped = unwrap_model(image_proj_model)
-                        default_ip_tokens = image_proj_model(image_embeds)
-                        with torch.no_grad():
-                            with image_proj_unwrapped.use_adapter("old"):
-                                old_ip_tokens = image_proj_model(image_embeds).detach()
-                        zero_ip_tokens = torch.zeros_like(default_ip_tokens)
 
                         base_latents = mini_batch["latents"][:, 0]
                         b, c, h, w = base_latents.shape
@@ -1244,9 +1239,7 @@ def main():
                         nft_cache.update({
                             "prompt_embeds": prompt_embeds,
                             "pooled_prompt_embeds": pooled_prompt_embeds,
-                            "default_ip_tokens": default_ip_tokens,
-                            "old_ip_tokens": old_ip_tokens,
-                            "zero_ip_tokens": zero_ip_tokens,
+                            "image_embeds": image_embeds,
                             "packed_masked_image_latents": packed_masked_image_latents,
                             "packed_mask": packed_mask,
                             "guidance": guidance_template,
@@ -1290,11 +1283,7 @@ def main():
                                 guidance = cache["guidance"]
                                 prompt_embeds = cache["prompt_embeds"]
                                 pooled_prompt_embeds = cache["pooled_prompt_embeds"]
-                                packed_masked_image_latents = cache["packed_masked_image_latents"]
-                                packed_mask = cache["packed_mask"]
-                                default_ip_tokens = cache["default_ip_tokens"]
-                                old_ip_tokens = cache["old_ip_tokens"]
-                                zero_ip_tokens = cache["zero_ip_tokens"]
+                                image_embeds = cache["image_embeds"]
                                 img_ids = cache["img_ids"]
                                 text_ids = cache["text_ids"]
                                 b = cache["b"]
@@ -1302,6 +1291,12 @@ def main():
                                 h = cache["h"]
                                 w = cache["w"]
                                 transformer_unwrapped = cache["transformer_unwrapped"]
+
+                                default_ip_tokens = image_proj_model(image_embeds)
+                                with torch.no_grad():
+                                    with use_ip_adapter(transformer_unwrapped, "old"):
+                                        old_ip_tokens = image_proj_model(image_embeds).detach()
+                                zero_ip_tokens = torch.zeros_like(default_ip_tokens)
 
                                 packed_noisy_latents = pack_latents(latents, b, c, h, w)
                                 transformer_hidden_states = torch.cat([

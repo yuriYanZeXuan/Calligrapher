@@ -1377,25 +1377,21 @@ def main():
                                         )[0]
                                 old_pred = unpack_latents(old_pred_tensor, h * 8, w * 8, 16)
 
-                                # Get sigmas and convert to velocity
+                                # Get sigmas and derive x0 from model predictions
                                 sigmas = get_sigmas(noise_scheduler, t_batch, n_dim=latents.ndim, dtype=latents.dtype, device=latents.device)
-                                forward_velocity = forward_pred * (-sigmas) + latents
-                                old_velocity = old_pred * (-sigmas) + latents
-                                ref_velocity = ref_pred * (-sigmas) + latents
-                                
-                                # Get clean x0 from next_latents (this is an approximation)
-                                # In NFT, we reconstruct x0 from the noisy latents
-                                next_latents = mini_batch["next_latents"][:, j]
-                                t_next_idx = min(j + 1, len(noise_scheduler.timesteps) - 1)
-                                t_next = noise_scheduler.timesteps[t_next_idx]
-                                sigmas_next = get_sigmas(noise_scheduler, t_next.repeat(next_latents.shape[0]).to(accelerator.device), 
-                                                        n_dim=next_latents.ndim, dtype=next_latents.dtype, device=next_latents.device)
-                                
-                                # Approximate x0 from next latents
-                                # For flow matching: x_t = (1-t)*x_0 + t*noise, so x_0 ≈ (x_t - t*v) / (1-t)
-                                # where v is the velocity prediction
-                                t_value = (t / 1000.0).view(-1, 1, 1, 1)
-                                x0 = forward_velocity  # In flow matching, the velocity prediction is the denoised prediction
+                                forward_x0 = forward_pred * (-sigmas) + latents
+                                old_x0 = old_pred * (-sigmas) + latents
+                                ref_x0 = ref_pred * (-sigmas) + latents
+
+                                # Convert x0 into velocity for NFT loss: v = (x_t - x0) / t
+                                t_norm = (t_batch / 1000.0).view(-1, 1, 1, 1)
+                                t_norm = torch.clamp(t_norm, min=1e-5)
+                                forward_velocity = (latents - forward_x0) / t_norm
+                                old_velocity = (latents - old_x0) / t_norm
+                                ref_velocity = (latents - ref_x0) / t_norm
+
+                                # Use the current model's x0 estimate as reconstruction target in NFT loss
+                                x0 = forward_x0
                                 
                                 # Compute NFT loss
                                 loss, loss_terms = rl_trainer.compute_nft_loss(

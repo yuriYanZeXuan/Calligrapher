@@ -5,6 +5,10 @@ from typing import Optional
 
 from PIL import Image
 
+# Save interval can be configured via env var; default every 100 calls
+DEBUG_SAVE_INTERVAL = int(os.environ.get("REWARD_DEBUG_SAVE_INTERVAL", "100"))
+_DEBUG_SAVE_COUNTER = 0
+
 
 def _resolve_debug_dir() -> str:
     return os.environ.get("REWARD_DEBUG_DIR", "reward_debug_output")
@@ -25,6 +29,12 @@ def save_debug_sample(
     Files are named with a timestamp + random suffix to avoid collisions, so no
     inter-process locking is required.
     """
+
+    # Sampling: save once every DEBUG_SAVE_INTERVAL calls
+    global _DEBUG_SAVE_COUNTER
+    _DEBUG_SAVE_COUNTER += 1
+    if DEBUG_SAVE_INTERVAL > 0 and (_DEBUG_SAVE_COUNTER % DEBUG_SAVE_INTERVAL) != 0:
+        return
 
     debug_dir = _resolve_debug_dir()
     os.makedirs(debug_dir, exist_ok=True)

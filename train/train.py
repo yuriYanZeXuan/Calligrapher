@@ -142,6 +142,7 @@ def perform_rollout(
     noise_scheduler.set_timesteps(args.rl_num_inference_steps, device=device, mu=args.rl_guidance_scale - 1.0)
     
     scheduler_timesteps = noise_scheduler.timesteps
+    last_pred_x0 = None
     
     for i, t in tqdm(enumerate(scheduler_timesteps), total=len(scheduler_timesteps), desc="Rollout step", leave=False):
         
@@ -215,6 +216,8 @@ def perform_rollout(
         sigmas = sigmas.view(-1, *([1] * (latents.ndim - 1)))
         
         pred_x0 = model_pred * (-sigmas) + latents
+        # 记录最后一步的 pred_x0（flow matching 的 t0 预测）
+        last_pred_x0 = pred_x0
         
         # SDE step to get next latents and log prob
         latents, log_prob, _, _ = sde_step_with_logprob(
@@ -227,9 +230,13 @@ def perform_rollout(
         all_latents.append(latents)
         all_log_probs.append(log_prob)
 
-    # 4. Decode Final Latent to Image
-    latents = latents / vae.config.scaling_factor
-    images_tensor = vae.decode(latents.to(vae.dtype)).sample
+    # 4. Decode t0 state to Image（根据配置选择来源）
+    if args.rl_reward_image_from == "pred_x0":
+        decode_latents = last_pred_x0
+    else:
+        decode_latents = latents
+    decode_latents = decode_latents / vae.config.scaling_factor
+    images_tensor = vae.decode(decode_latents.to(vae.dtype)).sample
 
     # --- Sanitize and Normalize Output ---
     # Replace any NaNs or Infs that can occur during RL training with a stable value.
@@ -491,6 +498,14 @@ def parse_args():
     parser.add_argument("--rl_adv_clip_max", type=float, default=5, help="Max value for advantage clipping.")
     parser.add_argument("--rl_grpo_clip_range", type=float, default=0.2, help="PPO clipping range for GRPO.")
     parser.add_argument("--rl_kl_beta", type=float, default=0.1, help="Beta coefficient for the KL penalty term.")
+    # 只向 reward server 发送 t0 状态：选择解码来源（最终 t0 latent 或 flow matching 的最后一步 pred_x0）
+    parser.add_argument(
+        "--rl_reward_image_from",
+        type=str,
+        default="pred_x0",
+        choices=["t0_latent", "pred_x0"],
+        help="来源于 t0_latent（默认）或最后一步的 flow matching 预测 pred_x0",
+    )
     
     # --- RL Training Method ---
     parser.add_argument("--rl_method", type=str, default="grpo", choices=["grpo", "nft"], 

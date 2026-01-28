@@ -204,16 +204,22 @@ def load_dataset(benchmark, base_eval_dir):
                         data.append(item)
                         
     elif benchmark == 'LongText-Bench':
-        jsonl_path = os.path.join(base_eval_dir, 'LongText-Bench', 'text_prompts.jsonl')
-        with open(jsonl_path, 'r') as f:
-            for line in f:
-                item = json.loads(line)
-                item.update({
-                    'id': f"longtext_{item['prompt_id']}",
-                    'carrier_list': [],
-                    'sentence_list': [item['prompt']]
-                })
-                data.append(item)
+        longtext_dir = os.path.join(base_eval_dir, 'LongText-Bench')
+        # Load all .jsonl files (text_prompts.jsonl and text_prompts_zh.jsonl)
+        for jsonl_file in glob.glob(os.path.join(longtext_dir, '*.jsonl')):
+            print(f"Loading {os.path.basename(jsonl_file)}...")
+            with open(jsonl_file, 'r') as f:
+                for line in f:
+                    item = json.loads(line)
+                    # Create unique ID by prefixing filename hash or type if needed, 
+                    # but prompt_id might be unique enough or we can add language prefix
+                    lang_prefix = "zh" if "zh" in jsonl_file else "en"
+                    item.update({
+                        'id': f"longtext_{lang_prefix}_{item['prompt_id']}",
+                        'carrier_list': [],
+                        'sentence_list': [item['prompt']]
+                    })
+                    data.append(item)
                 
     return data
 

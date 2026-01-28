@@ -304,7 +304,10 @@ def register_attention_control(model, controller):
         return count  # Counter, used to count the number of replaced Attention layers.
 
     cross_att_count = 0
-    sub_nets = model.transformer.named_children()
+    print("register_attention_control: transformer children")
+    sub_nets = list(model.transformer.named_children())
+    for name, _ in sub_nets:
+        print(f"  - {name}")
     for net in sub_nets:
         if "single_transformer_blocks" in net[0]:
             cross_att_count += register_recr(net[1], 0, "single")
@@ -312,6 +315,7 @@ def register_attention_control(model, controller):
             cross_att_count += register_recr(net[1], 0, "MM")
 
     controller.num_att_layers = cross_att_count
+    print(f"register_attention_control: patched attention layers = {cross_att_count}")
 
 def get_quote_inds(text: str, tokenizer):  # Input prompt, output the index of the token between the quotation marks and the preceding quotation marks in prompt
     out = []

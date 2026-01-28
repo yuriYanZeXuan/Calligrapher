@@ -326,24 +326,79 @@ def register_attention_control(model, controller):
 
 def get_quote_inds(text: str, tokenizer):  # Input prompt, output the index of the token between the quotation marks and the preceding quotation marks in prompt
     out = []
-    text.replace('"', "'")
-    words_encode = [tokenizer.decode([item]) for item in tokenizer.encode(text)][:-1]
+    
+    # Define quote types
+    open_quotes = "“「『" 
+    close_quotes = "”」』"
+    ambiguous_quotes = "'\""
+    
+    # CLIP tokenizer limit is 77 tokens. Truncate to avoid errors.
+    # We use max_length=77 and truncation=True.
+    # Note: tokenizer.encode usually adds start/end tokens.
+    words_encode = [tokenizer.decode([item]) for item in tokenizer.encode(text, truncation=True, max_length=77)][:-1]
+    # print(words_encode)
     between_quote = False
+    current_quote_type = None # 'directional' or 'ambiguous'
+    
+    def contains_any(s, chars):
+        return any(c in s for c in chars)
+    
     for i in range(len(words_encode)):
-        if between_quote and words_encode[i] != "'":
-            out.append(i)
-        elif between_quote and words_encode[i] == "'":
-            between_quote = False
-        elif not between_quote and words_encode[i] == "'":
-            between_quote = True
-            out.append(i)
-    if between_quote:
-        raise Exception("miss quote")
+        token = words_encode[i]
+        
+        if not between_quote:
+            # Check for directional open
+            if contains_any(token, open_quotes):
+                between_quote = True
+                current_quote_type = 'directional'
+                out.append(i)
+                # Check if it also closes in same token (e.g. “word”)
+                if contains_any(token, close_quotes):
+                    between_quote = False
+                    current_quote_type = None
+            # Check for ambiguous open
+            elif contains_any(token, ambiguous_quotes):
+                between_quote = True
+                current_quote_type = 'ambiguous'
+                out.append(i)
+                # Check if it also closes (e.g. 'word' or "word")
+                c_count = sum(token.count(q) for q in ambiguous_quotes)
+                if c_count >= 2:
+                    between_quote = False
+                    current_quote_type = None
+        else:
+            # Inside quote
+            if current_quote_type == 'directional':
+                if contains_any(token, close_quotes):
+                    between_quote = False
+                    current_quote_type = None
+                    # Append if token has content besides the quote
+                    token_stripped = token
+                    for q in close_quotes: token_stripped = token_stripped.replace(q, "")
+                    if token_stripped.strip():
+                        out.append(i)
+                else:
+                    out.append(i)
+            elif current_quote_type == 'ambiguous':
+                if contains_any(token, ambiguous_quotes):
+                    between_quote = False
+                    current_quote_type = None
+                    # Append if token has content besides the quote
+                    token_stripped = token
+                    for q in ambiguous_quotes: token_stripped = token_stripped.replace(q, "")
+                    if token_stripped.strip():
+                        out.append(i)
+                else:
+                    out.append(i)
+                    
+    # if between_quote:
+    #     raise Exception("miss quote")
     return np.array(out)
 
 
 def get_word_inds(text: str, word: str, tokenizer):  # Input prompt, word, and output the index of the token corresponding to this word
-    words_encode = [tokenizer.decode([item]) for item in tokenizer.encode(text)][:-1]
+    # CLIP tokenizer limit is 77 tokens. Truncate to avoid errors.
+    words_encode = [tokenizer.decode([item]) for item in tokenizer.encode(text, truncation=True, max_length=77)][:-1]
     best_matches = difflib.get_close_matches(word, words_encode, n=1, cutoff=0.0)
     best_match = best_matches[0]
     indices = [i for i, x in enumerate(words_encode) if x == best_match]
@@ -354,18 +409,52 @@ def get_word_inds(text: str, word: str, tokenizer):  # Input prompt, word, and o
 
 def get_first_quote_inds(text: str, tokenizer):  # Input prompt, output the index of the token of the preceding quotation marks in prompt
     out = []
-    text.replace('"', "'")
-    words_encode = [tokenizer.decode([item]) for item in tokenizer.encode(text)][:-1]
+    
+    # Define quote types
+    open_quotes = "“「『" 
+    close_quotes = "”」』"
+    ambiguous_quotes = "'\""
+    
+    # CLIP tokenizer limit is 77 tokens. Truncate to avoid errors.
+    words_encode = [tokenizer.decode([item]) for item in tokenizer.encode(text, truncation=True, max_length=77)][:-1]
+    
     between_quote = False
+    current_quote_type = None
+    
+    def contains_any(s, chars):
+        return any(c in s for c in chars)
+    
     for i in range(len(words_encode)):
-        if words_encode[i] == "'":
-            if between_quote:
-                between_quote = False
-            elif not between_quote and words_encode[i] == "'":
+        token = words_encode[i]
+        
+        if not between_quote:
+            if contains_any(token, open_quotes):
                 between_quote = True
+                current_quote_type = 'directional'
                 out.append(i)
+                if contains_any(token, close_quotes):
+                    between_quote = False
+                    current_quote_type = None
+            elif any(token.strip().startswith(q) for q in ambiguous_quotes):
+                between_quote = True
+                current_quote_type = 'ambiguous'
+                out.append(i)
+                if sum(token.count(q) for q in ambiguous_quotes) >= 2:
+                    between_quote = False
+                    current_quote_type = None
+        else:
+            if current_quote_type == 'directional':
+                if contains_any(token, close_quotes):
+                    between_quote = False
+                    current_quote_type = None
+            elif current_quote_type == 'ambiguous':
+                if any(token.strip().endswith(q) for q in ambiguous_quotes):
+                    between_quote = False
+                    current_quote_type = None
+                    
     if between_quote:
-        raise Exception("miss quote")
+        print(f"Warning: Quote not closed in prompt: {text[:50]}...")
+        
     return out
 
 

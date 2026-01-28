@@ -213,7 +213,7 @@ def scaled_dot_product_attention(
 def register_attention_control(model, controller):
     def _is_attention_module(net_):
         print(net_.__class__.__name__)
-        if net_.__class__.__name__ == "FluxAttention":
+        if net_.__class__.__name__ == "Attention":
             return True
         else:
             return False

@@ -102,7 +102,7 @@ def main(
 
         for benchmark in ("CVTG","CVTG-Style"):
         # for benchmark in ("CVTG-Style",):
-            with open(f"/share/dnk/benchmark/{benchmark}/{area}.json", 'r', encoding='utf-8') as file:
+            with open(f"/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/CVTG-2K/CVTG-2K{benchmark}/{area}.json", 'r', encoding='utf-8') as file:
                 json_data = json.load(file)
             # get "data_list"
             data_list = json_data.get("data_list")

@@ -67,7 +67,7 @@ def main(
     output_dir = "TextCrafter"
 
     for benchmark in ("CreativeBench",):
-        with open(f"/share/dnk/benchmark/{benchmark}/{area}.json", 'r', encoding='utf-8') as file:
+        with open(f"/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/CVTG-2K/CVTG-2K{benchmark}/{area}.json", 'r', encoding='utf-8') as file:
             json_data = json.load(file)
         # 获取 "data_list"
         data_list = json_data.get("data_list")

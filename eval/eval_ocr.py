@@ -1,4 +1,3 @@
-from paddleocr import PaddleOCR
 import Levenshtein
 from PIL import Image
 import os
@@ -8,15 +7,14 @@ import numpy as np
 # Add the parent directory to the path to import utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from eval.utils import load_images_for_evaluation
+from eval.mineru_ocr import create_mineru_client, blocks_to_text
 
 
 class OCREvaluator:
-    def __init__(self, lang='en'):
-        print("Initializing PaddleOCR...")
-        # Aligned with step3_ocr.py, use_textline_orientation is the modern param.
-        # This resolves the 'use_angle_cls' deprecation warning.
-        self.ocr = PaddleOCR(use_textline_orientation=False, lang=lang)
-        print("PaddleOCR initialized.")
+    def __init__(self, model_name: str = "opendatalab/MinerU2.5-2509-1.2B"):
+        print("Initializing MinerU VLM OCR (vLLM backend)...")
+        self.ocr = create_mineru_client(model_name=model_name)
+        print("MinerU VLM OCR initialized.")
 
     def calculate_ocr_accuracy(self, image: Image.Image, ground_truth_text: str, mask: Image.Image = None):
         """
@@ -43,21 +41,13 @@ class OCREvaluator:
         else:
             image_to_ocr = image
 
-        # Convert PIL Image (RGB) to numpy array and then to BGR for PaddleOCR predict method
-        img_np_rgb = np.array(image_to_ocr.convert('RGB'))
-        img_np_bgr = img_np_rgb[:, :, ::-1]
-
-        # Use the 'predict' method, which is the modern standard and aligns with step3_ocr.py
-        result = self.ocr.predict(img_np_bgr)
-
-        recognized_text_parts = []
-        # The result of predict is a list containing one result object for the image
-        if result and result[0] and hasattr(result[0], 'json'):
-            json_res = result[0].json
-            if json_res and 'res' in json_res and json_res['res']:
-                res_data = json_res['res']
-                # rec_texts contains the list of recognized text strings
-                recognized_text_parts = res_data.get('rec_texts', [])
+        try:
+            blocks = self.ocr.two_step_extract(image_to_ocr)
+            recognized_text = blocks_to_text(blocks)
+            recognized_text_parts = [recognized_text] if recognized_text else []
+        except Exception as e:
+            print(f"  - MinerU OCR failed: {e}")
+            recognized_text_parts = []
 
         # --- DEBUG: Print raw and processed text ---
         print(f"  - Recognized Raw: {recognized_text_parts}")

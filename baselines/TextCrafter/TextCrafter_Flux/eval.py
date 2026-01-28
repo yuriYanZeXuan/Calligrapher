@@ -10,9 +10,10 @@ from textcrafter_pipeline_flux import textcrafter_FluxPipeline
 from pre_generation import pre_generation
 from rectangles import generate_rectangles_gurobi, visualize_rectangles,generate_rectangles_random,generate_rectangles_fixed
 
-ldm_flux = FluxPipeline.from_pretrained("/share/dnk/checkpoint/FLUX.1-dev",torch_dtype=torch.bfloat16).to("cuda")
+ldm_flux = FluxPipeline.from_pretrained("/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX.1-dev",torch_dtype=torch.bfloat16).to("cuda")
 pipe = textcrafter_FluxPipeline.from_pipeline(ldm_flux)
-
+BASE_DIR="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/CVTG-2K"
+OUTPUT_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/OUTPUT_DIR/TextCrafter_Flux"
 @torch.no_grad()
 def inference(
         prompt,
@@ -25,8 +26,8 @@ def inference(
         cross_replace_steps=1.0,  # Reweight execution steps(ratio)
         seed=0,
         addition=0.4,  # embed addition coefficient
-        height=1024,
-        width=1024,
+        height=512,
+        width=512,
         rectangle_name=None,
         area=None
 ):
@@ -97,24 +98,24 @@ def main(
         if min_area is None:  # If not provided, the default value is used
             min_area = min_area_default[area - 1]
 
-        output_dir = "TextCrafter_Flux"
-        base_dir = "/share/dnk/NIPS-eval"
+        
 
         for benchmark in ("CVTG","CVTG-Style"):
         # for benchmark in ("CVTG-Style",):
-            with open(f"/share/dnk/benchmark/{benchmark}/{area}.json", 'r', encoding='utf-8') as file:
+            with open(f"{BASE_DIR}/CVTG-2K{benchmark}/{area}.json", 'r', encoding='utf-8') as file:
                 json_data = json.load(file)
             # get "data_list"
             data_list = json_data.get("data_list")
-            for data in tqdm(data_list):
+            for data in tqdm(data_list[:10]):
                 index = data.get("index")
                 # if index < 199: continue
                 prompt = data.get("prompt")
                 carrier_list = data.get("carrier_list")
                 sentence_list = data.get("sentence_list")
-                # rectangle_name = f"{base_dir}/{output_dir}/{benchmark}/{area}/{index}_rec.json"
-                image = inference(prompt, carrier_list, sentence_list, min_area=min_area,rectangle_name=rectangle_name,area=area)
-                filename = os.path.join(f"{base_dir}/{output_dir}/{benchmark}/{area}", f"{index}.png")
+                # rectangle_name = f"{base_dir}/{OUTPUT_DIR}/{benchmark}/{area}/{index}_rec.json"
+                # image = inference(prompt, carrier_list, sentence_list, min_area=min_area,rectangle_name=rectangle_name,area=area)
+                image = inference(prompt, carrier_list, sentence_list, min_area=min_area,area=area)
+                filename = os.path.join(f"{OUTPUT_DIR}/{benchmark}/{area}", f"{index}.png")
                 image.save(filename)
 
 

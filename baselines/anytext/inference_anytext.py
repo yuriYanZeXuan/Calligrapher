@@ -14,6 +14,68 @@ class AnyTextInpainter:
         self.model = AnyText2Model(model_dir=model_dir, **infer_params).cuda(0)
         print("AnyText model initialized.")
 
+    def generate(
+        self,
+        img_prompt,
+        text_prompt,
+        draw_pos=None,
+        seed=-1,
+        img_count=1,
+        ddim_steps=20,
+        width=512,
+        height=512,
+        strength=1.0,
+        cfg_scale=7.5,
+        a_prompt='best quality, extremely detailed,4k, HD, supper legible text,  clear text edges,  clear strokes, neat writing, no watermarks',
+        n_prompt='low-res, bad anatomy, extra digit, fewer digits, cropped, worst quality, low quality, watermark, unreadable text, messy words, distorted text, disorganized writing, advertising picture',
+        output_dir="outputs/anytext_gen"
+    ):
+        if draw_pos is None:
+            pos_imgs = np.zeros((height, width, 1), dtype=np.uint8)
+        elif isinstance(draw_pos, str):
+            pos_imgs = np.array(Image.open(draw_pos).convert("L"))
+        else:
+            pos_imgs = draw_pos
+        if pos_imgs.ndim == 2:
+            pos_imgs = pos_imgs[..., None]
+        if pos_imgs.ndim == 3 and pos_imgs.shape[2] > 1:
+            pos_imgs = pos_imgs[..., 0:1]
+        pos_imgs = pos_imgs.astype(np.uint8)
+
+        ori_image = np.full((height, width, 3), 127, dtype=np.uint8)
+
+        params = {
+            "image_count": img_count,
+            "ddim_steps": ddim_steps,
+            "image_width": width,
+            "image_height": height,
+            "strength": strength,
+            "cfg_scale": cfg_scale,
+            "a_prompt": a_prompt,
+            "n_prompt": n_prompt,
+        }
+        input_data = {
+            "img_prompt": img_prompt,
+            "text_prompt": text_prompt,
+            "seed": seed,
+            "draw_pos": pos_imgs,
+            "ori_image": ori_image,
+        }
+
+        results, rtn_code, rtn_warning, _ = self.model(input_data, **params)
+
+        if rtn_code >= 0:
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            save_images(results, output_dir)
+            print(f'AnyText generation results saved in: {output_dir}')
+            if rtn_warning:
+                print(f"Warning: {rtn_warning}")
+        else:
+            raise Exception(f"AnyText inference failed: {rtn_warning}")
+
+        return results
+
     def inpaint(
         self,
         img_prompt,
@@ -78,28 +140,46 @@ class AnyTextInpainter:
         return results
 
 def main():
-    parser = argparse.ArgumentParser(description="AnyText Inpainting Script")
+    parser = argparse.ArgumentParser(description="AnyText Inpainting/Generation Script")
+    parser.add_argument("--mode", type=str, default="inpaint", choices=["inpaint", "gen"], help="Run mode: inpaint or gen.")
     parser.add_argument("--model_dir", type=str, default="models", help="Directory where the AnyText models are stored.")
     parser.add_argument("--img_prompt", type=str, required=True, help="Image prompt.")
     parser.add_argument("--text_prompt", type=str, required=True, help="Text prompt, e.g., '\"Hello\" \"World\"'")
-    parser.add_argument("--source_path", type=str, required=True, help="Path to the source image for inpainting.")
-    parser.add_argument("--mask_path", type=str, required=True, help="Path to the mask image for inpainting.")
+    parser.add_argument("--source_path", type=str, default=None, help="Path to the source image for inpainting.")
+    parser.add_argument("--mask_path", type=str, default=None, help="Path to the mask image for inpainting.")
+    parser.add_argument("--pos_path", type=str, default=None, help="Path to the position image for generation.")
+    parser.add_argument("--width", type=int, default=512, help="Generation width when no pos image is provided.")
+    parser.add_argument("--height", type=int, default=512, help="Generation height when no pos image is provided.")
     parser.add_argument("--output_dir", type=str, default="output/anytext_inpaint", help="Directory to save the generated images.")
     parser.add_argument("--seed", type=int, default=1234)
     args = parser.parse_args()
     
     inpainter = AnyTextInpainter(model_dir=args.model_dir)
 
-    source_image = Image.open(args.source_path).convert("RGB")
-    mask_image = Image.open(args.mask_path).convert("L")
-    inpainter.inpaint(
-        img_prompt=args.img_prompt,
-        text_prompt=args.text_prompt,
-        source_img=np.array(source_image),
-        mask_img=np.array(mask_image),
-        seed=args.seed,
-        output_dir=args.output_dir
-    )
+    if args.mode == "inpaint":
+        if not args.source_path or not args.mask_path:
+            raise ValueError("In inpaint mode, both --source_path and --mask_path are required.")
+        source_image = Image.open(args.source_path).convert("RGB")
+        mask_image = Image.open(args.mask_path).convert("L")
+        inpainter.inpaint(
+            img_prompt=args.img_prompt,
+            text_prompt=args.text_prompt,
+            source_img=np.array(source_image),
+            mask_img=np.array(mask_image),
+            seed=args.seed,
+            output_dir=args.output_dir
+        )
+    else:
+        output_dir = args.output_dir
+        inpainter.generate(
+            img_prompt=args.img_prompt,
+            text_prompt=args.text_prompt,
+            draw_pos=args.pos_path,
+            seed=args.seed,
+            width=args.width,
+            height=args.height,
+            output_dir=output_dir
+        )
 
 if __name__ == "__main__":
     main()

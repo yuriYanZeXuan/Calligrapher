@@ -383,12 +383,12 @@ def main():
 def evaluate_results(output_dir, dataset, metrics=['ocr']):
     print(f"\nStarting evaluation for {output_dir}...")
     
-    # Add eval dir to sys.path if not already
-    eval_dir = os.path.join(os.path.dirname(BASE_DIR), 'eval')
-    if eval_dir not in sys.path:
-        sys.path.append(eval_dir)
+    # Add root dir to sys.path so 'from eval.xxx' works
+    root_dir = os.path.dirname(BASE_DIR)
+    if root_dir not in sys.path:
+        sys.path.insert(0, root_dir)  # Insert at front to prioritize eval package
         
-    from eval_ocr import OCREvaluator
+    from eval.eval_ocr import OCREvaluator
     import pandas as pd
     
     ocr_evaluator = OCREvaluator() if 'ocr' in metrics else None

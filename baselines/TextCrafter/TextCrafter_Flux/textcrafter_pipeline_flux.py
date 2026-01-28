@@ -41,8 +41,12 @@ import random
 import importlib.util
 import sys
 
+import os
+
 module_name = 'diffusers.models.transformers.transformer_flux'
-module_path = 'textcrafter_transformer_flux.py'
+# Get absolute path to the current file's directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+module_path = os.path.join(current_dir, 'textcrafter_transformer_flux.py')
 
 if module_name in sys.modules:
     del sys.modules[module_name]

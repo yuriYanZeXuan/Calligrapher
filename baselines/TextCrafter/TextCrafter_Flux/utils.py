@@ -213,10 +213,10 @@ def scaled_dot_product_attention(
 def register_attention_control(model, controller):
     def _is_attention_module(net_):
         print(net_.__class__.__name__)
-        if net_.__class__.__name__ == "Attention":
+        if net_.__class__.__name__ == "FluxAttention":
             return True
-        required_attrs = ("to_q", "to_k", "to_v", "heads", "to_out")
-        return all(hasattr(net_, attr) for attr in required_attrs)
+        else:
+            return False
 
     def ca_forward(self, place_in_transformer):
         def forward(hidden_states, encoder_hidden_states=None, attention_mask=None, image_rotary_emb=None):

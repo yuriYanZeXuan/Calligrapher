@@ -6,13 +6,13 @@ def init_forwards(self, root_module: torch.nn.Module):
             "attn" in name
             and "transformer_blocks" in name
             and "single_transformer_blocks" not in name
-            and module.__class__.__name__ == "Attention"
+            and module.__class__.__name__ == "FluxAttention"
         ):
             module.forward = FluxTransformerBlock_init_forward(self, module)           
         elif (
             "attn" in name
             and "single_transformer_blocks" in name
-            and module.__class__.__name__ == "Attention"
+            and module.__class__.__name__ == "FluxAttention"
         ):
             module.forward = FluxSingleTransformerBlock_init_forward(self, module) 
 

@@ -211,6 +211,13 @@ def scaled_dot_product_attention(
 
 
 def register_attention_control(model, controller):
+    def _is_attention_module(net_):
+        print(net_.__class__.__name__)
+        if net_.__class__.__name__ == "Attention":
+            return True
+        required_attrs = ("to_q", "to_k", "to_v", "heads", "to_out")
+        return all(hasattr(net_, attr) for attr in required_attrs)
+
     def ca_forward(self, place_in_transformer):
         def forward(hidden_states, encoder_hidden_states=None, attention_mask=None, image_rotary_emb=None):
             batch_size, sequence_length, _ = hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
@@ -295,7 +302,7 @@ def register_attention_control(model, controller):
         controller = DummyController()
 
     def register_recr(net_, count, place_in_transformer):
-        if net_.__class__.__name__ == 'Attention':
+        if _is_attention_module(net_):
             net_.forward = ca_forward(net_, place_in_transformer)
             return count + 1
         elif hasattr(net_, 'children'):

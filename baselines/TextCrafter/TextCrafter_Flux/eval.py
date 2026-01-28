@@ -116,6 +116,7 @@ def main(
                 # image = inference(prompt, carrier_list, sentence_list, min_area=min_area,rectangle_name=rectangle_name,area=area)
                 image = inference(prompt, carrier_list, sentence_list, min_area=min_area,area=area)
                 filename = os.path.join(f"{OUTPUT_DIR}/{benchmark}/{area}", f"{index}.png")
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
                 image.save(filename)
 
 

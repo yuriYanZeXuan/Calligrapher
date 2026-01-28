@@ -159,6 +159,10 @@ def aggregate_attention(
     out = []
     attention_maps = attention_store.get_average_attention()
     num_pixels = res ** 2
+    print(f"aggregate_attention: res={res}, num_pixels={num_pixels}")
+    print(f"aggregate_attention: keys={list(attention_maps.keys())}")
+    for key in attention_maps:
+        print(f"  - {key}: {len(attention_maps[key])} entries")
     for location in from_where:
         for item in attention_maps[f"{location}"]:
             if item.shape[2] == num_pixels:

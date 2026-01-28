@@ -1,19 +1,14 @@
 from typing import Iterable, Optional
 
 from mineru_vl_utils.structs import BlockType
+from mineru_vl_utils import MinerUClient
+from mineru_vl_utils import MinerULogitsProcessor
+from vllm import LLM
 
 
 def create_mineru_client(model_name: str = "opendatalab/MinerU2.5-2509-1.2B"):
-    from mineru_vl_utils import MinerUClient
-    try:
-        from mineru_vl_utils import MinerULogitsProcessor
-    except Exception:
-        MinerULogitsProcessor = None
-    from vllm import LLM
 
-    logits_processors = None
-    if MinerULogitsProcessor is not None:
-        logits_processors = [MinerULogitsProcessor]
+    logits_processors = [MinerULogitsProcessor]
 
     llm_kwargs = {"model": model_name}
     if logits_processors is not None:

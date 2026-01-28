@@ -61,6 +61,7 @@ def pre_generation(
 
     controller = AttentionLastStore()
 
+    print("Registering attention control...")
     register_attention_control(ldm_flux, controller)
     _ = ldm_flux(
         prompt=prompt,
@@ -71,6 +72,10 @@ def pre_generation(
         width=width
     )
     res = height // 16
+    attention_maps = controller.get_average_attention()
+    print(f"Attention map keys: {list(attention_maps.keys())}")
+    for key in attention_maps:
+        print(f"  - {key}: {len(attention_maps[key])} entries")
     # Call aggregate_attention function to extract and process attention weights from attention_store, the result of attention_maps: shape is [res, res, num_tokens], and the attention weight distribution of each token is mapped to the latent space
     attention_maps = utils.aggregate_attention(controller, res=res, from_where=("MM", "single"), select=0)
     max_pixels = []  #Store the coordinates of the point with the maximum attention value

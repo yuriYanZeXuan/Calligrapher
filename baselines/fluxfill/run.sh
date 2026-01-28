@@ -4,7 +4,7 @@
 
 # Path to the Flux-Fill model.
 # You can use the default from Hugging Face or a local path if you have it downloaded.
-MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill"
+MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill"
 
 # The prompt describing what to inpaint in the masked area.
 PROMPT="Edit text to 'World'"

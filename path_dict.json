@@ -4,7 +4,7 @@
     "gradio_temp_dir": "./gradio_tmp",
     "data_dir": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing",
     "recon_txt_dir": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing/recon_txt.txt",
-    "base_model_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill",
+    "base_model_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill",
     "image_encoder_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip",
     "calligrapher_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/calligrapher/calligrapher.bin",
     "textflux_path": "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/textflux-lora/pytorch_lora_weights.safetensors"

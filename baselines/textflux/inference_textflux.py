@@ -95,9 +95,9 @@ class TextFluxGenerator:
 
 def main():
     parser = argparse.ArgumentParser(description="TextFlux Inference Script")
-    parser.add_argument("--pipeline_path", type=str, default="black-forest-labs/FLUX.1-Fill-dev", help="Path to the pipeline model.")
-    parser.add_argument("--transformer_path", type=str, default="black-forest-labs/FLUX.1-Fill-dev/transformer", help="Path to the base transformer model.")
-    parser.add_argument("--lora_path", type=str, default="yyyyyxie/textflux-beta-lora", help="Path to the TextFlux LoRA weights.")
+    parser.add_argument("--pipeline_path", type=str, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill", help="Path to the pipeline model.")
+    parser.add_argument("--transformer_path", type=str, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill/transformer", help="Path to the base transformer model.")
+    parser.add_argument("--lora_path", type=str, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/textflux-lora-beta", help="Path to the TextFlux LoRA weights.")
     parser.add_argument("--image_path", type=str, required=True, help="Path to the source image.")
     parser.add_argument("--mask_path", type=str, required=True, help="Path to the mask image.")
     parser.add_argument("--prompt", type=str, required=True, help="Prompt text for inpainting.")

@@ -9,7 +9,7 @@ export PYTHONPATH=$(pwd)
 # =========================================================================
 
 # 基本参数
-MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill"
+MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill"
 SIGLIP_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/siglip"
 DATA_JSON="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing"
 OUTPUT_DIR="./output_nft"

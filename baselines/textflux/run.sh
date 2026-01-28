@@ -3,13 +3,13 @@
 # --- Configuration ---
 
 # Path to the pipeline model.
-PIPELINE_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill"
+PIPELINE_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill"
 
 # Path to the base transformer model.
-TRANSFORMER_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux-fill/transformer"
+TRANSFORMER_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill/transformer"
 
 # Path to the TextFlux LoRA weights.
-LORA_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/textflux-lora"
+LORA_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/textflux-lora-beta"
 
 # Path to the source image.
 IMAGE_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/dataset/Calligrapher_bench_testing/test1_source.png"

@@ -942,7 +942,7 @@ def main():
                     logger.info(f"mask_latents shape: {mask_latents.shape}")
                     logger.info(f"masked_image_latents shape: {masked_image_latents.shape}")
                     
-                    # 1. Pack noisy_latents, masked_image_latents, and mask separately, mimicking the official flux-fill pipeline.
+                    # 1. Pack noisy_latents, masked_image_latents, and mask separately, mimicking the official flux_fill pipeline.
                     packed_noisy_latents = pack_latents(noisy_latents, b, c, h, w) # (B, L, 64)
                     logger.info(f"packed_noisy_latents shape: {packed_noisy_latents.shape}")
                     

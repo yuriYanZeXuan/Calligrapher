@@ -40,7 +40,7 @@ bash examples/train_grpo.sh
 # 或手动运行
 python -m train.train \
     --model_type flux \
-    --pretrained_model_name_or_path "/path/to/flux-fill" \
+    --pretrained_model_name_or_path "/path/to/flux_fill" \
     --siglip_path "/path/to/siglip" \
     --train_data_json "/path/to/data.json" \
     --output_dir "output/grpo" \
@@ -58,7 +58,7 @@ bash examples/train_nft.sh
 # 或手动运行
 python -m train.train \
     --model_type flux \
-    --pretrained_model_name_or_path "/path/to/flux-fill" \
+    --pretrained_model_name_or_path "/path/to/flux_fill" \
     --siglip_path "/path/to/siglip" \
     --train_data_json "/path/to/data.json" \
     --output_dir "output/nft" \
@@ -365,7 +365,7 @@ python -m train.train
 
 ### 完全兼容！
 
-经过全面检查和修复，代码**完全支持** flux-fill + IP-Adapter 的所有使用场景：
+经过全面检查和修复，代码**完全支持** flux_fill + IP-Adapter 的所有使用场景：
 
 #### 1. 训练兼容性 ✅
 - ✅ IP-Adapter 正确集成到 Flux-Fill

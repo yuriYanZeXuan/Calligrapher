@@ -27,6 +27,7 @@ sys.path.extend([
     os.path.join(BASE_DIR, 'fluxdev'),
     os.path.join(BASE_DIR, 'fluxklein'),
     os.path.join(BASE_DIR, 'glm_image'),
+    os.path.join(BASE_DIR, 'z_image'),
 ])
 
 # Model paths configuration
@@ -39,6 +40,7 @@ MODEL_PATHS = {
     'textflux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
     'textcrafter_flux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX.1-dev',
     'glm_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/glm_image',
+    'z_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
 }
 
 # --- Model Wrappers ---
@@ -238,6 +240,26 @@ class GlmImageWrapper(ModelWrapper):
             width=1024
         )
 
+class ZImageWrapper(ModelWrapper):
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from inference_z_image import ZImageGenerator
+        self.generator = ZImageGenerator(
+            model_path=self.model_path or MODEL_PATHS['z_image'],
+            device=device
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        self.generator.generate(
+            prompt=prompt,
+            output_path=output_path,
+            seed=42,
+            num_inference_steps=9,
+            guidance_scale=0.0,
+            height=1024,
+            width=1024
+        )
+
 # Model registry
 MODELS = {
     'textflux': TextFluxWrapper,
@@ -247,7 +269,8 @@ MODELS = {
     'fluxfill': FluxFillWrapper,
     'fluxdev': FluxDevWrapper,
     'fluxklein': FluxKleinWrapper,
-    'glm_image': GlmImageWrapper
+    'glm_image': GlmImageWrapper,
+    'z_image': ZImageWrapper
 }
 
 # --- Data Loading ---

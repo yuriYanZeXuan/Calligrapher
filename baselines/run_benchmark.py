@@ -188,17 +188,11 @@ def load_dataset(benchmark, base_eval_dir):
         for subset in ['CVTG', 'CVTG-Style']:
             subset_dir = os.path.join(base_eval_dir, 'CVTG-2K', subset)
             for json_file in glob.glob(os.path.join(subset_dir, '*_combined.json')):
-                try:
-                    area = int(os.path.basename(json_file).split('_')[0])
-                except (ValueError, IndexError):
-                    area = 2
+                area = int(os.path.basename(json_file).split('_')[0])
                 with open(json_file, 'r') as f:
                     combined = json.load(f)
                 for idx_str, prompt in combined.items():
-                    try:
-                        index = int(idx_str)
-                    except ValueError:
-                        continue
+                    index = int(idx_str)
                     data.append({
                         'prompt': prompt,
                         'index': index,
@@ -241,11 +235,7 @@ def evaluate_results(output_dir, dataset, metrics=['ocr']):
     """Evaluate generated images."""
     print(f"\nEvaluating {output_dir}...")
     
-    try:
-        from eval.eval_ocr import OCREvaluator
-    except ImportError as e:
-        print(f"Failed to import evaluator: {e}")
-        return
+    from eval.eval_ocr import OCREvaluator
     
     ocr_evaluator = OCREvaluator() if 'ocr' in metrics else None
     results = []
@@ -254,11 +244,7 @@ def evaluate_results(output_dir, dataset, metrics=['ocr']):
         img_path = os.path.join(output_dir, f"result_{item['id']}.png")
         if not os.path.exists(img_path): continue
         
-        try:
-            image = Image.open(img_path).convert("RGB")
-        except Exception as e:
-            print(f"Error loading {img_path}: {e}")
-            continue
+        image = Image.open(img_path).convert("RGB")
         
         row = {'id': item['id'], 'prompt': item['prompt']}
         
@@ -267,13 +253,9 @@ def evaluate_results(output_dir, dataset, metrics=['ocr']):
             gt_text = " ".join(gt_text) if isinstance(gt_text, list) else str(gt_text)
             row['ground_truth'] = gt_text
             
-            try:
-                row['ocr_accuracy'] = ocr_evaluator.calculate_ocr_accuracy(
-                    image, gt_text, mask=None
-                )
-            except Exception as e:
-                print(f"OCR error for {item['id']}: {e}")
-                row['ocr_accuracy'] = 0.0
+            row['ocr_accuracy'] = ocr_evaluator.calculate_ocr_accuracy(
+                image, gt_text, mask=None
+            )
         
         results.append(row)
     
@@ -351,12 +333,7 @@ def main():
                 if 0 <= idx < len(min_areas):
                     kwargs['min_area'] = min_areas[idx]
             
-            try:
-                model.generate(item['prompt'], output_path, **kwargs)
-            except Exception as e:
-                print(f"Error generating {item['id']}: {e}")
-                import traceback
-                traceback.print_exc()
+            model.generate(item['prompt'], output_path, **kwargs)
     else:
         print("All images already generated, skipping generation.")
     

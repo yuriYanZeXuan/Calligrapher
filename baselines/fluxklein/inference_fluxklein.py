@@ -2,8 +2,8 @@ import os
 import torch
 import argparse
 from PIL import Image
-from diffusers import Flux2KleinPipeline
 from diffusers.utils import load_image
+from pipeline_flux2_klein import Flux2KleinPipeline
 
 class FluxKleinGenerator:
     def __init__(self, model_path="black-forest-labs/FLUX.2-klein-base-9B", device="cuda", enable_cpu_offload=True):

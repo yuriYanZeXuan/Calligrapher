@@ -1,47 +1,60 @@
 import os
+import sys
 import json
 import torch
 import argparse
 from PIL import Image
 from safetensors.torch import load_file
 from diffusers.utils import load_image
+from diffusers.models import AutoencoderKLFlux2, Flux2Transformer2DModel
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from transformers import Qwen2TokenizerFast, Qwen3ForCausalLM
 
-# Import local model definitions to ensure we use the correct versions
-try:
-    from .models import AutoencoderKLFlux2, Flux2Transformer2DModel
-    from .pipeline_flux2_klein import Flux2KleinPipeline
-except ImportError:
-    from models import AutoencoderKLFlux2, Flux2Transformer2DModel
-    from pipeline_flux2_klein import Flux2KleinPipeline
+# Add current directory to path for local imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pipeline_flux2_klein import Flux2KleinPipeline
 
 
 def load_model_weights(model, model_path, subfolder, torch_dtype):
     """Load model weights from safetensors or pytorch files."""
     weights_path = os.path.join(model_path, subfolder)
     
-    # Check for sharded weights (index file)
-    index_file = os.path.join(weights_path, "model.safetensors.index.json")
-    if os.path.exists(index_file):
+    # Check for sharded weights (index file) - try different naming conventions
+    index_files = [
+        "diffusion_pytorch_model.safetensors.index.json",
+        "model.safetensors.index.json",
+    ]
+    
+    index_file = None
+    for idx_file in index_files:
+        idx_path = os.path.join(weights_path, idx_file)
+        if os.path.exists(idx_path):
+            index_file = idx_path
+            break
+    
+    if index_file:
         # Load sharded weights
+        print(f"  Loading sharded weights from {os.path.basename(index_file)}...")
         with open(index_file, 'r') as f:
             index = json.load(f)
         
-        weight_files = set(index["weight_map"].values())
+        weight_files = sorted(set(index["weight_map"].values()))
         state_dict = {}
         for weight_file in weight_files:
             file_path = os.path.join(weights_path, weight_file)
+            print(f"    Loading {weight_file}...")
             state_dict.update(load_file(file_path))
     else:
         # Try single safetensors file
         safetensors_file = os.path.join(weights_path, "diffusion_pytorch_model.safetensors")
         if os.path.exists(safetensors_file):
+            print(f"  Loading single weight file: diffusion_pytorch_model.safetensors")
             state_dict = load_file(safetensors_file)
         else:
             # Try pytorch file
             pytorch_file = os.path.join(weights_path, "diffusion_pytorch_model.bin")
             if os.path.exists(pytorch_file):
+                print(f"  Loading pytorch weight file: diffusion_pytorch_model.bin")
                 state_dict = torch.load(pytorch_file, map_location="cpu")
             else:
                 raise FileNotFoundError(f"No weights found in {weights_path}")
@@ -49,9 +62,9 @@ def load_model_weights(model, model_path, subfolder, torch_dtype):
     # Load state dict into model
     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
     if missing_keys:
-        print(f"Warning: Missing keys in {subfolder}: {missing_keys[:5]}..." if len(missing_keys) > 5 else f"Warning: Missing keys in {subfolder}: {missing_keys}")
+        print(f"  Warning: Missing keys in {subfolder}: {missing_keys[:5]}..." if len(missing_keys) > 5 else f"  Warning: Missing keys in {subfolder}: {missing_keys}")
     if unexpected_keys:
-        print(f"Warning: Unexpected keys in {subfolder}: {unexpected_keys[:5]}..." if len(unexpected_keys) > 5 else f"Warning: Unexpected keys in {subfolder}: {unexpected_keys}")
+        print(f"  Warning: Unexpected keys in {subfolder}: {unexpected_keys[:5]}..." if len(unexpected_keys) > 5 else f"  Warning: Unexpected keys in {subfolder}: {unexpected_keys}")
     
     return model.to(torch_dtype)
 

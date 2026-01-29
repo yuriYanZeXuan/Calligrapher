@@ -184,43 +184,55 @@ def load_dataset(benchmark, base_eval_dir):
     data = []
     
     if benchmark == 'CVTG-2K':
+        # Only load *_combined.json (format: {"0": "prompt", "1": "prompt", ...})
         for subset in ['CVTG', 'CVTG-Style']:
             subset_dir = os.path.join(base_eval_dir, 'CVTG-2K', subset)
-            for json_file in glob.glob(os.path.join(subset_dir, '*.json')):
-                if 'combined' in json_file: continue
-                
+            for json_file in glob.glob(os.path.join(subset_dir, '*_combined.json')):
                 try:
-                    area = int(os.path.basename(json_file).split('.')[0])
-                except:
+                    area = int(os.path.basename(json_file).split('_')[0])
+                except (ValueError, IndexError):
                     area = 2
-                
                 with open(json_file, 'r') as f:
-                    for item in json.load(f).get('data_list', []):
-                        item.update({
-                            'benchmark_subset': subset,
-                            'area': area,
-                            'id': f"{subset}_{area}_{item['index']}"
-                        })
-                        data.append(item)
-                        
+                    combined = json.load(f)
+                for idx_str, prompt in combined.items():
+                    try:
+                        index = int(idx_str)
+                    except ValueError:
+                        continue
+                    data.append({
+                        'prompt': prompt,
+                        'index': index,
+                        'benchmark_subset': subset,
+                        'area': area,
+                        'id': f"{subset}_{area}_{index}",
+                        'carrier_list': [],
+                        'sentence_list': [],
+                        'text': [],
+                    })
     elif benchmark == 'LongText-Bench':
+        # Read as text_prompts.jsonl format: category, length, prompt, text, text_length, prompt_id (no carrier_list/sentence_list)
         longtext_dir = os.path.join(base_eval_dir, 'LongText-Bench')
-        # Load all .jsonl files (text_prompts.jsonl and text_prompts_zh.jsonl)
-        for jsonl_file in glob.glob(os.path.join(longtext_dir, '*.jsonl')):
+        for jsonl_file in sorted(glob.glob(os.path.join(longtext_dir, '*.jsonl'))):
             print(f"Loading {os.path.basename(jsonl_file)}...")
             with open(jsonl_file, 'r') as f:
                 for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
                     item = json.loads(line)
-                    # Create unique ID by prefixing filename hash or type if needed, 
-                    # but prompt_id might be unique enough or we can add language prefix
                     lang_prefix = "zh" if "zh" in jsonl_file else "en"
-                    item.update({
-                        'id': f"longtext_{lang_prefix}_{item['prompt_id']}",
+                    prompt_id = item.get('prompt_id', len(data))
+                    data.append({
+                        'prompt': item['prompt'],
+                        'text': item.get('text', []),
+                        'prompt_id': prompt_id,
+                        'category': item.get('category', ''),
+                        'length': item.get('length', ''),
+                        'text_length': item.get('text_length', 0),
+                        'id': f"longtext_{lang_prefix}_{prompt_id}",
                         'carrier_list': [],
-                        'sentence_list': [item['prompt']]
+                        'sentence_list': [],
                     })
-                    data.append(item)
-                
     return data
 
 # --- Evaluation ---

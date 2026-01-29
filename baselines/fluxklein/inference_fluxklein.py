@@ -1,9 +1,127 @@
 import os
+import json
 import torch
 import argparse
 from PIL import Image
+from safetensors.torch import load_file
 from diffusers.utils import load_image
-from pipeline_flux2_klein import Flux2KleinPipeline
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from transformers import Qwen2TokenizerFast, Qwen3ForCausalLM
+
+# Import local model definitions to ensure we use the correct versions
+try:
+    from .models import AutoencoderKLFlux2, Flux2Transformer2DModel
+    from .pipeline_flux2_klein import Flux2KleinPipeline
+except ImportError:
+    from models import AutoencoderKLFlux2, Flux2Transformer2DModel
+    from pipeline_flux2_klein import Flux2KleinPipeline
+
+
+def load_model_weights(model, model_path, subfolder, torch_dtype):
+    """Load model weights from safetensors or pytorch files."""
+    weights_path = os.path.join(model_path, subfolder)
+    
+    # Check for sharded weights (index file)
+    index_file = os.path.join(weights_path, "model.safetensors.index.json")
+    if os.path.exists(index_file):
+        # Load sharded weights
+        with open(index_file, 'r') as f:
+            index = json.load(f)
+        
+        weight_files = set(index["weight_map"].values())
+        state_dict = {}
+        for weight_file in weight_files:
+            file_path = os.path.join(weights_path, weight_file)
+            state_dict.update(load_file(file_path))
+    else:
+        # Try single safetensors file
+        safetensors_file = os.path.join(weights_path, "diffusion_pytorch_model.safetensors")
+        if os.path.exists(safetensors_file):
+            state_dict = load_file(safetensors_file)
+        else:
+            # Try pytorch file
+            pytorch_file = os.path.join(weights_path, "diffusion_pytorch_model.bin")
+            if os.path.exists(pytorch_file):
+                state_dict = torch.load(pytorch_file, map_location="cpu")
+            else:
+                raise FileNotFoundError(f"No weights found in {weights_path}")
+    
+    # Load state dict into model
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    if missing_keys:
+        print(f"Warning: Missing keys in {subfolder}: {missing_keys[:5]}..." if len(missing_keys) > 5 else f"Warning: Missing keys in {subfolder}: {missing_keys}")
+    if unexpected_keys:
+        print(f"Warning: Unexpected keys in {subfolder}: {unexpected_keys[:5]}..." if len(unexpected_keys) > 5 else f"Warning: Unexpected keys in {subfolder}: {unexpected_keys}")
+    
+    return model.to(torch_dtype)
+
+
+def load_flux2_klein_pipeline(model_path, torch_dtype=torch.bfloat16, device="cuda"):
+    """
+    Manually load FLUX.2 Klein pipeline components using local model definitions.
+    This bypasses diffusers' dynamic class loading to ensure we use local models.
+    """
+    print(f"Loading FLUX.2 Klein pipeline from {model_path}...")
+    
+    # Load scheduler
+    print("Loading scheduler...")
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        model_path, 
+        subfolder="scheduler"
+    )
+    
+    # Load VAE config and create model with local class
+    print("Loading VAE...")
+    vae_config_path = os.path.join(model_path, "vae", "config.json")
+    with open(vae_config_path, 'r') as f:
+        vae_config = json.load(f)
+    # Remove _class_name to prevent dynamic import issues
+    vae_config.pop("_class_name", None)
+    vae_config.pop("_diffusers_version", None)
+    vae = AutoencoderKLFlux2(**vae_config)
+    vae = load_model_weights(vae, model_path, "vae", torch_dtype)
+    
+    # Load transformer config and create model with local class
+    print("Loading transformer...")
+    transformer_config_path = os.path.join(model_path, "transformer", "config.json")
+    with open(transformer_config_path, 'r') as f:
+        transformer_config = json.load(f)
+    # Remove _class_name to prevent dynamic import issues
+    transformer_config.pop("_class_name", None)
+    transformer_config.pop("_diffusers_version", None)
+    # Ensure guidance_embeds is set correctly for Klein models
+    transformer_config["guidance_embeds"] = transformer_config.get("guidance_embeds", False)
+    print(f"  Transformer config: guidance_embeds={transformer_config.get('guidance_embeds')}")
+    transformer = Flux2Transformer2DModel(**transformer_config)
+    transformer = load_model_weights(transformer, model_path, "transformer", torch_dtype)
+    
+    # Load text encoder and tokenizer using transformers (these don't have the same issue)
+    print("Loading text encoder...")
+    text_encoder = Qwen3ForCausalLM.from_pretrained(
+        model_path,
+        subfolder="text_encoder",
+        torch_dtype=torch_dtype
+    )
+    
+    print("Loading tokenizer...")
+    tokenizer = Qwen2TokenizerFast.from_pretrained(
+        model_path,
+        subfolder="tokenizer"
+    )
+    
+    # Create pipeline with manually loaded components
+    print("Assembling pipeline...")
+    pipe = Flux2KleinPipeline(
+        scheduler=scheduler,
+        vae=vae,
+        text_encoder=text_encoder,
+        tokenizer=tokenizer,
+        transformer=transformer,
+    )
+    
+    print("Pipeline loaded successfully!")
+    return pipe
+
 
 class FluxKleinGenerator:
     def __init__(self, model_path="black-forest-labs/FLUX.2-klein-base-9B", device="cuda", enable_cpu_offload=True):
@@ -11,9 +129,11 @@ class FluxKleinGenerator:
         self.device = device
         self.dtype = torch.bfloat16
         
-        self.pipe = Flux2KleinPipeline.from_pretrained(
+        # Use custom loader to ensure local model definitions are used
+        self.pipe = load_flux2_klein_pipeline(
             model_path,
-            torch_dtype=self.dtype
+            torch_dtype=self.dtype,
+            device=device
         )
         
         if enable_cpu_offload:
@@ -83,6 +203,7 @@ class FluxKleinGenerator:
         print(f"Image saved to {output_path}")
         return result
 
+
 def main():
     parser = argparse.ArgumentParser(description="Flux-Klein Text-to-Image and Image Editing Script")
     parser.add_argument("--model_path", type=str, 
@@ -124,6 +245,7 @@ def main():
         width=args.width,
         output_path=args.output_path
     )
+
 
 if __name__ == "__main__":
     main()

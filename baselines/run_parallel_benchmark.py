@@ -23,6 +23,8 @@ sys.path.extend([
     os.path.join(BASE_DIR, 'anytext'),
     os.path.join(BASE_DIR, 'qwenedit'),
     os.path.join(BASE_DIR, 'fluxfill'),
+    os.path.join(BASE_DIR, 'fluxdev'),
+    os.path.join(BASE_DIR, 'fluxklein'),
     ROOT_DIR
 ])
 
@@ -31,6 +33,8 @@ MODEL_PATHS = {
     'anytext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/AnyText',
     'qwenedit': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/QwenEdit2509',
     'fluxfill': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
+    'fluxdev': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX.1-dev',
+    'fluxklein': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein',
     'textflux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
     'textcrafter_flux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX.1-dev',
 }
@@ -125,6 +129,48 @@ class TextFluxWrapper(ModelWrapper):
             num_inference_steps=50, guidance_scale=30.0
         )
 
+class FluxDevWrapper(ModelWrapper):
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from inference_fluxdev import FluxDevGenerator
+        self.generator = FluxDevGenerator(
+            model_path=self.model_path or MODEL_PATHS['fluxdev'],
+            device=device
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        self.generator.generate(
+            prompt=prompt,
+            output_path=output_path,
+            seed=42,
+            num_inference_steps=50,
+            guidance_scale=7.5,
+            height=1024,
+            width=1024
+        )
+
+class FluxKleinWrapper(ModelWrapper):
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from inference_fluxklein import FluxKleinGenerator
+        self.generator = FluxKleinGenerator(
+            model_path=self.model_path or MODEL_PATHS['fluxklein'],
+            device=device,
+            enable_cpu_offload=True
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        self.generator.generate(
+            prompt=prompt,
+            image=None,
+            output_path=output_path,
+            seed=42,
+            num_inference_steps=50,
+            guidance_scale=4.0,
+            height=1024,
+            width=1024
+        )
+
 class TextCrafterFluxWrapper(ModelWrapper):
     def __init__(self, device="cuda", model_path=None):
         super().__init__(device, model_path)
@@ -176,7 +222,9 @@ MODELS = {
     'textcrafter_flux': TextCrafterFluxWrapper,
     'anytext': AnyTextWrapper,
     'qwenedit': QwenEditWrapper,
-    'fluxfill': FluxFillWrapper
+    'fluxfill': FluxFillWrapper,
+    'fluxdev': FluxDevWrapper,
+    'fluxklein': FluxKleinWrapper
 }
 
 # --- Data Loading ---

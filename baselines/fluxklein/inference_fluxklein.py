@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import inspect
 import torch
 import argparse
 from PIL import Image
@@ -88,10 +89,22 @@ def load_flux2_klein_pipeline(model_path, torch_dtype=torch.bfloat16, device="cu
     vae_config_path = os.path.join(model_path, "vae", "config.json")
     with open(vae_config_path, 'r') as f:
         vae_config = json.load(f)
-    # Remove _class_name to prevent dynamic import issues
+    
+    # Remove metadata
     vae_config.pop("_class_name", None)
     vae_config.pop("_diffusers_version", None)
-    vae = AutoencoderKLFlux2(**vae_config)
+    
+    # Get valid parameters for AutoencoderKLFlux2
+    valid_params = set(inspect.signature(AutoencoderKLFlux2.__init__).parameters.keys())
+    valid_params.discard('self')
+    
+    # Filter config to only include valid parameters
+    filtered_config = {k: v for k, v in vae_config.items() if k in valid_params}
+    removed_params = set(vae_config.keys()) - set(filtered_config.keys())
+    if removed_params:
+        print(f"  Removed unsupported VAE config parameters: {removed_params}")
+    
+    vae = AutoencoderKLFlux2(**filtered_config)
     vae = load_model_weights(vae, model_path, "vae", torch_dtype)
     
     # Load transformer config and create model with local class
@@ -99,13 +112,23 @@ def load_flux2_klein_pipeline(model_path, torch_dtype=torch.bfloat16, device="cu
     transformer_config_path = os.path.join(model_path, "transformer", "config.json")
     with open(transformer_config_path, 'r') as f:
         transformer_config = json.load(f)
-    # Remove _class_name to prevent dynamic import issues
+    
+    # Remove metadata and unsupported parameters
     transformer_config.pop("_class_name", None)
     transformer_config.pop("_diffusers_version", None)
-    # Ensure guidance_embeds is set correctly for Klein models
-    transformer_config["guidance_embeds"] = transformer_config.get("guidance_embeds", False)
-    print(f"  Transformer config: guidance_embeds={transformer_config.get('guidance_embeds')}")
-    transformer = Flux2Transformer2DModel(**transformer_config)
+    transformer_config.pop("guidance_embeds", None)  # Not supported in Flux2Transformer2DModel
+    
+    # Get valid parameters for Flux2Transformer2DModel
+    valid_params = set(inspect.signature(Flux2Transformer2DModel.__init__).parameters.keys())
+    valid_params.discard('self')
+    
+    # Filter config to only include valid parameters
+    filtered_config = {k: v for k, v in transformer_config.items() if k in valid_params}
+    removed_params = set(transformer_config.keys()) - set(filtered_config.keys())
+    if removed_params:
+        print(f"  Removed unsupported config parameters: {removed_params}")
+    
+    transformer = Flux2Transformer2DModel(**filtered_config)
     transformer = load_model_weights(transformer, model_path, "transformer", torch_dtype)
     
     # Load text encoder and tokenizer using transformers (these don't have the same issue)

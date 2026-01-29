@@ -26,35 +26,12 @@ from diffusers.utils import is_torch_xla_available, logging, replace_example_doc
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 
-# Try to import FLUX2-specific components from local first, then fall back to diffusers
-try:
-    from .models import AutoencoderKLFlux2, Flux2Transformer2DModel
-except ImportError:
-    try:
-        from diffusers.models import AutoencoderKLFlux2, Flux2Transformer2DModel
-    except ImportError:
-        raise ImportError(
-            "Could not import FLUX2 models. Please either:\n"
-            "1. Update diffusers to the latest version: pip install --upgrade diffusers\n"
-            "2. Or ensure local model files are in the 'models' subdirectory"
-        )
+from .models import AutoencoderKLFlux2, Flux2Transformer2DModel
 
-# Try to import Flux2LoraLoaderMixin, use a no-op mixin if not available
-try:
-    from diffusers.loaders import Flux2LoraLoaderMixin
-except ImportError:
-    # Create a no-op mixin for older diffusers versions
-    class Flux2LoraLoaderMixin:
-        """Placeholder LoRA mixin for older diffusers versions."""
-        pass
-
+from diffusers.loaders import Flux2LoraLoaderMixin
 # Local imports
-try:
-    from .image_processor import Flux2ImageProcessor
-    from .pipeline_output import Flux2PipelineOutput
-except ImportError:
-    from image_processor import Flux2ImageProcessor
-    from pipeline_output import Flux2PipelineOutput
+from .image_processor import Flux2ImageProcessor
+from .pipeline_output import Flux2PipelineOutput
 
 
 if is_torch_xla_available():

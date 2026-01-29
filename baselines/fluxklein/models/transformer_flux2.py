@@ -672,8 +672,9 @@ class Flux2Transformer2DModel(
             `encoder_hidden_states`).
         pooled_projection_dim (`int`, defaults to `768`):
             The number of dimensions to use for the pooled projection.
-        guidance_embeds (`bool`, defaults to `True`):
+        guidance_embeds (`bool`, defaults to `False`):
             Whether to use guidance embeddings for guidance-distilled variant of the model.
+            NOTE: FLUX.2 Klein models use guidance_embeds=False.
         axes_dims_rope (`Tuple[int]`, defaults to `(32, 32, 32, 32)`):
             The dimensions to use for the rotary positional embeddings.
     """
@@ -708,7 +709,7 @@ class Flux2Transformer2DModel(
         axes_dims_rope: Tuple[int, ...] = (32, 32, 32, 32),
         rope_theta: int = 2000,
         eps: float = 1e-6,
-        guidance_embeds: bool = True,
+        guidance_embeds: bool = False,  # NOTE: Klein models use False
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels

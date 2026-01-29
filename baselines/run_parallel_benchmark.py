@@ -331,6 +331,10 @@ def load_dataset(benchmark, base_eval_dir):
 def worker_fn(rank, world_size, args, dataset, output_dir):
     """Worker: rank r gets dataset[start_idx:end_idx]; prompt for local index i
     is benchmark prompt at global index (start_idx + i)."""
+    # Workaround for torch._inductor "duplicate template name" error
+    os.environ["TORCH_COMPILE_DISABLE"] = "1"
+    os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = "1"
+    
     total_items = len(dataset)
     items_per_gpu = math.ceil(total_items / world_size)
     start_idx = rank * items_per_gpu

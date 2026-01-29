@@ -335,12 +335,13 @@ def main():
                        help="Skip already generated images and evaluate all existing results")
     parser.add_argument("--skip-eval", action='store_true',
                        help="Skip evaluation, only generate images")
-    
+    parser.add_argument("--output_dir",type=str,default=None,
+                       help="Output directory")
     args = parser.parse_args()
     
     # Setup
     eval_dir = os.path.join(ROOT_DIR, 'eval')
-    output_dir = os.path.join(BASE_DIR, 'results', args.model, args.benchmark)
+    output_dir = args.output_dir or os.path.join(BASE_DIR, 'results', args.model, args.benchmark)
     os.makedirs(output_dir, exist_ok=True)
     
     # Load dataset

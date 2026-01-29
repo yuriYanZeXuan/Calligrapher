@@ -7,12 +7,11 @@ import argparse
 from PIL import Image
 from safetensors.torch import load_file
 from diffusers.utils import load_image
-from diffusers.models import AutoencoderKLFlux2, Flux2Transformer2DModel
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from transformers import Qwen2TokenizerFast, Qwen3ForCausalLM
 
 # Add current directory to path for local imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from models import AutoencoderKLFlux2, Flux2Transformer2DModel
 from pipeline_flux2_klein import Flux2KleinPipeline
 
 
@@ -160,7 +159,7 @@ def load_flux2_klein_pipeline(model_path, torch_dtype=torch.bfloat16, device="cu
 
 
 class FluxKleinGenerator:
-    def __init__(self, model_path="black-forest-labs/FLUX.2-klein-base-9B", device="cuda", enable_cpu_offload=True):
+    def __init__(self, model_path="black-forest-labs/FLUX.2-klein-base-9B", device="cuda", enable_cpu_offload=False):
         print("Initializing Flux-Klein pipeline...")
         self.device = device
         self.dtype = torch.bfloat16
@@ -173,7 +172,20 @@ class FluxKleinGenerator:
         )
         
         if enable_cpu_offload:
-            self.pipe.enable_model_cpu_offload()
+            # IMPORTANT: In multi-process/multi-GPU, diffusers defaults to gpu_id=0.
+            # If we don't pass the correct gpu_id, every process will offload/execute on GPU 0 -> OOM.
+            gpu_id = 0
+            if isinstance(device, str) and device.startswith("cuda:"):
+                try:
+                    gpu_id = int(device.split("cuda:")[-1])
+                except ValueError:
+                    gpu_id = 0
+            try:
+                self.pipe.enable_model_cpu_offload(gpu_id=gpu_id)
+            except TypeError:
+                # Backward compatibility for older diffusers that don't accept gpu_id.
+                # In this case, ensure the current CUDA device is set by the caller.
+                self.pipe.enable_model_cpu_offload()
             print("Flux-Klein pipeline initialized with CPU offload.")
         else:
             self.pipe.to(device)

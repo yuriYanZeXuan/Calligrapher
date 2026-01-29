@@ -17,6 +17,7 @@ import math
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.extend([
+    ROOT_DIR,
     BASE_DIR,
     os.path.join(BASE_DIR, 'textflux'),
     os.path.join(BASE_DIR, 'TextCrafter/TextCrafter_Flux'),
@@ -25,7 +26,7 @@ sys.path.extend([
     os.path.join(BASE_DIR, 'fluxfill'),
     os.path.join(BASE_DIR, 'fluxdev'),
     os.path.join(BASE_DIR, 'fluxklein'),
-    ROOT_DIR
+    os.path.join(BASE_DIR, 'glm_image'),
 ])
 
 # Model paths configuration
@@ -37,6 +38,7 @@ MODEL_PATHS = {
     'fluxklein': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein',
     'textflux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
     'textcrafter_flux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX.1-dev',
+    'glm_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/glm_image',
 }
 
 # --- Model Wrappers ---
@@ -156,7 +158,7 @@ class FluxKleinWrapper(ModelWrapper):
         self.generator = FluxKleinGenerator(
             model_path=self.model_path or MODEL_PATHS['fluxklein'],
             device=device,
-            enable_cpu_offload=True
+            enable_cpu_offload=False
         )
 
     def generate(self, prompt, output_path, **kwargs):
@@ -216,6 +218,26 @@ class TextCrafterFluxWrapper(ModelWrapper):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         image.save(output_path)
 
+class GlmImageWrapper(ModelWrapper):
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from inference_glm_image import GlmImageGenerator
+        self.generator = GlmImageGenerator(
+            model_path=self.model_path or MODEL_PATHS['glm_image'],
+            device=device
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        self.generator.generate(
+            prompt=prompt,
+            output_path=output_path,
+            seed=42,
+            num_inference_steps=50,
+            guidance_scale=1.5,
+            height=1024,
+            width=1024
+        )
+
 # Model registry
 MODELS = {
     'textflux': TextFluxWrapper,
@@ -224,7 +246,8 @@ MODELS = {
     'qwenedit': QwenEditWrapper,
     'fluxfill': FluxFillWrapper,
     'fluxdev': FluxDevWrapper,
-    'fluxklein': FluxKleinWrapper
+    'fluxklein': FluxKleinWrapper,
+    'glm_image': GlmImageWrapper
 }
 
 # --- Data Loading ---
@@ -292,10 +315,7 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
     my_dataset = dataset[start_idx:end_idx]
     if not my_dataset:
         return
-
     device = f"cuda:{rank}"
-    print(f"[GPU {rank}] Processing items {start_idx} to {end_idx} (Total: {len(my_dataset)}) on {device}")
-
     # Check if we need to generate anything in this slice
     need_generate_slice = not args.resume or any(
         not os.path.exists(os.path.join(output_dir, f"result_{item['id']}.png"))
@@ -384,12 +404,13 @@ def main():
                        help="Skip evaluation, only generate images")
     parser.add_argument("--gpus", type=int, default=8,
                        help="Number of GPUs to use")
-    
+    parser.add_argument("--output_dir",type=str,default=None,
+                       help="Output directory")
     args = parser.parse_args()
     
     # Setup
     eval_dir = os.path.join(ROOT_DIR, 'eval')
-    output_dir = os.path.join(BASE_DIR, 'results', args.model, args.benchmark)
+    output_dir = args.output_dir or os.path.join(BASE_DIR, 'results', args.model, args.benchmark)
     os.makedirs(output_dir, exist_ok=True)
     
     # Load dataset

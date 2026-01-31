@@ -4,6 +4,7 @@ Unified metrics computation for text rendering evaluation.
 """
 
 import os
+from pathlib import Path
 import sys
 import logging
 import numpy as np
@@ -34,9 +35,9 @@ class OCRMetrics:
         self.available = True
         self.logger.info(f"MinerU OCR initialized with model: {model_path}")
     
-    def compute_accuracy(self, image: Image.Image, ground_truth: str, mask: Optional[Image.Image] = None) -> float:
+    def compute_accuracy(self, image: Image.Image, ground_truth: str, mask: Optional[Image.Image] = None) -> Dict[str, float]:
         """
-        Compute character-level OCR accuracy.
+        Compute character-level OCR accuracy with two metrics.
         
         Args:
             image: Generated image
@@ -44,10 +45,12 @@ class OCRMetrics:
             mask: Optional mask for region-based evaluation
             
         Returns:
-            Accuracy score between 0 and 1
+            Dictionary with two metrics:
+            - 'ocr_acc': Accuracy normalized by ground truth length (recall-oriented)
+            - 'ocr_ned': NED normalized by max length (symmetric similarity)
         """
         if not self.available:
-            return 0.0
+            return {'ocr_acc': 0.0, 'ocr_ned': 0.0}
         
         import Levenshtein
         
@@ -66,18 +69,42 @@ class OCRMetrics:
         recognized_text=""
         blocks = self.ocr.two_step_extract(image_to_ocr)
         recognized_text = self.blocks_to_text(blocks)
+        # Log recognized text to file for debugging
+        log_dir = Path("eval_logs")
+        log_dir.mkdir(exist_ok=True)
+        log_file = log_dir / "ocr_recognized_text.log"
         
+        with open(log_file, 'a', encoding='utf-8') as f:
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{timestamp}] GT: {ground_truth} | Recognized: {recognized_text}\n")
         recognized_processed = recognized_text.replace(" ", "").lower()
         
-        # Compute accuracy
+        # Handle edge cases
         if not gt_processed:
-            return 1.0 if not recognized_processed else 0.0
+            both_empty = not recognized_processed
+            return {
+                'ocr_acc': 1.0 if both_empty else 0.0,
+                'ocr_ned': 1.0 if both_empty else 0.0
+            }
         if not recognized_processed:
-            return 0.0
+            return {'ocr_acc': 0.0, 'ocr_ned': 0.0}
         
+        # Compute edit distance
         distance = Levenshtein.distance(gt_processed, recognized_processed)
-        accuracy = 1 - (distance / len(gt_processed))
-        return max(0.0, accuracy)
+        
+        # OCR-Acc: Normalized by ground truth length (recall-oriented)
+        # 衡量"应该生成的文本有多少被正确生成了"
+        ocr_acc = 1 - (distance / len(gt_processed))
+        ocr_acc = max(0.0, ocr_acc)
+        
+        # OCR-NED: Normalized by max length (symmetric similarity, F1-style)
+        # 更对称的相似度度量，考虑了过度生成的惩罚
+        max_len = max(len(gt_processed), len(recognized_processed))
+        ocr_ned = 1 - (distance / (max_len + 1e-5))
+        ocr_ned = max(0.0, ocr_ned)
+        
+        return {'ocr_acc': ocr_acc, 'ocr_ned': ocr_ned}
     
     def compute_word_accuracy(self, image_path: str, gt_words: List[str]) -> Dict[str, Any]:
         """
@@ -112,7 +139,7 @@ class OCRMetrics:
 class DINOv2Metrics:
     """DINOv2-based feature similarity metrics."""
     
-    def __init__(self, device: str = 'cuda' if TORCH_AVAILABLE and torch.cuda.is_available() else 'cpu'):
+    def __init__(self, device: str = 'cuda'):
         """Initialize DINOv2 metrics."""
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
@@ -169,7 +196,7 @@ class DINOv2Metrics:
 class CLIPMetrics:
     """CLIP-based metrics for text-image alignment."""
     
-    def __init__(self, device: str = 'cuda' if TORCH_AVAILABLE and torch.cuda.is_available() else 'cpu'):
+    def __init__(self, device: str = 'cuda'):
         """Initialize CLIP metrics."""
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
@@ -223,7 +250,7 @@ class CLIPMetrics:
 class FIDMetrics:
     """FID (Frechet Inception Distance) metrics for distribution evaluation."""
     
-    def __init__(self, device: str = 'cuda' if TORCH_AVAILABLE and torch.cuda.is_available() else 'cpu'):
+    def __init__(self, device: str = 'cuda'):
         """Initialize FID metrics."""
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
@@ -288,31 +315,20 @@ class VLMMetrics:
         self.model = None
         self.processor = None
         
-        if not TORCH_AVAILABLE:
-            self.logger.warning("PyTorch not available. VLM metrics will be skipped.")
-            return
+        from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+        import torch
+        self.device = device
         
-        try:
-            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-            import torch
-            
-            if device == "auto":
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.device = device
-            
-            self.logger.info(f"Loading VLM model from: {model_path}")
-            self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
-            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                model_path,
-                torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
-                trust_remote_code=True
-            ).to(device).eval()
-            
-            self.available = True
-            self.logger.info(f"VLM model loaded on {device}")
-        except Exception as e:
-            self.logger.warning(f"Failed to load VLM model: {e}")
-            self.available = False
+        self.logger.info(f"Loading VLM model from: {model_path}")
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+            trust_remote_code=True
+        ).to(device).eval()
+        
+        self.available = True
+        self.logger.info(f"VLM model loaded on {device}")
     
     def _prepare_image(self, image: Image.Image) -> Image.Image:
         """Prepare image for model input."""
@@ -345,22 +361,18 @@ Please evaluate the text rendering in this image:
 
 Respond with only a number from 0 to 10.'''
         
-        try:
-            messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": text_prompt}]}]
-            text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
-            
-            with torch.no_grad():
-                outputs = self.model.generate(**inputs, max_new_tokens=10, temperature=0.1)
-            
-            response = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
-            # Extract number from response
-            import re
-            numbers = re.findall(r'\d+', response)
-            text_score = float(numbers[0]) / 10.0 if numbers else 0.5
-        except Exception as e:
-            self.logger.error(f"Text evaluation failed: {e}")
-            text_score = 0.0
+        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": text_prompt}]}]
+        text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, max_new_tokens=10, temperature=0.1)
+        
+        response = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
+        # Extract number from response
+        import re
+        numbers = re.findall(r'\d+', response)
+        text_score = float(numbers[0]) / 10.0 if numbers else 0.5
         
         # Prompt for overall image quality
         quality_prompt = '''Evaluate the overall quality of this image considering:
@@ -370,21 +382,17 @@ Respond with only a number from 0 to 10.'''
 
 Rate from 0-10, respond with only a number.'''
         
-        try:
-            messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": quality_prompt}]}]
-            text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
-            
-            with torch.no_grad():
-                outputs = self.model.generate(**inputs, max_new_tokens=10, temperature=0.1)
-            
-            response = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
-            import re
-            numbers = re.findall(r'\d+', response)
-            quality_score = float(numbers[0]) / 10.0 if numbers else 0.5
-        except Exception as e:
-            self.logger.error(f"Quality evaluation failed: {e}")
-            quality_score = 0.0
+        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": quality_prompt}]}]
+        text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, max_new_tokens=10, temperature=0.1)
+        
+        response = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
+        import re
+        numbers = re.findall(r'\d+', response)
+        quality_score = float(numbers[0]) / 10.0 if numbers else 0.5
         
         return {
             "text_accuracy": text_score,

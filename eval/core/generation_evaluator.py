@@ -309,8 +309,9 @@ class GenerationEvaluator(BaseEvaluator):
             if gt_text and isinstance(gt_text, list):
                 gt_text = ' '.join(gt_text)
             gt_text = gt_text or prompt
-            ocr_acc = self.metrics['ocr'].compute_accuracy(image, gt_text)
-            result['ocr_accuracy'] = ocr_acc
+            ocr_metrics = self.metrics['ocr'].compute_accuracy(image, gt_text)
+            result['ocr_acc'] = ocr_metrics['ocr_acc']
+            result['ocr_ned'] = ocr_metrics['ocr_ned']
             result['ground_truth'] = gt_text
         
         if 'clip' in self.metrics and self.metrics['clip'].available:

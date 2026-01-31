@@ -238,8 +238,9 @@ def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path
         
         # Evaluate OCR - no try-except, let errors propagate
         if 'ocr' in evaluators:
-            acc = evaluators['ocr'].compute_accuracy(image, gt_text)
-            result['ocr_accuracy'] = round(acc, 4)
+            ocr_metrics = evaluators['ocr'].compute_accuracy(image, gt_text)
+            result['ocr_acc'] = round(ocr_metrics['ocr_acc'], 4)
+            result['ocr_ned'] = round(ocr_metrics['ocr_ned'], 4)
         
         # Evaluate CLIP - no try-except, let errors propagate
         if 'clip' in evaluators:
@@ -293,13 +294,21 @@ def compute_summary(output_path: str) -> Dict:
     
     summary = {'total_evaluated': len(results)}
     
-    # OCR summary
-    ocr_scores = [r['ocr_accuracy'] for r in results if 'ocr_accuracy' in r]
-    if ocr_scores:
-        summary['ocr'] = {
-            'mean': round(sum(ocr_scores) / len(ocr_scores), 4),
-            'min': round(min(ocr_scores), 4),
-            'max': round(max(ocr_scores), 4)
+    # OCR summary - support both old and new format
+    ocr_acc_scores = [r.get('ocr_acc', r.get('ocr_accuracy', 0)) for r in results if 'ocr_acc' in r or 'ocr_accuracy' in r]
+    ocr_ned_scores = [r['ocr_ned'] for r in results if 'ocr_ned' in r]
+    
+    if ocr_acc_scores:
+        summary['ocr_acc'] = {
+            'mean': round(sum(ocr_acc_scores) / len(ocr_acc_scores), 4),
+            'min': round(min(ocr_acc_scores), 4),
+            'max': round(max(ocr_acc_scores), 4)
+        }
+    if ocr_ned_scores:
+        summary['ocr_ned'] = {
+            'mean': round(sum(ocr_ned_scores) / len(ocr_ned_scores), 4),
+            'min': round(min(ocr_ned_scores), 4),
+            'max': round(max(ocr_ned_scores), 4)
         }
     
     # CLIP summary
@@ -331,9 +340,12 @@ def compute_summary(output_path: str) -> Dict:
     summary['by_category'] = {}
     for cat, cat_results in categories.items():
         cat_summary = {'count': len(cat_results)}
-        cat_ocr = [r['ocr_accuracy'] for r in cat_results if 'ocr_accuracy' in r]
-        if cat_ocr:
-            cat_summary['ocr_mean'] = round(sum(cat_ocr) / len(cat_ocr), 4)
+        cat_ocr_acc = [r.get('ocr_acc', r.get('ocr_accuracy', 0)) for r in cat_results if 'ocr_acc' in r or 'ocr_accuracy' in r]
+        cat_ocr_ned = [r['ocr_ned'] for r in cat_results if 'ocr_ned' in r]
+        if cat_ocr_acc:
+            cat_summary['ocr_acc_mean'] = round(sum(cat_ocr_acc) / len(cat_ocr_acc), 4)
+        if cat_ocr_ned:
+            cat_summary['ocr_ned_mean'] = round(sum(cat_ocr_ned) / len(cat_ocr_ned), 4)
         cat_clip = [r['clip_score'] for r in cat_results if 'clip_score' in r]
         if cat_clip:
             cat_summary['clip_mean'] = round(sum(cat_clip) / len(cat_clip), 2)

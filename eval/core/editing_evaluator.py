@@ -363,8 +363,9 @@ class EditingEvaluator(BaseEvaluator):
         # OCR Accuracy (with mask if available)
         if 'ocr' in self.metrics and self.metrics['ocr'].available:
             ocr_mask = mask_img if self.use_masked_metrics else None
-            ocr_acc = self.metrics['ocr'].compute_accuracy(gen_img, prompt, mask=ocr_mask)
-            result['ocr_accuracy'] = ocr_acc
+            ocr_metrics = self.metrics['ocr'].compute_accuracy(gen_img, prompt, mask=ocr_mask)
+            result['ocr_acc'] = ocr_metrics['ocr_acc']
+            result['ocr_ned'] = ocr_metrics['ocr_ned']
         
         # DINO Similarity (with mask if available)
         if 'dino' in self.metrics and self.metrics['dino'].available and ref_img:

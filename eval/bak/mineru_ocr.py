@@ -1,34 +1,51 @@
-from typing import Iterable, Optional
+"""
+MinerU OCR 工具（transformers backend）。
 
-from mineru_vl_utils.structs import BlockType
-from mineru_vl_utils import MinerUClient
-from mineru_vl_utils import MinerULogitsProcessor
-from vllm import LLM
+按你提供的参考代码重构：
+- 彻底移除 vLLM 相关逻辑
+- 仅保留对外接口：`create_mineru_client` / `blocks_to_text`
+"""
+
+from __future__ import annotations
+
+from typing import Iterable, Optional, Any
 
 
 def create_mineru_client(model_name: str = "opendatalab/MinerU2.5-2509-1.2B"):
+    """
+    创建 MinerU OCR client（transformers backend）。
 
-    logits_processors = [MinerULogitsProcessor]
+    Args:
+        model_name: HuggingFace 模型名或本地路径
+    """
+    # 延迟导入：避免 import 本模块时因环境依赖缺失直接报错
+    from transformers import AutoProcessor, Qwen2VLForConditionalGeneration  # type: ignore
+    from mineru_vl_utils import MinerUClient  # type: ignore
 
-    # Fix for vLLM ValidationError: conflicts between 'rope_type=default' and 'type=mrope'
-    # This is a known issue with some model configs in newer vLLM versions.
-    llm_kwargs = {
-        "model": model_name,
-        "trust_remote_code": True,
-        # Explicitly disable rope scaling to avoid pydantic validation conflict
-        # "rope_scaling": None 
-    }
-    if logits_processors is not None:
-        llm_kwargs["logits_processors"] = logits_processors
-
-    llm = LLM(**llm_kwargs)
+    # for transformers>=4.56.0：dtype；更老版本：torch_dtype
+    model = Qwen2VLForConditionalGeneration.from_pretrained(
+        model_name,
+        dtype="auto",
+        device_map="auto",
+    )
+    processor = AutoProcessor.from_pretrained(
+        model_name,
+        use_fast=True,
+    )
+    # 简单粗暴修复：如果 config 缺 max_position_embeddings，直接补一个默认值
+    if not hasattr(model.config, "max_position_embeddings"):
+        model.config.max_position_embeddings = 32768
     return MinerUClient(
-        backend="vllm-engine",
-        vllm_llm=llm,
+        backend="transformers",
+        model=model,
+        processor=processor,
     )
 
 
 def blocks_to_text(blocks: Optional[Iterable]) -> str:
+    """把 MinerU 输出 blocks 提取成纯文本（用于 OCR 指标）。"""
+    from mineru_vl_utils.structs import BlockType  # type: ignore
+
     if not blocks:
         return ""
     text_types = {

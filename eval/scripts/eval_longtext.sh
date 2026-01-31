@@ -17,15 +17,15 @@ python eval/scripts/evaluate.py \
     --vlm_path "$VLM_PATH"
 
 # 评测中文结果
-python eval/scripts/evaluate.py \
-    --mode generation \
-    --benchmark eval/LongText-Bench/text_prompts_zh.jsonl \
-    --benchmark_type longtext \
-    --generated baselines/results/z_image/LongText-Bench \
-    --output eval_results/z_image_longtext_zh.json \
-    --metrics ocr clip \
-    --mineru_path "$MINERU_PATH" \
-    --vlm_path "$VLM_PATH"
+# python eval/scripts/evaluate.py \
+#     --mode generation \
+#     --benchmark eval/LongText-Bench/text_prompts_zh.jsonl \
+#     --benchmark_type longtext \
+#     --generated baselines/results/z_image/LongText-Bench \
+#     --output eval_results/z_image_longtext_zh.json \
+#     --metrics ocr clip \
+#     --mineru_path "$MINERU_PATH" \
+#     --vlm_path "$VLM_PATH"
 
 # 使用 VLM 评测（需要更多显存）
 # python eval/scripts/evaluate.py \

@@ -10,14 +10,9 @@ import numpy as np
 from typing import Optional, List, Dict, Any, Tuple
 from PIL import Image
 
-# Optional imports - only needed for specific metrics
-try:
-    import torch
-    from torchvision import transforms
-    from torch.nn.functional import cosine_similarity
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
+import torch
+from torchvision import transforms
+from torch.nn.functional import cosine_similarity
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -33,15 +28,11 @@ class OCRMetrics:
             model_path: Path to MinerU model (local path or HuggingFace model name)
         """
         self.logger = logging.getLogger(self.__class__.__name__)
-        try:
-            from eval.bak.mineru_ocr import create_mineru_client, blocks_to_text
-            self.ocr = create_mineru_client(model_name=model_path)
-            self.blocks_to_text = blocks_to_text
-            self.available = True
-            self.logger.info(f"MinerU OCR initialized with model: {model_path}")
-        except Exception as e:
-            self.logger.warning(f"Failed to initialize MinerU OCR: {e}")
-            self.available = False
+        from eval.bak.mineru_ocr import create_mineru_client, blocks_to_text
+        self.ocr = create_mineru_client(model_name=model_path)
+        self.blocks_to_text = blocks_to_text
+        self.available = True
+        self.logger.info(f"MinerU OCR initialized with model: {model_path}")
     
     def compute_accuracy(self, image: Image.Image, ground_truth: str, mask: Optional[Image.Image] = None) -> float:
         """
@@ -72,14 +63,9 @@ class OCRMetrics:
             image_to_ocr = Image.fromarray(img_np)
         else:
             image_to_ocr = image
-        
-        # Perform OCR
-        try:
-            blocks = self.ocr.two_step_extract(image_to_ocr)
-            recognized_text = self.blocks_to_text(blocks)
-        except Exception as e:
-            self.logger.error(f"OCR extraction failed: {e}")
-            recognized_text = ""
+        recognized_text=""
+        blocks = self.ocr.two_step_extract(image_to_ocr)
+        recognized_text = self.blocks_to_text(blocks)
         
         recognized_processed = recognized_text.replace(" ", "").lower()
         
@@ -107,26 +93,21 @@ class OCRMetrics:
         if not self.available:
             return {'total_words': len(gt_words), 'correct_words': 0, 'word_accuracy': 0.0}
         
-        try:
-            image = Image.open(image_path).convert("RGB")
-            blocks = self.ocr.two_step_extract(image)
-            recognized_text = self.blocks_to_text(blocks)
-            pred_words = recognized_text.lower().split()
-            
-            if not pred_words:
-                pred_words = ['']
-            
-            correct = sum(1 for word in gt_words if word in pred_words)
-            
-            return {
-                'total_words': len(gt_words),
-                'correct_words': correct,
-                'word_accuracy': correct / len(gt_words) if gt_words else 0.0
-            }
-        except Exception as e:
-            self.logger.error(f"Word accuracy computation failed: {e}")
-            return {'total_words': len(gt_words), 'correct_words': 0, 'word_accuracy': 0.0}
-
+        image = Image.open(image_path).convert("RGB")
+        blocks = self.ocr.two_step_extract(image)
+        recognized_text = self.blocks_to_text(blocks)
+        pred_words = recognized_text.lower().split()
+        
+        if not pred_words:
+            pred_words = ['']
+        
+        correct = sum(1 for word in gt_words if word in pred_words)
+        
+        return {
+            'total_words': len(gt_words),
+            'correct_words': correct,
+            'word_accuracy': correct / len(gt_words) if gt_words else 0.0
+        }
 
 class DINOv2Metrics:
     """DINOv2-based feature similarity metrics."""
@@ -135,20 +116,16 @@ class DINOv2Metrics:
         """Initialize DINOv2 metrics."""
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
-        try:
-            self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14').to(device)
-            self.model.eval()
-            self.transform = transforms.Compose([
-                transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
-                transforms.CenterCrop(224),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-            ])
-            self.available = True
-            self.logger.info(f"DINOv2 initialized on {device}")
-        except Exception as e:
-            self.logger.warning(f"Failed to initialize DINOv2: {e}")
-            self.available = False
+        self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14').to(device)
+        self.model.eval()
+        self.transform = transforms.Compose([
+            transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ])
+        self.available = True
+        self.logger.info(f"DINOv2 initialized on {device}")
     
     @torch.no_grad()
     def get_embedding(self, image: Image.Image, mask: Optional[Image.Image] = None) -> torch.Tensor:
@@ -198,15 +175,12 @@ class CLIPMetrics:
         self.device = device
         self.available = False
         
-        try:
-            import clip
-            from sklearn.preprocessing import normalize
-            self.model, self.preprocess = clip.load("ViT-L/14", device=device, jit=False)
-            self.model.eval()
-            self.available = True
-            self.logger.info("CLIP initialized successfully")
-        except ImportError:
-            self.logger.warning("CLIP not available. Install with: pip install git+https://github.com/openai/CLIP.git")
+        import clip
+        from sklearn.preprocessing import normalize
+        self.model, self.preprocess = clip.load("ViT-L/14", device=device, jit=False)
+        self.model.eval()
+        self.available = True
+        self.logger.info("CLIP initialized successfully")
     
     def compute_clip_score(self, image_path: str, text: str) -> float:
         """
@@ -222,32 +196,28 @@ class CLIPMetrics:
         if not self.available:
             return 0.0
         
-        try:
-            import clip
-            from sklearn.preprocessing import normalize
+        import clip
+        from sklearn.preprocessing import normalize
+        
+        prefix = "A photo depicts "
+        full_text = prefix + text
+        
+        image = Image.open(image_path)
+        image_input = self.preprocess(image).unsqueeze(0).to(self.device)
+        text_input = clip.tokenize([full_text], truncate=True).to(self.device)
+        
+        with torch.no_grad():
+            image_features = self.model.encode_image(image_input)
+            text_features = self.model.encode_text(text_input)
             
-            prefix = "A photo depicts "
-            full_text = prefix + text
+            # Normalize
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
             
-            image = Image.open(image_path)
-            image_input = self.preprocess(image).unsqueeze(0).to(self.device)
-            text_input = clip.tokenize([full_text], truncate=True).to(self.device)
-            
-            with torch.no_grad():
-                image_features = self.model.encode_image(image_input)
-                text_features = self.model.encode_text(text_input)
-                
-                # Normalize
-                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-                text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-                
-                similarity = (image_features @ text_features.T).item()
-                clip_score = 2.5 * max(similarity, 0)
-            
-            return clip_score
-        except Exception as e:
-            self.logger.error(f"CLIP score computation failed: {e}")
-            return 0.0
+            similarity = (image_features @ text_features.T).item()
+            clip_score = 2.5 * max(similarity, 0)
+        
+        return clip_score
 
 
 class FIDMetrics:

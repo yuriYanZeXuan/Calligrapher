@@ -137,7 +137,6 @@ def load_benchmark(benchmark_path: str, benchmark_type: str) -> List[Dict]:
     elif benchmark_type == 'cvtg':
         return load_cvtg_benchmark(benchmark_path)
     else:
-        # Generic: try to load as json
         with open(benchmark_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         if isinstance(data, list):
@@ -146,7 +145,7 @@ def load_benchmark(benchmark_path: str, benchmark_type: str) -> List[Dict]:
 
 
 def find_result_image(results_dir: str, sample_id: str) -> Optional[str]:
-    """Find result image for a sample."""
+    """Find result image for a sample. Returns None if not found."""
     results_dir = Path(results_dir)
     
     for ext in ['.png', '.jpg', '.jpeg']:
@@ -168,20 +167,14 @@ def load_existing_results(output_path: str) -> set:
     if not os.path.exists(output_path):
         return existing_ids
     
-    try:
-        with open(output_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    if 'id' in data:
-                        existing_ids.add(data['id'])
-                except json.JSONDecodeError:
-                    continue
-    except Exception as e:
-        print(f"Warning: Failed to load existing results: {e}")
+    with open(output_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            data = json.loads(line)
+            if 'id' in data:
+                existing_ids.add(data['id'])
     
     return existing_ids
 
@@ -190,15 +183,6 @@ def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path
     """Worker function for parallel evaluation."""
     import time
     time.sleep(rank * 1.0)
-    
-    # Stagger initialization
-    import torch
-    def no_op_compile(model=None, *args, **kwargs):
-        if model is None:
-            return lambda x: x
-        return model
-    torch.compile = no_op_compile
-    
     device = f"cuda:{rank}"
     
     # Data partitioning
@@ -230,9 +214,8 @@ def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path
         if not my_dataset:
             print(f"[GPU {rank}] All samples already evaluated")
             return
-        print(f"[GPU {rank}] {len(my_dataset)} samples to evaluate (skipped {len(existing_ids)})")
+        print(f"[GPU {rank}] {len(my_dataset)} samples to evaluate")
     
-    # Open output file in append mode
     import fcntl
     
     for sample in my_dataset:
@@ -246,50 +229,36 @@ def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path
             append_result(output_path, result)
             continue
         
-        # Load image
-        try:
-            image = Image.open(image_path).convert('RGB')
-        except Exception as e:
-            result['error'] = f'Failed to load image: {e}'
-            append_result(output_path, result)
-            continue
+        # Load image - no try-except, let errors propagate
+        image = Image.open(image_path).convert('RGB')
         
         # Ground truth text
         gt_text = sample.get('text', [])
         gt_text = ' '.join(gt_text) if isinstance(gt_text, list) else sample['prompt']
         
-        # Evaluate OCR
+        # Evaluate OCR - no try-except, let errors propagate
         if 'ocr' in evaluators:
-            try:
-                acc = evaluators['ocr'].compute_accuracy(image, gt_text)
-                result['ocr_accuracy'] = round(acc, 4)
-            except Exception as e:
-                result['ocr_accuracy_error'] = str(e)
+            acc = evaluators['ocr'].compute_accuracy(image, gt_text)
+            result['ocr_accuracy'] = round(acc, 4)
         
-        # Evaluate CLIP
+        # Evaluate CLIP - no try-except, let errors propagate
         if 'clip' in evaluators:
-            try:
-                score = evaluators['clip'].compute_clip_score(image_path, sample['prompt'])
-                result['clip_score'] = round(score, 2)
-            except Exception as e:
-                result['clip_score_error'] = str(e)
+            score = evaluators['clip'].compute_clip_score(image_path, sample['prompt'])
+            result['clip_score'] = round(score, 2)
         
-        # Evaluate VLM
+        # Evaluate VLM - no try-except, let errors propagate
         if 'vlm' in evaluators:
-            try:
-                vlm_result = evaluators['vlm'].evaluate_text_rendering(image, sample['prompt'])
-                result['vlm_text_accuracy'] = round(vlm_result['text_accuracy'], 4)
-                result['vlm_image_quality'] = round(vlm_result['image_quality'], 4)
-                result['vlm_overall'] = round(vlm_result['overall'], 4)
-            except Exception as e:
-                result['vlm_error'] = str(e)
+            vlm_result = evaluators['vlm'].evaluate_text_rendering(image, sample['prompt'])
+            result['vlm_text_accuracy'] = round(vlm_result['text_accuracy'], 4)
+            result['vlm_image_quality'] = round(vlm_result['image_quality'], 4)
+            result['vlm_overall'] = round(vlm_result['overall'], 4)
         
         # Additional metadata
         result['prompt'] = sample['prompt']
         result['category'] = sample.get('category', '')
         result['image_path'] = image_path
         
-        # Append to output file (with file locking for safety)
+        # Append to output file
         append_result(output_path, result)
         
         if args.verbose:
@@ -303,13 +272,10 @@ def append_result(output_path: str, result: Dict):
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     
     with open(output_path, 'a', encoding='utf-8') as f:
-        # Acquire exclusive lock
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        try:
-            f.write(json.dumps(result, ensure_ascii=False) + '\n')
-            f.flush()
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        f.write(json.dumps(result, ensure_ascii=False) + '\n')
+        f.flush()
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def compute_summary(output_path: str) -> Dict:
@@ -320,10 +286,7 @@ def compute_summary(output_path: str) -> Dict:
             line = line.strip()
             if not line:
                 continue
-            try:
-                results.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+            results.append(json.loads(line))
     
     if not results:
         return {}
@@ -382,7 +345,6 @@ def compute_summary(output_path: str) -> Dict:
 def main():
     parser = argparse.ArgumentParser(description='Parallel evaluation with multi-GPU support')
     
-    # Required arguments
     parser.add_argument('--results_dir', type=str, required=True,
                        help='Directory containing generated images')
     parser.add_argument('--benchmark', type=str, required=True,
@@ -392,27 +354,17 @@ def main():
                        help='Benchmark type')
     parser.add_argument('--output', type=str, required=True,
                        help='Output JSONL file path')
-    
-    # Model paths
     parser.add_argument('--mineru_path', type=str, default=DEFAULT_MINERU_PATH,
                        help='Path to local MinerU VLM model')
     parser.add_argument('--vlm_path', type=str, default=DEFAULT_VLM_PATH,
                        help='Path to local Qwen2.5-VL model')
-    
-    # Metrics
     parser.add_argument('--metrics', nargs='+', default=['ocr', 'clip'],
                        choices=['ocr', 'clip', 'vlm'],
                        help='Metrics to compute')
-    
-    # Parallel settings
     parser.add_argument('--gpus', type=int, default=8,
                        help='Number of GPUs to use')
-    
-    # Resume
     parser.add_argument('--resume', action='store_true',
-                       help='Resume from existing output file (skip already evaluated)')
-    
-    # Other
+                       help='Resume from existing output file')
     parser.add_argument('--verbose', action='store_true',
                        help='Print progress for each sample')
     
@@ -481,7 +433,6 @@ def main():
 
 
 if __name__ == '__main__':
-    # Workaround for torch.compile issues
     os.environ["TORCH_COMPILE_DISABLE"] = "1"
     os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = "1"
     main()

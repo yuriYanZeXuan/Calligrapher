@@ -278,7 +278,7 @@ def main():
                         help='Output file path for results')
     
     # Device settings
-    parser.add_argument('--device', type=str,
+    parser.add_argument('--device', default="cuda",type=str,
                         choices=['auto', 'cuda', 'cpu'],
                         help='Device for model inference')
     
@@ -302,21 +302,14 @@ def main():
         parser.print_help()
         return 1
     
-    # Run evaluation based on mode
-    try:
-        if args.mode == 'generation':
-            run_generation_eval(config)
-        elif args.mode == 'editing':
-            run_editing_eval(config)
+    if args.mode == 'generation':
+        run_generation_eval(config)
+    elif args.mode == 'editing':
+        run_editing_eval(config)
+    
+    print("\n✓ Evaluation completed successfully!")
+    return 0
         
-        print("\n✓ Evaluation completed successfully!")
-        return 0
-        
-    except Exception as e:
-        print(f"\n✗ Evaluation failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
 
 
 if __name__ == '__main__':

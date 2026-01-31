@@ -26,15 +26,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class OCRMetrics:
     """OCR-based metrics for text accuracy evaluation."""
     
-    def __init__(self, model_name: str = "opendatalab/MinerU2.5-2509-1.2B"):
-        """Initialize OCR metrics with MinerU."""
+    def __init__(self, model_path: str = "opendatalab/MinerU2.5-2509-1.2B"):
+        """Initialize OCR metrics with MinerU.
+        
+        Args:
+            model_path: Path to MinerU model (local path or HuggingFace model name)
+        """
         self.logger = logging.getLogger(self.__class__.__name__)
         try:
             from eval.bak.mineru_ocr import create_mineru_client, blocks_to_text
-            self.ocr = create_mineru_client(model_name=model_name)
+            self.ocr = create_mineru_client(model_name=model_path)
             self.blocks_to_text = blocks_to_text
             self.available = True
-            self.logger.info("MinerU OCR initialized successfully")
+            self.logger.info(f"MinerU OCR initialized with model: {model_path}")
         except Exception as e:
             self.logger.warning(f"Failed to initialize MinerU OCR: {e}")
             self.available = False
@@ -295,50 +299,150 @@ class FIDMetrics:
 
 
 class VLMMetrics:
-    """Vision-Language Model based metrics for aesthetic and quality evaluation."""
+    """Vision-Language Model based metrics for text rendering quality evaluation.
     
-    def __init__(self, api_key: Optional[str] = None):
-        """Initialize VLM metrics."""
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.api_key = api_key or os.environ.get("API_KEY")
-        self.available = self.api_key is not None
+    Uses local Qwen2.5-VL model for evaluation.
+    """
+    
+    def __init__(self, model_path: str = "Qwen/Qwen2.5-VL-7B-Instruct", device: str = "auto"):
+        """Initialize VLM metrics with local model.
         
-        if not self.available:
-            self.logger.warning("API_KEY not set. VLM metrics will be skipped.")
-    
-    def evaluate_aesthetic(self, image: Image.Image, ref_image: Optional[Image.Image] = None) -> float:
+        Args:
+            model_path: Path to local VLM model (e.g., /path/to/Qwen2.5-VL-7B)
+            device: Device for inference ('auto', 'cuda', 'cpu')
         """
-        Evaluate aesthetic quality using VLM.
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.model_path = model_path
+        self.device = device
+        self.available = False
+        self.model = None
+        self.processor = None
+        
+        if not TORCH_AVAILABLE:
+            self.logger.warning("PyTorch not available. VLM metrics will be skipped.")
+            return
+        
+        try:
+            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+            import torch
+            
+            if device == "auto":
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.device = device
+            
+            self.logger.info(f"Loading VLM model from: {model_path}")
+            self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+                trust_remote_code=True
+            ).to(device).eval()
+            
+            self.available = True
+            self.logger.info(f"VLM model loaded on {device}")
+        except Exception as e:
+            self.logger.warning(f"Failed to load VLM model: {e}")
+            self.available = False
+    
+    def _prepare_image(self, image: Image.Image) -> Image.Image:
+        """Prepare image for model input."""
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        return image
+    
+    def evaluate_text_rendering(self, image: Image.Image, prompt: str) -> Dict[str, Any]:
+        """Evaluate text rendering quality using VLM.
         
         Args:
             image: Generated image
-            ref_image: Optional reference image
+            prompt: Original text prompt
             
         Returns:
-            Aesthetic score
+            Dictionary with scores for text accuracy and image quality
         """
         if not self.available:
-            return 0.0
+            return {"text_accuracy": 0.0, "image_quality": 0.0, "overall": 0.0}
         
-        # Placeholder for actual VLM implementation
-        # This would call an API like GPT-4V, Qwen-VL, etc.
-        self.logger.warning("VLM aesthetic evaluation not fully implemented")
-        return 0.0
+        image = self._prepare_image(image)
+        
+        # Prompt for text accuracy evaluation
+        text_prompt = f'''You are evaluating an AI-generated image. The prompt was: "{prompt}"
+
+Please evaluate the text rendering in this image:
+1. Are all the texts from the prompt correctly rendered?
+2. Are there any spelling errors, missing text, or garbled text?
+3. Rate the text rendering quality from 0-10, where 10 means perfect text rendering.
+
+Respond with only a number from 0 to 10.'''
+        
+        try:
+            messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": text_prompt}]}]
+            text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
+            
+            with torch.no_grad():
+                outputs = self.model.generate(**inputs, max_new_tokens=10, temperature=0.1)
+            
+            response = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
+            # Extract number from response
+            import re
+            numbers = re.findall(r'\d+', response)
+            text_score = float(numbers[0]) / 10.0 if numbers else 0.5
+        except Exception as e:
+            self.logger.error(f"Text evaluation failed: {e}")
+            text_score = 0.0
+        
+        # Prompt for overall image quality
+        quality_prompt = '''Evaluate the overall quality of this image considering:
+1. Image clarity and sharpness
+2. Visual coherence and aesthetics
+3. Proper rendering of all elements
+
+Rate from 0-10, respond with only a number.'''
+        
+        try:
+            messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": quality_prompt}]}]
+            text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
+            
+            with torch.no_grad():
+                outputs = self.model.generate(**inputs, max_new_tokens=10, temperature=0.1)
+            
+            response = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
+            import re
+            numbers = re.findall(r'\d+', response)
+            quality_score = float(numbers[0]) / 10.0 if numbers else 0.5
+        except Exception as e:
+            self.logger.error(f"Quality evaluation failed: {e}")
+            quality_score = 0.0
+        
+        return {
+            "text_accuracy": text_score,
+            "image_quality": quality_score,
+            "overall": (text_score + quality_score) / 2
+        }
+    
+    def evaluate_aesthetic(self, image: Image.Image) -> float:
+        """Evaluate aesthetic quality using VLM.
+        
+        Args:
+            image: Generated image
+            
+        Returns:
+            Aesthetic score (0-1)
+        """
+        result = self.evaluate_text_rendering(image, "")
+        return result.get("image_quality", 0.0)
     
     def evaluate_text_match(self, image: Image.Image, text: str) -> float:
-        """
-        Evaluate text-image match using VLM.
+        """Evaluate text-image match using VLM.
         
         Args:
             image: Generated image
             text: Text prompt
             
         Returns:
-            Text match score
+            Text match score (0-1)
         """
-        if not self.available:
-            return 0.0
-        
-        # Placeholder for actual VLM implementation
-        self.logger.warning("VLM text match evaluation not fully implemented")
-        return 0.0
+        result = self.evaluate_text_rendering(image, text)
+        return result.get("text_accuracy", 0.0)

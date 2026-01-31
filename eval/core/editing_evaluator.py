@@ -45,6 +45,8 @@ class EditingEvaluator(BaseEvaluator):
                 - device: Device for model inference ('cuda' or 'cpu')
                 - mask_required: Whether mask is required (default: True)
                 - use_masked_metrics: Whether to apply mask in metric computation
+                - mineru_path: Path to local MinerU model
+                - vlm_path: Path to local VLM model
         """
         super().__init__(config)
         
@@ -52,6 +54,8 @@ class EditingEvaluator(BaseEvaluator):
         self.device = config.get('device', 'cuda' if self._check_cuda() else 'cpu')
         self.mask_required = config.get('mask_required', True)
         self.use_masked_metrics = config.get('use_masked_metrics', True)
+        self.mineru_path = config.get('mineru_path', 'opendatalab/MinerU2.5-2509-1.2B')
+        self.vlm_path = config.get('vlm_path', 'Qwen/Qwen2.5-VL-7B-Instruct')
         
         # Initialize metrics
         self._init_metrics()
@@ -69,7 +73,7 @@ class EditingEvaluator(BaseEvaluator):
         self.metrics = {}
         
         if 'ocr' in self.metrics_config:
-            self.metrics['ocr'] = OCRMetrics()
+            self.metrics['ocr'] = OCRMetrics(model_path=self.mineru_path)
         
         if 'dino' in self.metrics_config:
             self.metrics['dino'] = DINOv2Metrics(device=self.device)
@@ -81,7 +85,7 @@ class EditingEvaluator(BaseEvaluator):
             self.metrics['fid'] = FIDMetrics(device=self.device)
         
         if 'vlm' in self.metrics_config:
-            self.metrics['vlm'] = VLMMetrics()
+            self.metrics['vlm'] = VLMMetrics(model_path=self.vlm_path, device=self.device)
     
     def load_benchmark(self, benchmark_path: str) -> List[Dict]:
         """

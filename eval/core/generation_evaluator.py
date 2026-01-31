@@ -39,12 +39,16 @@ class GenerationEvaluator(BaseEvaluator):
                 - metrics: List of metrics to compute ['ocr', 'clip', 'dino', 'vlm']
                 - device: Device for model inference ('cuda' or 'cpu')
                 - benchmark_type: Type of benchmark ('oneig', 'cvtg', 'longtext')
+                - mineru_path: Path to local MinerU model
+                - vlm_path: Path to local VLM model
         """
         super().__init__(config)
         
         self.metrics_config = config.get('metrics', ['ocr', 'clip'])
         self.device = config.get('device', 'cuda' if self._check_cuda() else 'cpu')
         self.benchmark_type = config.get('benchmark_type', 'oneig')
+        self.mineru_path = config.get('mineru_path', 'opendatalab/MinerU2.5-2509-1.2B')
+        self.vlm_path = config.get('vlm_path', 'Qwen/Qwen2.5-VL-7B-Instruct')
         
         # Initialize metrics
         self._init_metrics()
@@ -62,7 +66,7 @@ class GenerationEvaluator(BaseEvaluator):
         self.metrics = {}
         
         if 'ocr' in self.metrics_config:
-            self.metrics['ocr'] = OCRMetrics()
+            self.metrics['ocr'] = OCRMetrics(model_path=self.mineru_path)
         
         if 'dino' in self.metrics_config:
             self.metrics['dino'] = DINOv2Metrics(device=self.device)
@@ -71,7 +75,7 @@ class GenerationEvaluator(BaseEvaluator):
             self.metrics['clip'] = CLIPMetrics(device=self.device)
         
         if 'vlm' in self.metrics_config:
-            self.metrics['vlm'] = VLMMetrics()
+            self.metrics['vlm'] = VLMMetrics(model_path=self.vlm_path, device=self.device)
     
     def load_benchmark(self, benchmark_path: str) -> List[Dict]:
         """
@@ -159,30 +163,49 @@ class GenerationEvaluator(BaseEvaluator):
         """Load LongText-Bench format data."""
         samples = []
         
+        # Support both .json and .jsonl files
+        json_files = []
         if benchmark_path.is_file():
-            with open(benchmark_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            for item in data:
-                samples.append({
-                    'id': item.get('id', ''),
-                    'prompt': item.get('prompt', ''),
-                    'text_length': item.get('text_length', 0),
-                    'category': item.get('category', '')
-                })
+            json_files = [benchmark_path]
         else:
-            # Load from directory
-            for json_file in benchmark_path.glob('*.json'):
-                with open(json_file, 'r', encoding='utf-8') as f:
+            json_files = list(benchmark_path.glob('*.json')) + list(benchmark_path.glob('*.jsonl'))
+        
+        for json_file in json_files:
+            # Detect language prefix from filename
+            lang_prefix = 'zh' if 'zh' in json_file.name else 'en'
+            
+            with open(json_file, 'r', encoding='utf-8') as f:
+                if json_file.suffix == '.jsonl':
+                    # JSONL format: one JSON object per line
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        item = json.loads(line)
+                        prompt_id = item.get('prompt_id', len(samples))
+                        sample_id = item.get('id') or f"longtext_{lang_prefix}_{prompt_id}"
+                        samples.append({
+                            'id': sample_id,
+                            'prompt': item.get('prompt', ''),
+                            'text': item.get('text', []),
+                            'text_length': item.get('text_length', 0),
+                            'category': item.get('category', ''),
+                            'length': item.get('length', '')
+                        })
+                else:
+                    # JSON format: array of objects
                     data = json.load(f)
-                
-                for item in data:
-                    samples.append({
-                        'id': item.get('id', ''),
-                        'prompt': item.get('prompt', ''),
-                        'text_length': item.get('text_length', 0),
-                        'category': item.get('category', '')
-                    })
+                    for item in data:
+                        prompt_id = item.get('prompt_id', len(samples))
+                        sample_id = item.get('id') or f"longtext_{lang_prefix}_{prompt_id}"
+                        samples.append({
+                            'id': sample_id,
+                            'prompt': item.get('prompt', ''),
+                            'text': item.get('text', []),
+                            'text_length': item.get('text_length', 0),
+                            'category': item.get('category', ''),
+                            'length': item.get('length', '')
+                        })
         
         self.logger.info(f"Loaded {len(samples)} samples from LongText-Bench")
         return samples
@@ -281,8 +304,14 @@ class GenerationEvaluator(BaseEvaluator):
         
         # Compute metrics
         if 'ocr' in self.metrics and self.metrics['ocr'].available:
-            ocr_acc = self.metrics['ocr'].compute_accuracy(image, prompt)
+            # Use 'text' field as ground truth for LongText-Bench, otherwise use prompt
+            gt_text = sample.get('text')
+            if gt_text and isinstance(gt_text, list):
+                gt_text = ' '.join(gt_text)
+            gt_text = gt_text or prompt
+            ocr_acc = self.metrics['ocr'].compute_accuracy(image, gt_text)
             result['ocr_accuracy'] = ocr_acc
+            result['ground_truth'] = gt_text
         
         if 'clip' in self.metrics and self.metrics['clip'].available:
             clip_score = self.metrics['clip'].compute_clip_score(image_path, prompt)

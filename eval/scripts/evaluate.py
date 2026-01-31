@@ -125,6 +125,10 @@ def build_config(args) -> dict:
     if args.filter_categories:
         config.setdefault('benchmark', {})['filter_categories'] = args.filter_categories
     
+    # Local model paths
+    config['mineru_path'] = args.mineru_path
+    config['vlm_path'] = args.vlm_path
+    
     return config
 
 
@@ -159,6 +163,8 @@ def run_generation_eval(config: dict):
         'metrics': config.get('metrics', ['ocr', 'clip']),
         'device': config.get('device', {}).get('type', 'auto'),
         'benchmark_type': config.get('benchmark', {}).get('type', 'oneig'),
+        'mineru_path': config.get('mineru_path'),
+        'vlm_path': config.get('vlm_path'),
     }
     
     evaluator = GenerationEvaluator(evaluator_config)
@@ -201,6 +207,8 @@ def run_editing_eval(config: dict):
         'mask_required': config.get('mask', {}).get('required', True),
         'use_masked_metrics': config.get('mask', {}).get('use_masked_metrics', True),
         'benchmark_dir': config['benchmark']['path'],
+        'mineru_path': config.get('mineru_path'),
+        'vlm_path': config.get('vlm_path'),
     }
     
     evaluator = EditingEvaluator(evaluator_config)
@@ -273,6 +281,14 @@ def main():
     parser.add_argument('--device', type=str,
                         choices=['auto', 'cuda', 'cpu'],
                         help='Device for model inference')
+    
+    # Local model paths
+    parser.add_argument('--mineru_path', type=str,
+                        default='/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/MinerU_VLM',
+                        help='Path to local MinerU VLM model for OCR')
+    parser.add_argument('--vlm_path', type=str,
+                        default='/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B',
+                        help='Path to local VLM model (Qwen2.5-VL)')
     
     args = parser.parse_args()
     

@@ -427,7 +427,7 @@ Rate from 0-10, respond with only a number.'''
 
 
 class VQAScoreMetrics:
-    """VQA Score metrics using t2v_metrics library."""
+    """VQA Score metrics using local VQAScore implementation."""
     
     def __init__(self, model: str = 'clip-flant5-xxl', device: str = 'cuda', cache_dir: Optional[str] = None):
         """Initialize VQA Score metrics.
@@ -435,22 +435,16 @@ class VQAScoreMetrics:
         Args:
             model: VQA model name (default: 'clip-flant5-xxl')
             device: Device for inference
-            cache_dir: Optional cache directory for model weights
+            cache_dir: Optional cache directory for model weights (not used, for compatibility)
         """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
         self.available = False
         
-        import t2v_metrics
+        # Import local VQAScore from TextCrafter_Eval
+        from eval.TextCrafter_Eval.vqascore import VQAScore
         
-        # Get cache directory from environment or parameter
-        if cache_dir is None:
-            cache_dir = os.environ.get('HF_HOME', None)
-        
-        if cache_dir:
-            self.vqa_model = t2v_metrics.VQAScore(model=model, cache_dir=cache_dir)
-        else:
-            self.vqa_model = t2v_metrics.VQAScore(model=model)
+        self.vqa_model = VQAScore(model=model, device=device)
         
         self.available = True
         self.logger.info(f"VQAScore initialized with model: {model}")
@@ -468,12 +462,8 @@ class VQAScoreMetrics:
         if not self.available:
             return 0.0
         
-        try:
-            score = self.vqa_model(images=[image_path], texts=[text])
-            return float(score.cpu().numpy().mean())
-        except Exception as e:
-            self.logger.error(f"VQA score computation failed for {image_path}: {e}")
-            return 0.0
+        score = self.vqa_model(images=[image_path], texts=[text])
+        return float(score.cpu().numpy().mean())
     
     def compute_batch(self, image_paths: List[str], texts: List[str]) -> List[float]:
         """Compute VQA Score for multiple image-text pairs.

@@ -86,19 +86,14 @@ class UnifiedMetricsEvaluator:
             self.openclip_available = False
             logging.warning("OpenCLIP not available, Aesthetic will be skipped")
         
-        # Try to import t2v_metrics
+        # Import local VQAScore
         try:
-            import t2v_metrics
-            # Get cache directory (if set)
-            cache_dir = os.environ.get('HF_HOME', None)
-            if cache_dir:
-                self.models['vqa'] = t2v_metrics.VQAScore(model='clip-flant5-xxl', cache_dir=cache_dir)
-            else:
-                self.models['vqa'] = t2v_metrics.VQAScore(model='clip-flant5-xxl')
+            from .vqascore import VQAScore
+            self.models['vqa'] = VQAScore(model='clip-flant5-xxl', device=self.device)
             self.t2v_available = True
         except ImportError:
             self.t2v_available = False
-            logging.warning("t2v_metrics not available, VQAScore will be skipped")
+            logging.warning("VQAScore not available, VQAScore metric will be skipped")
 
     def _load_aesthetic_model(self):
         """Load aesthetic evaluation model"""

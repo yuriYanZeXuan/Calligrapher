@@ -7,7 +7,15 @@ This module provides unified evaluation capabilities for text rendering generati
 from .base_evaluator import BaseEvaluator
 from .generation_evaluator import GenerationEvaluator
 from .editing_evaluator import EditingEvaluator
-from .metrics import OCRMetrics, DINOv2Metrics, FIDMetrics, VLMMetrics, CLIPMetrics
+from .metrics import (
+    OCRMetrics, 
+    DINOv2Metrics, 
+    FIDMetrics, 
+    VLMMetrics, 
+    CLIPMetrics,
+    VQAScoreMetrics,
+    AestheticScoreMetrics
+)
 
 __all__ = [
     'BaseEvaluator',
@@ -18,4 +26,6 @@ __all__ = [
     'FIDMetrics',
     'VLMMetrics',
     'CLIPMetrics',
+    'VQAScoreMetrics',
+    'AestheticScoreMetrics',
 ]

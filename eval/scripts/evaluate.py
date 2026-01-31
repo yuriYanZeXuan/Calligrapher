@@ -270,7 +270,7 @@ def main():
     
     # Metrics
     parser.add_argument('--metrics', nargs='+',
-                        choices=['ocr', 'clip', 'dino', 'fid', 'vlm'],
+                        choices=['ocr', 'clip', 'dino', 'fid', 'vlm', 'vqa', 'aesthetic'],
                         help='Metrics to compute')
     
     # Output settings

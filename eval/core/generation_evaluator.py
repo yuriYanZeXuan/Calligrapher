@@ -17,7 +17,7 @@ from PIL import Image
 import pandas as pd
 
 from .base_evaluator import BaseEvaluator
-from .metrics import OCRMetrics, DINOv2Metrics, CLIPMetrics, VLMMetrics
+from .metrics import OCRMetrics, DINOv2Metrics, CLIPMetrics, VLMMetrics, VQAScoreMetrics, AestheticScoreMetrics
 
 
 class GenerationEvaluator(BaseEvaluator):
@@ -76,6 +76,12 @@ class GenerationEvaluator(BaseEvaluator):
         
         if 'vlm' in self.metrics_config:
             self.metrics['vlm'] = VLMMetrics(model_path=self.vlm_path, device=self.device)
+            
+        if 'vqa' in self.metrics_config:
+            self.metrics['vqa'] = VQAScoreMetrics(device=self.device)
+            
+        if 'aesthetic' in self.metrics_config:
+            self.metrics['aesthetic'] = AestheticScoreMetrics(device=self.device)
     
     def load_benchmark(self, benchmark_path: str) -> List[Dict]:
         """
@@ -317,6 +323,14 @@ class GenerationEvaluator(BaseEvaluator):
         if 'clip' in self.metrics and self.metrics['clip'].available:
             clip_score = self.metrics['clip'].compute_clip_score(image_path, prompt)
             result['clip_score'] = clip_score
+            
+        if 'vqa' in self.metrics and self.metrics['vqa'].available:
+            vqa_score = self.metrics['vqa'].compute_score(image_path, prompt)
+            result['vqa_score'] = vqa_score
+            
+        if 'aesthetic' in self.metrics and self.metrics['aesthetic'].available:
+            aes_score = self.metrics['aesthetic'].compute_score(image_path)
+            result['aesthetic_score'] = aes_score
         
         # DINO and VLM require reference images (not available in generation benchmarks)
         # These are skipped for pure generation tasks

@@ -197,7 +197,7 @@ def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path
         return
     
     # Initialize evaluators
-    from eval.core.metrics import OCRMetrics, CLIPMetrics, VLMMetrics
+    from eval.core.metrics import OCRMetrics, CLIPMetrics, VLMMetrics, VQAScoreMetrics, AestheticScoreMetrics
     
     evaluators = {}
     if 'ocr' in args.metrics:
@@ -206,6 +206,10 @@ def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path
         evaluators['clip'] = CLIPMetrics(device=device)
     if 'vlm' in args.metrics:
         evaluators['vlm'] = VLMMetrics(model_path=args.vlm_path, device=device)
+    if 'vqa' in args.metrics:
+        evaluators['vqa'] = VQAScoreMetrics(device=device)
+    if 'aesthetic' in args.metrics:
+        evaluators['aesthetic'] = AestheticScoreMetrics(device=device)
     
     # Resume: filter already evaluated samples
     if args.resume:
@@ -254,6 +258,16 @@ def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path
             result['vlm_image_quality'] = round(vlm_result['image_quality'], 4)
             result['vlm_overall'] = round(vlm_result['overall'], 4)
         
+        # Evaluate VQA - no try-except, let errors propagate
+        if 'vqa' in evaluators:
+            score = evaluators['vqa'].compute_score(image_path, sample['prompt'])
+            result['vqa_score'] = round(score, 4)
+
+        # Evaluate Aesthetic - no try-except, let errors propagate
+        if 'aesthetic' in evaluators:
+            score = evaluators['aesthetic'].compute_score(image_path)
+            result['aesthetic_score'] = round(score, 4)
+        
         # Additional metadata
         result['prompt'] = sample['prompt']
         result['category'] = sample.get('category', '')
@@ -287,7 +301,11 @@ def compute_summary(output_path: str) -> Dict:
             line = line.strip()
             if not line:
                 continue
-            results.append(json.loads(line))
+            try:
+                results.append(json.loads(line))
+            except json.JSONDecodeError:
+                print(f"Warning: Skipping invalid JSON line in {line}")
+                continue
     
     if not results:
         return {}
@@ -328,6 +346,24 @@ def compute_summary(output_path: str) -> Dict:
             'min': round(min(vlm_scores), 4),
             'max': round(max(vlm_scores), 4)
         }
+
+    # VQA summary
+    vqa_scores = [r['vqa_score'] for r in results if 'vqa_score' in r]
+    if vqa_scores:
+        summary['vqa'] = {
+            'mean': round(sum(vqa_scores) / len(vqa_scores), 4),
+            'min': round(min(vqa_scores), 4),
+            'max': round(max(vqa_scores), 4)
+        }
+
+    # Aesthetic summary
+    aesthetic_scores = [r['aesthetic_score'] for r in results if 'aesthetic_score' in r]
+    if aesthetic_scores:
+        summary['aesthetic'] = {
+            'mean': round(sum(aesthetic_scores) / len(aesthetic_scores), 4),
+            'min': round(min(aesthetic_scores), 4),
+            'max': round(max(aesthetic_scores), 4)
+        }
     
     # Category-wise
     categories = {}
@@ -349,6 +385,15 @@ def compute_summary(output_path: str) -> Dict:
         cat_clip = [r['clip_score'] for r in cat_results if 'clip_score' in r]
         if cat_clip:
             cat_summary['clip_mean'] = round(sum(cat_clip) / len(cat_clip), 2)
+        
+        cat_vqa = [r['vqa_score'] for r in cat_results if 'vqa_score' in r]
+        if cat_vqa:
+            cat_summary['vqa_mean'] = round(sum(cat_vqa) / len(cat_vqa), 4)
+            
+        cat_aesthetic = [r['aesthetic_score'] for r in cat_results if 'aesthetic_score' in r]
+        if cat_aesthetic:
+            cat_summary['aesthetic_mean'] = round(sum(cat_aesthetic) / len(cat_aesthetic), 4)
+            
         summary['by_category'][cat] = cat_summary
     
     return summary
@@ -371,7 +416,7 @@ def main():
     parser.add_argument('--vlm_path', type=str, default=DEFAULT_VLM_PATH,
                        help='Path to local Qwen2.5-VL model')
     parser.add_argument('--metrics', nargs='+', default=['ocr', 'clip'],
-                       choices=['ocr', 'clip', 'vlm'],
+                       choices=['ocr', 'clip', 'vlm', 'vqa', 'aesthetic'],
                        help='Metrics to compute')
     parser.add_argument('--gpus', type=int, default=8,
                        help='Number of GPUs to use')

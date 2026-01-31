@@ -77,3 +77,49 @@ def blocks_to_text(blocks: Optional[Iterable]) -> str:
         if block_type in text_types and content:
             parts.append(content)
     return " ".join(parts)
+
+
+def main():
+    """调试 MinerU 功能的主函数"""
+    import argparse
+    from pathlib import Path
+    
+    parser = argparse.ArgumentParser(description="调试 MinerU OCR 功能")
+    parser.add_argument("--image_path", type=str, help="输入图片路径")
+    parser.add_argument("--model", type=str, default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/MinerU_VLM", help="模型名称")
+    parser.add_argument("--device", type=str, default="cuda", help="设备 (cuda/cpu)")
+    args = parser.parse_args()
+    
+    # 检查图片是否存在
+    image_path = Path(args.image_path)
+    if not image_path.exists():
+        print(f"错误: 图片文件不存在: {image_path}")
+        return
+    
+    print(f"加载模型: {args.model}")
+    print(f"使用设备: {args.device}")
+    
+    # 初始化客户端
+    client = create_mineru_client(model_name=args.model)
+    
+    print(f"\n处理图片: {image_path}")
+    
+    # 执行 OCR
+    from PIL import Image
+    image = Image.open(str(image_path))
+    result = client.two_step_extract(image)
+    
+    # 提取文本
+    text = blocks_to_text(result)
+    
+    print("\n" + "="*50)
+    print("OCR 结果:")
+    print("="*50)
+    print(text)
+    print("="*50)
+    
+    # 打印详细的 blocks 信息
+
+
+if __name__ == "__main__":
+    main()

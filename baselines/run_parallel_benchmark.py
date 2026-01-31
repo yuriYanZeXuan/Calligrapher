@@ -42,7 +42,7 @@ MODEL_PATHS = {
     'textcrafter_flux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX.1-dev',
     'glm_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/glm_image',
     'z_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
-    'qwenimage': 'Qwen/Qwen-Image',
+    'qwenimage': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen-image-2512',
 }
 
 # --- Model Wrappers ---

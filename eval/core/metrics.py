@@ -424,3 +424,187 @@ Rate from 0-10, respond with only a number.'''
         """
         result = self.evaluate_text_rendering(image, text)
         return result.get("text_accuracy", 0.0)
+
+
+class VQAScoreMetrics:
+    """VQA Score metrics using t2v_metrics library."""
+    
+    def __init__(self, model: str = 'clip-flant5-xxl', device: str = 'cuda', cache_dir: Optional[str] = None):
+        """Initialize VQA Score metrics.
+        
+        Args:
+            model: VQA model name (default: 'clip-flant5-xxl')
+            device: Device for inference
+            cache_dir: Optional cache directory for model weights
+        """
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.device = device
+        self.available = False
+        
+        import t2v_metrics
+        
+        # Get cache directory from environment or parameter
+        if cache_dir is None:
+            cache_dir = os.environ.get('HF_HOME', None)
+        
+        if cache_dir:
+            self.vqa_model = t2v_metrics.VQAScore(model=model, cache_dir=cache_dir)
+        else:
+            self.vqa_model = t2v_metrics.VQAScore(model=model)
+        
+        self.available = True
+        self.logger.info(f"VQAScore initialized with model: {model}")
+    
+    def compute_score(self, image_path: str, text: str) -> float:
+        """Compute VQA Score for image-text pair.
+        
+        Args:
+            image_path: Path to image file
+            text: Text prompt
+            
+        Returns:
+            VQA score (typically 0-1)
+        """
+        if not self.available:
+            return 0.0
+        
+        try:
+            score = self.vqa_model(images=[image_path], texts=[text])
+            return float(score.cpu().numpy().mean())
+        except Exception as e:
+            self.logger.error(f"VQA score computation failed for {image_path}: {e}")
+            return 0.0
+    
+    def compute_batch(self, image_paths: List[str], texts: List[str]) -> List[float]:
+        """Compute VQA Score for multiple image-text pairs.
+        
+        Args:
+            image_paths: List of image file paths
+            texts: List of text prompts
+            
+        Returns:
+            List of VQA scores
+        """
+        if not self.available:
+            return [0.0] * len(image_paths)
+        
+        scores = self.vqa_model(images=image_paths, texts=texts)
+        return scores.cpu().numpy().tolist()
+
+
+class AestheticScoreMetrics:
+    """Aesthetic Score metrics using OpenCLIP + linear predictor."""
+    
+    def __init__(self, device: str = 'cuda', cache_dir: Optional[str] = None):
+        """Initialize Aesthetic Score metrics.
+        
+        Args:
+            device: Device for inference
+            cache_dir: Optional cache directory for model weights
+        """
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.device = device
+        self.available = False
+        
+        import open_clip
+        import torch.nn as nn
+        
+        # Get cache directory from environment or parameter
+        if cache_dir is None:
+            cache_dir = os.environ.get('HF_HOME', None)
+        
+        # Load OpenCLIP model
+        if cache_dir:
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                'ViT-L-14', pretrained='openai', cache_dir=cache_dir)
+        else:
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                'ViT-L-14', pretrained='openai')
+        
+        model.to(self.device)
+        model.eval()
+        self.openclip_model = model
+        self.preprocess = preprocess
+        
+        # Load aesthetic predictor
+        aesthetic_model = self._load_aesthetic_predictor()
+        if aesthetic_model:
+            self.aesthetic_predictor = aesthetic_model
+            self.available = True
+            self.logger.info("Aesthetic Score initialized with OpenCLIP ViT-L-14")
+        else:
+            self.logger.warning("Aesthetic predictor model not found")
+                
+    
+    def _load_aesthetic_predictor(self) -> Optional[torch.nn.Module]:
+        """Load aesthetic predictor linear model.
+        
+        Returns:
+            Loaded model or None if not found
+        """
+        import torch.nn as nn
+        
+        # Try to find model in multiple locations
+        possible_paths = [
+            # In TextCrafter_Eval directory
+            Path(__file__).parent.parent / "TextCrafter_Eval" / "sa_0_4_vit_l_14_linear.pth",
+            # In eval directory
+            Path(__file__).parent.parent / "sa_0_4_vit_l_14_linear.pth",
+            # In current directory
+            Path("sa_0_4_vit_l_14_linear.pth"),
+        ]
+        
+        for model_path in possible_paths:
+            if model_path.exists():
+                m = nn.Linear(768, 1)
+                s = torch.load(model_path, map_location=self.device)
+                m.load_state_dict(s)
+                m.eval()
+                m.to(self.device)
+                self.logger.info(f"Loaded aesthetic predictor from: {model_path}")
+                return m
+        
+        self.logger.warning("Aesthetic predictor model file not found in any expected location")
+        return None
+            
+    
+    def compute_score(self, image_path: str) -> float:
+        """Compute aesthetic score for an image.
+        
+        Args:
+            image_path: Path to image file
+            
+        Returns:
+            Aesthetic score (typically 0-10)
+        """
+        if not self.available:
+            return 0.0
+        image = Image.open(image_path).convert('RGB')
+        image_input = self.preprocess(image).unsqueeze(0).to(self.device)
+        
+        with torch.no_grad():
+            image_features = self.openclip_model.encode_image(image_input)
+            image_features /= image_features.norm(dim=-1, keepdim=True)
+            prediction = self.aesthetic_predictor(image_features)
+        
+        return float(prediction.cpu().numpy().item())
+        
+    
+    def compute_batch(self, image_paths: List[str]) -> List[float]:
+        """Compute aesthetic scores for multiple images.
+        
+        Args:
+            image_paths: List of image file paths
+            
+        Returns:
+            List of aesthetic scores
+        """
+        if not self.available:
+            return [0.0] * len(image_paths)
+        
+        scores = []
+        for image_path in image_paths:
+            score = self.compute_score(image_path)
+            scores.append(score)
+        
+        return scores

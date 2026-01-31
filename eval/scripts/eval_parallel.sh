@@ -11,8 +11,8 @@ python eval/scripts/eval_parallel.py \
     --results_dir /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/results/z_image/LongText-Bench \
     --benchmark /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/eval/LongText-Bench/text_prompts.jsonl \
     --benchmark_type longtext \
-    --output eval_results/z_image_longtext2.jsonl \
-    --metrics ocr clip vlm \
+    --output eval_results/z_image_longtext3.jsonl \
+    --metrics ocr clip vlm vqa aesthetic\
     --gpus 8 \
     --resume \
     --verbose
@@ -21,8 +21,8 @@ python eval/scripts/eval_parallel.py \
     --results_dir /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/results/z_image/LongText-Bench \
     --benchmark /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/eval/LongText-Bench/text_prompts_zh.jsonl \
     --benchmark_type longtext \
-    --output eval_results/z_image_longtext2.jsonl \
-    --metrics ocr clip vlm \
+    --output eval_results/z_image_longtext3.jsonl \
+    --metrics ocr clip vlm vqa aesthetic\
     --gpus 8 \
     --resume \
     --verbose

@@ -349,6 +349,35 @@ def load_dataset(benchmark, base_eval_dir):
                         'carrier_list': [],
                         'sentence_list': [],
                     })
+    elif benchmark in ('OneIG-Bench', 'OneIG-Bench-ZH'):
+        # OneIG-Bench JSON format (list of dicts). For ZH use prompt_cn; for EN use prompt_en.
+        oneig_dir = os.path.join(base_eval_dir, 'OneIG-Bench')
+        json_name = "OneIG-Bench-ZH.json" if benchmark == "OneIG-Bench-ZH" else "OneIG-Bench.json"
+        json_path = os.path.join(oneig_dir, json_name)
+        with open(json_path, "r", encoding="utf-8") as f:
+            items = json.load(f)
+
+        lang_prefix = "zh" if benchmark == "OneIG-Bench-ZH" else "en"
+        prompt_key = "prompt_cn" if lang_prefix == "zh" else "prompt_en"
+
+        # Deterministic ordering
+        items = sorted(items, key=lambda x: str(x.get("id", "")))
+        for item in items:
+            sample_id = str(item["id"])
+            data.append({
+                "prompt": str(item[prompt_key]),
+                "prompt_id": sample_id,
+                "index": int(sample_id),
+                "category": str(item.get("category", "")),
+                "class": str(item.get("class", "")),
+                "type": str(item.get("type", "")),
+                "prompt_length": str(item.get("prompt_length", "")),
+                "id": f"oneig_{lang_prefix}_{sample_id}",
+                # Keep fields for compatibility with model wrappers / evaluator
+                "carrier_list": [],
+                "sentence_list": [],
+                "text": [],
+            })
     return data
 
 
@@ -419,9 +448,9 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
 def evaluate_results(output_dir, dataset, metrics=['ocr']):
     """Evaluate generated images."""
     print(f"\nEvaluating {output_dir}...")
-    from eval.eval_ocr import OCREvaluator
+    from eval.core.metrics import OCRMetrics
 
-    ocr_evaluator = OCREvaluator() if 'ocr' in metrics else None
+    ocr_evaluator = OCRMetrics() if 'ocr' in metrics else None
     results = []
     for item in tqdm(dataset, desc="Evaluating"):
         img_path = os.path.join(output_dir, f"result_{item['id']}.png")
@@ -433,9 +462,15 @@ def evaluate_results(output_dir, dataset, metrics=['ocr']):
             gt_text = item.get('text') or item.get('sentence_list') or []
             gt_text = " ".join(gt_text) if isinstance(gt_text, list) else str(gt_text)
             row['ground_truth'] = gt_text
-            row['ocr_accuracy'] = ocr_evaluator.calculate_ocr_accuracy(
-                image, gt_text, mask=None
-            )
+            if gt_text.strip():
+                ocr_res = ocr_evaluator.compute_accuracy(
+                    image, gt_text, mask=None
+                )
+                row['ocr_accuracy'] = ocr_res['ocr_acc']
+                row['ocr_ned'] = ocr_res['ocr_ned']
+            else:
+                # For benchmarks without explicit GT text (e.g., OneIG-Bench), skip OCR scoring.
+                row['ocr_accuracy'] = None
         results.append(row)
     
     if results:
@@ -461,7 +496,7 @@ def main():
     parser.add_argument("--model", type=str, required=True, choices=list(MODELS.keys()),
                        help="Model to run")
     parser.add_argument("--benchmark", type=str, required=True,
-                       choices=['CVTG-2K', 'LongText-Bench'], help="Benchmark dataset")
+                       choices=['CVTG-2K', 'LongText-Bench', 'OneIG-Bench', 'OneIG-Bench-ZH'], help="Benchmark dataset")
     parser.add_argument("--model_path", type=str, default=None,
                        help="Custom model path (overrides default)")
     parser.add_argument("--debug", action='store_true',

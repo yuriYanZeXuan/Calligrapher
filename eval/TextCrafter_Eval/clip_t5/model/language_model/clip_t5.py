@@ -50,7 +50,8 @@ class CLIPT5ForConditionalGeneration(T5ForConditionalGeneration):
         super(CLIPT5ForConditionalGeneration, self).__init__(config)
         self.embed_tokens = self.encoder.embed_tokens
         if hasattr(config, "mm_vision_tower"):
-            self.vision_tower = build_vision_tower(config, delay_load=False)
+            # Use delay_load=True to avoid from_pretrained in meta device context
+            self.vision_tower = build_vision_tower(config, delay_load=True)
             self.mm_projector = build_vision_projector(config)
 
     def get_vision_tower(self):

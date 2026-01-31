@@ -78,8 +78,18 @@ def load_pretrained_model(model_cls,
         tokenizer_dict['padding_side'] = padding_side
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=False, **tokenizer_dict)
 
-    # Load model
-    model = model_cls.from_pretrained(model_path, cache_dir=cache_dir)
+    # Load model with device_map=None to avoid meta device context issues
+    model = model_cls.from_pretrained(
+        model_path, 
+        cache_dir=cache_dir,
+        device_map=None,
+        low_cpu_mem_usage=False
+    )
+    
+    # Explicitly load vision tower weights (was delay_loaded to avoid meta device issues)
+    vision_tower = model.get_vision_tower()
+    if vision_tower is not None and not vision_tower.is_loaded:
+        vision_tower.load_model()
     
     if mmprojector_repo:
         from huggingface_hub import hf_hub_download

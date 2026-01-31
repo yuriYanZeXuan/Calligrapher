@@ -9,6 +9,7 @@ class CLIPVisionTower(nn.Module):
         super().__init__()
 
         self.is_loaded = False
+        self._cfg_only = None  # Lazy loaded
 
         self.vision_tower_name = vision_tower
         self.select_layer = args.mm_vision_select_layer
@@ -16,15 +17,27 @@ class CLIPVisionTower(nn.Module):
 
         if not delay_load:
             self.load_model()
-        else:
-            self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
+        # When delay_load=True, we don't load anything in __init__ to avoid meta device issues
 
     def load_model(self):
         self.image_processor = CLIPImageProcessor.from_pretrained(self.vision_tower_name)
-        self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name)
+        # Use device_map=None and low_cpu_mem_usage=False to avoid meta device issues
+        self.vision_tower = CLIPVisionModel.from_pretrained(
+            self.vision_tower_name,
+            device_map=None,
+            low_cpu_mem_usage=False
+        )
         self.vision_tower.requires_grad_(False)
+        self._cfg_only = None  # Clear cached config
 
         self.is_loaded = True
+    
+    @property
+    def cfg_only(self):
+        """Lazy load config only when needed"""
+        if self._cfg_only is None:
+            self._cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
+        return self._cfg_only
 
     def feature_select(self, image_forward_outs):
         image_features = image_forward_outs.hidden_states[self.select_layer]

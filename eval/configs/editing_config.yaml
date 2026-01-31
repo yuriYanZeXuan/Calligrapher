@@ -1,0 +1,87 @@
+# Configuration for Text Rendering Editing Evaluation
+#
+# This config is used for evaluating text editing models that require masks
+# on benchmarks like Calligrapher_bench_testing, etc.
+
+# Benchmark settings
+benchmark:
+  # Path to benchmark directory or file
+  # Examples:
+  #   - eval/Calligrapher_bench_testing/
+  #   - eval/benchmarks/editing_benchmark.json
+  #   - eval/benchmarks/editing_samples.txt
+  path: "eval/Calligrapher_bench_testing"
+  
+  # Benchmark format: directory, txt, or json
+  format: "directory"
+  
+  # File patterns (for directory format)
+  patterns:
+    source: "{id}_source.png"
+    mask: "{id}_mask.png"
+    reference: "{id}_ref.png"
+    prompt: "{id}_prompt.txt"
+
+# Generated images settings
+generation:
+  # Directory containing generated images
+  output_dir: "outputs/editing"
+  
+  # Expected naming pattern for generated images
+  # Examples: result_{id}_{prompt}_{seed}.png, {id}_result.png
+  naming_pattern: "result_{id}_{prompt}_{seed}.png"
+
+# Metrics to compute
+metrics:
+  # OCR-based text accuracy (requires MinerU)
+  - ocr
+  
+  # DINOv2 similarity between generated and reference
+  - dino
+  
+  # CLIP score for text-image alignment
+  - clip
+  
+  # FID for distribution quality (computationally expensive)
+  # - fid
+  
+  # VLM-based evaluation (requires API_KEY)
+  # - vlm
+
+# Mask settings
+mask:
+  # Whether mask is required for evaluation
+  required: true
+  
+  # Use masked region only for metrics computation
+  use_masked_metrics: true
+  
+  # Inpaint mode: fill with black, white, or preserve
+  inpaint_mode: "black"
+
+# Output settings
+output:
+  # Output file path
+  result_file: "eval_results/editing_results.json"
+  
+  # Save per-image results
+  save_per_image: true
+  
+  # Generate comparison visualizations
+  visualize: false
+  
+  # Visualization output directory
+  vis_dir: "eval_results/visualizations"
+
+# Device settings
+device:
+  # Device for model inference: auto, cuda, or cpu
+  type: "auto"
+  
+  # GPU IDs to use (if cuda)
+  gpu_ids: [0]
+
+# Logging settings
+logging:
+  level: "INFO"
+  log_file: "logs/editing_eval.log"

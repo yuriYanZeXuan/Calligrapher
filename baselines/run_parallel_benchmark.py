@@ -28,6 +28,7 @@ sys.path.extend([
     os.path.join(BASE_DIR, 'fluxklein'),
     os.path.join(BASE_DIR, 'glm_image'),
     os.path.join(BASE_DIR, 'z_image'),
+    os.path.join(BASE_DIR, 'qwenimage'),
 ])
 
 # Model paths configuration
@@ -41,6 +42,7 @@ MODEL_PATHS = {
     'textcrafter_flux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX.1-dev',
     'glm_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/glm_image',
     'z_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
+    'qwenimage': 'Qwen/Qwen-Image',
 }
 
 # --- Model Wrappers ---
@@ -243,8 +245,8 @@ class GlmImageWrapper(ModelWrapper):
 class ZImageWrapper(ModelWrapper):
     def __init__(self, device="cuda", model_path=None):
         super().__init__(device, model_path)
-        from inference_z_image import ZImageGenerator
-        self.generator = ZImageGenerator(
+        import inference_z_image
+        self.generator = inference_z_image.ZImageGenerator(
             model_path=self.model_path or MODEL_PATHS['z_image'],
             device=device
         )
@@ -260,6 +262,29 @@ class ZImageWrapper(ModelWrapper):
             width=1024
         )
 
+class QwenImageWrapper(ModelWrapper):
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from diffusers import DiffusionPipeline
+        import torch
+
+        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        path = self.model_path or MODEL_PATHS['qwenimage']
+        self.pipe = DiffusionPipeline.from_pretrained(path, torch_dtype=dtype).to(device)
+        self.device = device
+
+    def generate(self, prompt, output_path, **kwargs):
+        result = self.pipe(
+            prompt=prompt + ", Ultra HD, 4K, cinematic composition.",
+            negative_prompt="",
+            width=1024,
+            height=1024,
+            num_inference_steps=50,
+            true_cfg_scale=4.0,
+            generator=torch.Generator(device=self.device).manual_seed(42)
+        )
+        result.images[0].save(output_path)
+
 # Model registry
 MODELS = {
     'textflux': TextFluxWrapper,
@@ -270,7 +295,8 @@ MODELS = {
     'fluxdev': FluxDevWrapper,
     'fluxklein': FluxKleinWrapper,
     'glm_image': GlmImageWrapper,
-    'z_image': ZImageWrapper
+    'z_image': ZImageWrapper,
+    'qwenimage': QwenImageWrapper
 }
 
 # --- Data Loading ---
@@ -331,9 +357,19 @@ def load_dataset(benchmark, base_eval_dir):
 def worker_fn(rank, world_size, args, dataset, output_dir):
     """Worker: rank r gets dataset[start_idx:end_idx]; prompt for local index i
     is benchmark prompt at global index (start_idx + i)."""
-    # Workaround for torch._inductor "duplicate template name" error
-    os.environ["TORCH_COMPILE_DISABLE"] = "1"
-    os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = "1"
+    
+    # Stagger initialization to avoid race conditions in file-based caches (e.g. inductor, triton)
+    import time
+    time.sleep(rank * 2.0)
+
+    # Monkey patch torch.compile to avoid Inductor/Triton initialization race conditions
+    # causing "duplicate template name" errors in bitsandbytes -> diffusers imports.
+    import torch
+    def no_op_compile(model=None, *args, **kwargs):
+        if model is None:
+            return lambda x: x
+        return model
+    torch.compile = no_op_compile
     
     total_items = len(dataset)
     items_per_gpu = math.ceil(total_items / world_size)
@@ -416,6 +452,11 @@ def evaluate_results(output_dir, dataset, metrics=['ocr']):
 # --- Main ---
 
 def main():
+    # Workaround for torch._inductor "duplicate template name" error in multiprocessing
+    # This must be set before any torch/diffusers imports that might trigger compilation
+    os.environ["TORCH_COMPILE_DISABLE"] = "1"
+    os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = "1"
+
     parser = argparse.ArgumentParser(description="Unified benchmark script (Parallel)")
     parser.add_argument("--model", type=str, required=True, choices=list(MODELS.keys()),
                        help="Model to run")

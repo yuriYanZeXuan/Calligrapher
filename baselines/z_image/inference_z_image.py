@@ -8,24 +8,12 @@ import torch
 import argparse
 from PIL import Image
 
-# Disable torch.compile to avoid bitsandbytes/inductor template conflicts
-try:
-    torch._dynamo.config.suppress_errors = True
-    torch._dynamo.config.disable = True
-except Exception:
-    pass
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.config.disable = True
 
-try:
-    from diffusers import ZImagePipeline
-except ImportError:
-    print("Warning: ZImagePipeline not found in diffusers. Please ensure you have the correct version installed.")
-    ZImagePipeline = None
-
+from diffusers import ZImagePipeline
 class ZImageGenerator:
     def __init__(self, model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image", device="cuda"):
-        if ZImagePipeline is None:
-            raise ImportError("ZImagePipeline not available. Please install the correct version of diffusers.")
-        
         print("Initializing Z-Image pipeline...")
         self.device = device
         

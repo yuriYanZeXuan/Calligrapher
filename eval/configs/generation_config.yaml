@@ -1,0 +1,68 @@
+# Configuration for Text Rendering Generation Evaluation
+# 
+# This config is used for evaluating text-to-image generation models
+# on benchmarks like OneIG-Bench, CVTG-2K, LongText-Bench, etc.
+
+# Benchmark settings
+benchmark:
+  # Path to benchmark file or directory
+  # Examples:
+  #   - eval/OneIG-Bench/OneIG-Bench.json
+  #   - eval/CVTG-2K/
+  #   - eval/LongText-Bench/
+  path: "eval/OneIG-Bench/OneIG-Bench.json"
+  
+  # Benchmark type: oneig, cvtg, longtext, or generic
+  type: "oneig"
+  
+  # Categories to evaluate (optional, leave empty for all)
+  # For OneIG-Bench, options: Text_Rendering, Anime_Stylization, etc.
+  filter_categories:
+    - "Text_Rendering"
+
+# Generated images settings
+generation:
+  # Directory containing generated images
+  output_dir: "outputs/generation"
+  
+  # Image naming pattern
+  # Supported: {id}, {prompt}, {category}
+  naming_pattern: "{id}.png"
+
+# Metrics to compute
+metrics:
+  # OCR-based text accuracy (requires MinerU)
+  - ocr
+  
+  # CLIP score for text-image alignment
+  - clip
+  
+  # DINOv2 similarity (requires reference images, optional for generation)
+  # - dino
+  
+  # VLM-based evaluation (requires API_KEY)
+  # - vlm
+
+# Output settings
+output:
+  # Output file path
+  result_file: "eval_results/generation_results.json"
+  
+  # Save intermediate results every N samples
+  save_interval: 10
+  
+  # Generate visualization
+  visualize: false
+
+# Device settings
+device:
+  # Device for model inference: auto, cuda, or cpu
+  type: "auto"
+  
+  # GPU IDs to use (if cuda)
+  gpu_ids: [0]
+
+# Logging settings
+logging:
+  level: "INFO"
+  log_file: "logs/generation_eval.log"

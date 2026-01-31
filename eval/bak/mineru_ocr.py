@@ -10,7 +10,14 @@ def create_mineru_client(model_name: str = "opendatalab/MinerU2.5-2509-1.2B"):
 
     logits_processors = [MinerULogitsProcessor]
 
-    llm_kwargs = {"model": model_name}
+    # Fix for vLLM ValidationError: conflicts between 'rope_type=default' and 'type=mrope'
+    # This is a known issue with some model configs in newer vLLM versions.
+    llm_kwargs = {
+        "model": model_name,
+        "trust_remote_code": True,
+        # Explicitly disable rope scaling to avoid pydantic validation conflict
+        # "rope_scaling": None 
+    }
     if logits_processors is not None:
         llm_kwargs["logits_processors"] = logits_processors
 

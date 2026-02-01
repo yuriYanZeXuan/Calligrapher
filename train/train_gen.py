@@ -35,8 +35,8 @@ from .model import (
     load_vae_and_transformer,
     setup_ip_adapter,
 )
-from .rl_ip.ema import EMAModuleWrapper as EMA
-from .rl_ip.grpo_utils import sde_step_with_logprob as sde_step
+from .rl_ip.ema import EMA
+from .rl_ip.grpo_utils import sde_step
 from .rl_ip.reward import RewardClient
 from .rl_ip.stat_tracking import PerPromptStatTracker
 from .rl_logic.grpo_trainer import GRPOTrainer
@@ -49,13 +49,6 @@ from .lora_utils import (
 )
 
 logger = get_logger(__name__)
-
-
-def _get_last_hidden_state(output) -> torch.Tensor:
-    # transformers outputs are either a ModelOutput with .last_hidden_state or a tuple (hidden_states, ...)
-    if hasattr(output, "last_hidden_state"):
-        return output.last_hidden_state
-    return output[0]
 
 
 def encode_conditioning(
@@ -71,21 +64,47 @@ def encode_conditioning(
     dtype,
 ) -> Dict[str, object]:
     if args.model_type == "zimage":
-        inputs = tok1(
-            prompts,
+        # Align with `train/zimage_ip/pipeline_z_image.py`:
+        # - Use chat template
+        # - Take `.hidden_states[-2]`
+        # - Select valid tokens by attention_mask
+        chat_prompts = []
+        for p in prompts:
+            messages = [{"role": "user", "content": p}]
+            chat_prompts.append(
+                tok1.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=True,
+                )
+            )
+
+        text_inputs = tok1(
+            chat_prompts,
             padding="max_length",
             max_length=args.max_sequence_length,
             truncation=True,
             return_tensors="pt",
         )
-        input_ids = inputs.input_ids.to(device)
-        attn_mask = inputs.attention_mask.to(device)
-        hs = _get_last_hidden_state(enc1(input_ids, attention_mask=attn_mask, output_hidden_states=False))
+        input_ids = text_inputs.input_ids.to(device)
+        prompt_masks = text_inputs.attention_mask.to(device).bool()
+
+        out = enc1(
+            input_ids=input_ids,
+            attention_mask=prompt_masks,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+        hs = out.hidden_states[-2]
+
         cap_dim = int(getattr(transformer.config, "cap_feat_dim", hs.shape[-1]))
         if hs.shape[-1] != cap_dim:
-            raise ValueError(f"Z-Image cap_feat_dim={cap_dim}, but text_encoder hidden={hs.shape[-1]}. 请换匹配的 text_encoder。")
-        lengths = attn_mask.sum(dim=-1).tolist()
-        cap_feats = [hs[i, : int(l)].to(dtype=dtype) for i, l in enumerate(lengths)]
+            raise ValueError(
+                f"Z-Image cap_feat_dim={cap_dim}, but text_encoder hidden={hs.shape[-1]}. 请换匹配的 text_encoder。"
+            )
+
+        cap_feats = [hs[i][prompt_masks[i]].to(dtype=dtype) for i in range(hs.shape[0])]
         return {"cap_feats": cap_feats}
 
     # FLUX/Qwen-style: dual encoders (CLIP + T5) via encode_prompt

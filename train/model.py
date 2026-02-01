@@ -7,6 +7,7 @@ from transformers import (
     CLIPTokenizer,
     T5TokenizerFast,
     AutoTokenizer,
+    AutoModelForCausalLM,
     CLIPTextModel,
     CLIPTextModelWithProjection,
     T5EncoderModel,
@@ -31,6 +32,9 @@ def import_model_class_from_model_name_or_path(
         return T5EncoderModel
     elif model_class == "CLIPTextModel":
         return CLIPTextModel
+    elif model_class.endswith("ForCausalLM"):
+        # e.g. Qwen3ForCausalLM (Z-Image caption encoder checkpoints)
+        return AutoModelForCausalLM
     else:
         raise ValueError(f"{model_class} is not supported.")
 

@@ -1,5 +1,5 @@
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0
 
 PRETRAINED_MODEL="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-image-sft"
 TRAIN_DATA_JSON="samples/LTB_dataset.jsonl"
@@ -10,10 +10,10 @@ OUTPUT_DIR="output/zimage_lora_run"
 
 accelerate launch \
   --num_machines 1 \
-  --num_processes 8 \
+  --num_processes 1 \
   --machine_rank 0 \
   --main_process_port 29500 \
-  train/train_gen.py \
+  -m train.train_gen \
   --model_type zimage \
   --pretrained_model_name_or_path "${PRETRAINED_MODEL}" \
   --train_data_json "${TRAIN_DATA_JSON}" \

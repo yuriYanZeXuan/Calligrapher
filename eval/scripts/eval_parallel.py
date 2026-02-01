@@ -53,7 +53,7 @@ METRIC_FIELDS = {
     'vqa': ['vqa_score'],
     'ocr': ['ocr_acc', 'ocr_ned'],
     'clip': ['clip_score'],
-    'vlm': ['vlm_text_accuracy', 'vlm_image_quality', 'vlm_overall'],
+    'vlm': ['vlm_text_accuracy', 'vlm_text_ned', 'vlm_image_quality', 'vlm_overall'],
     'aesthetic': ['aesthetic_score'],
 }
 
@@ -349,6 +349,7 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
                 image = Image.open(image_path).convert('RGB')
                 vlm_result = evaluator.evaluate_text_rendering(image, sample['prompt'])
                 updates['vlm_text_accuracy'] = round(vlm_result['text_accuracy'], 4)
+                updates['vlm_text_ned'] = round(vlm_result['text_ned'], 4)
                 updates['vlm_image_quality'] = round(vlm_result['image_quality'], 4)
                 updates['vlm_overall'] = round(vlm_result['overall'], 4)
             
@@ -454,13 +455,38 @@ def compute_summary(output_path: str) -> Dict:
         }
     
     # VLM summary
-    vlm_scores = [r['vlm_overall'] for r in results if 'vlm_overall' in r]
-    if vlm_scores:
-        summary['vlm'] = {
-            'mean': round(sum(vlm_scores) / len(vlm_scores), 4),
-            'min': round(min(vlm_scores), 4),
-            'max': round(max(vlm_scores), 4),
-            'count': len(vlm_scores)
+    vlm_overall_scores = [r['vlm_overall'] for r in results if 'vlm_overall' in r]
+    vlm_text_acc_scores = [r['vlm_text_accuracy'] for r in results if 'vlm_text_accuracy' in r]
+    vlm_text_ned_scores = [r['vlm_text_ned'] for r in results if 'vlm_text_ned' in r]
+    vlm_quality_scores = [r['vlm_image_quality'] for r in results if 'vlm_image_quality' in r]
+    
+    if vlm_overall_scores:
+        summary['vlm_overall'] = {
+            'mean': round(sum(vlm_overall_scores) / len(vlm_overall_scores), 4),
+            'min': round(min(vlm_overall_scores), 4),
+            'max': round(max(vlm_overall_scores), 4),
+            'count': len(vlm_overall_scores)
+        }
+    if vlm_text_acc_scores:
+        summary['vlm_text_accuracy'] = {
+            'mean': round(sum(vlm_text_acc_scores) / len(vlm_text_acc_scores), 4),
+            'min': round(min(vlm_text_acc_scores), 4),
+            'max': round(max(vlm_text_acc_scores), 4),
+            'count': len(vlm_text_acc_scores)
+        }
+    if vlm_text_ned_scores:
+        summary['vlm_text_ned'] = {
+            'mean': round(sum(vlm_text_ned_scores) / len(vlm_text_ned_scores), 4),
+            'min': round(min(vlm_text_ned_scores), 4),
+            'max': round(max(vlm_text_ned_scores), 4),
+            'count': len(vlm_text_ned_scores)
+        }
+    if vlm_quality_scores:
+        summary['vlm_image_quality'] = {
+            'mean': round(sum(vlm_quality_scores) / len(vlm_quality_scores), 4),
+            'min': round(min(vlm_quality_scores), 4),
+            'max': round(max(vlm_quality_scores), 4),
+            'count': len(vlm_quality_scores)
         }
 
     # VQA summary

@@ -336,6 +336,41 @@ class VLMMetrics:
             image = image.convert('RGB')
         return image
     
+    def _extract_text_from_prompt(self, prompt: str) -> str:
+        """Extract text content from prompt (text within quotes)."""
+        import re
+        # Extract text within single or double quotes
+        quoted_texts = re.findall(r'["\']([^"\']+)["\']', prompt)
+        if quoted_texts:
+            return ' '.join(quoted_texts)
+        # If no quoted text, return the full prompt
+        return prompt
+    
+    def _compute_text_accuracy(self, ground_truth: str, recognized: str) -> Dict[str, float]:
+        """Compute text accuracy using Levenshtein distance (same as OCR metrics)."""
+        import Levenshtein
+        
+        # Normalize texts: lowercase, remove extra spaces
+        gt_processed = ' '.join(ground_truth.lower().split())
+        recognized_processed = ' '.join(recognized.lower().split())
+        
+        if not gt_processed:
+            return {'text_accuracy': 1.0 if not recognized_processed else 0.0, 'text_ned': 1.0 if not recognized_processed else 0.0}
+        
+        # Compute edit distance
+        distance = Levenshtein.distance(gt_processed, recognized_processed)
+        
+        # Text-Acc: Normalized by ground truth length (recall-oriented)
+        text_acc = 1 - (distance / len(gt_processed))
+        text_acc = max(0.0, text_acc)
+        
+        # Text-NED: Normalized by max length (symmetric similarity)
+        max_len = max(len(gt_processed), len(recognized_processed))
+        text_ned = 1 - (distance / (max_len + 1e-5))
+        text_ned = max(0.0, text_ned)
+        
+        return {'text_accuracy': text_acc, 'text_ned': text_ned}
+    
     def evaluate_text_rendering(self, image: Image.Image, prompt: str) -> Dict[str, Any]:
         """Evaluate text rendering quality using VLM.
         
@@ -351,28 +386,38 @@ class VLMMetrics:
         
         image = self._prepare_image(image)
         
-        # Prompt for text accuracy evaluation
-        text_prompt = f'''You are evaluating an AI-generated image. The prompt was: "{prompt}"
-
-Please evaluate the text rendering in this image:
-1. Are all the texts from the prompt correctly rendered?
-2. Are there any spelling errors, missing text, or garbled text?
-3. Rate the text rendering quality from 0-10, where 10 means perfect text rendering.
-
-Respond with only a number from 0 to 10.'''
+        # Extract ground truth text from prompt
+        ground_truth = self._extract_text_from_prompt(prompt)
+        
+        # Prompt for text recognition - ask VLM to output all visible text
+        text_prompt = '''Please read and output ALL the text content visible in this image.
+Only output the text you can see, nothing else. If there are multiple text elements, separate them with spaces.
+Do not add any explanations or descriptions, just the raw text content.'''
         
         messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": text_prompt}]}]
         text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
+        input_len = inputs['input_ids'].shape[1]
         
         with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_new_tokens=10, temperature=0.1)
+            # do_sample=False for deterministic greedy decoding (no randomness)
+            outputs = self.model.generate(**inputs, max_new_tokens=512, do_sample=False)
         
-        response = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
-        # Extract number from response
-        import re
-        numbers = re.findall(r'\d+', response)
-        text_score = float(numbers[0]) / 10.0 if numbers else 0.5
+        # Only decode newly generated tokens (exclude input prompt)
+        generated_ids = outputs[:, input_len:]
+        recognized_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+        
+        # Clean up recognized text - remove quotes if wrapped
+        if (recognized_text.startswith('"') and recognized_text.endswith('"')) or \
+           (recognized_text.startswith("'") and recognized_text.endswith("'")):
+            recognized_text = recognized_text[1:-1]
+        
+        # Compute text accuracy using Levenshtein distance
+        accuracy_result = self._compute_text_accuracy(ground_truth, recognized_text)
+        text_score = accuracy_result['text_accuracy']
+        text_ned = accuracy_result['text_ned']
+        # Ensure text_score is in valid range [0, 1]
+        text_score = max(0.0, min(1.0, float(text_score)))
         
         # Prompt for overall image quality
         quality_prompt = '''Evaluate the overall quality of this image considering:
@@ -385,19 +430,33 @@ Rate from 0-10, respond with only a number.'''
         messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": quality_prompt}]}]
         text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
+        input_len = inputs['input_ids'].shape[1]
         
         with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_new_tokens=10, temperature=0.1)
+            # do_sample=False for deterministic greedy decoding (no randomness)
+            outputs = self.model.generate(**inputs, max_new_tokens=10, do_sample=False)
         
-        response = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
+        # Only decode newly generated tokens
+        generated_ids = outputs[:, input_len:]
+        response = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+        
+        # Extract quality score
         import re
-        numbers = re.findall(r'\d+', response)
-        quality_score = float(numbers[0]) / 10.0 if numbers else 0.5
+        numbers = re.findall(r'\d+\.?\d*', response)
+        if numbers:
+            raw_score = float(numbers[0])
+            raw_score = min(10.0, max(0.0, raw_score))
+            quality_score = raw_score / 10.0
+        else:
+            quality_score = 0
         
         return {
             "text_accuracy": text_score,
+            "text_ned": text_ned,
             "image_quality": quality_score,
-            "overall": (text_score + quality_score) / 2
+            "overall": (text_score + quality_score) / 2,
+            "recognized_text": recognized_text,
+            "ground_truth": ground_truth
         }
     
     def evaluate_aesthetic(self, image: Image.Image) -> float:
@@ -423,7 +482,7 @@ Rate from 0-10, respond with only a number.'''
             Text match score (0-1)
         """
         result = self.evaluate_text_rendering(image, text)
-        return result.get("text_accuracy", 0.0)
+        return result.get("text_accuracy", 0.0), result.get("text_ned", 0.0)
 
 
 class VQAScoreMetrics:
@@ -596,3 +655,19 @@ class AestheticScoreMetrics:
             scores.append(score)
         
         return scores
+
+def main():
+    txt="阳光明媚的广场上挤满了热闹的户外集市，充满活力的购物人群在色彩斑斓的摊位间穿梭。在这个充满动感的市场场景中央，一个醒目的大型木质招牌悬挂在一个热门摊位上方，温暖的笔触清晰展示着“新鲜农场 当地土特产”的字样。在主标题下方，优雅简洁的标语鼓励性地写着“品尝最自然的农产品”，并附上诱人的优惠信息“特价：今日有机农产品九折！”。摊位周围艺术地散落着小型手写风格的黑板牌，清晰展示着吸引人的附加信息，如“提供显现的苹果，草莓，有机蔬菜”等，进一步吸引好奇的游客驻足。购物者们常驻足细读这些生动呈现的招牌文字，在热闹的集市氛围中增添了温暖与真实感。"
+    img_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/samples/result_longtext_zh_12.png"
+    # Test VLM metrics
+    vlm = VLMMetrics(model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B", device="cuda")
+    image = Image.open(img_path).convert('RGB')
+    result = vlm.evaluate_text_rendering(image, txt)
+    print("VLM Evaluation Result:")
+    print(f"  Text Accuracy: {result.get('text_accuracy', 0.0):.4f}")
+    print(f"  Image Quality: {result.get('image_quality', 0.0):.4f}")
+    print(f"  Overall Score: {result.get('overall', 0.0):.4f}")
+    print(f"  Text NED: {result.get('text_ned', 0.0):.4f}")
+
+if __name__ == "__main__":
+    main()

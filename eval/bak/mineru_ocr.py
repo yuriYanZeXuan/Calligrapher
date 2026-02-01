@@ -22,10 +22,10 @@ def create_mineru_client(model_name: str = "opendatalab/MinerU2.5-2509-1.2B"):
     from transformers import AutoProcessor, Qwen2VLForConditionalGeneration  # type: ignore
     from mineru_vl_utils import MinerUClient  # type: ignore
 
-    # for transformers>=4.56.0：dtype；更老版本：torch_dtype
+    # 使用 torch_dtype 参数
     model = Qwen2VLForConditionalGeneration.from_pretrained(
         model_name,
-        dtype="auto",
+        torch_dtype="auto",
         device_map="auto",
     )
     processor = AutoProcessor.from_pretrained(

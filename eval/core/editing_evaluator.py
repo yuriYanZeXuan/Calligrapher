@@ -383,8 +383,9 @@ class EditingEvaluator(BaseEvaluator):
             if ref_img:
                 aesthetic = self.metrics['vlm'].evaluate_aesthetic(gen_img, ref_img)
                 result['vlm_aesthetic'] = aesthetic
-            text_match = self.metrics['vlm'].evaluate_text_match(gen_img, prompt)
+            text_match, text_ned = self.metrics['vlm'].evaluate_text_match(gen_img, prompt)
             result['vlm_text_match'] = text_match
+            result['vlm_text_ned'] = text_ned
         
         return result
     

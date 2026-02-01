@@ -40,6 +40,8 @@ from PIL import Image
 import torch
 import torch.multiprocessing as mp
 
+from eval.core.metrics import extract_text_from_prompt
+
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -101,6 +103,7 @@ def load_oneig_benchmark(benchmark_path: str) -> List[Dict]:
             samples.append({
                 'id': item.get('id', ''),
                 'prompt': prompt,
+                'text': extract_text_from_prompt(prompt),
                 'category': item.get('category', ''),
                 'class': item.get('class', '')
             })
@@ -130,6 +133,7 @@ def load_cvtg_benchmark(benchmark_path: str) -> List[Dict]:
                 samples.append({
                     'id': f"{subdir}_{area}_{item.get('index', 0)}",
                     'prompt': item.get('prompt', ''),
+                    'text': extract_text_from_prompt(item.get('prompt', '')),
                     'area': area,
                     'benchmark_type': subdir,
                     'carrier_list': item.get('carrier_list', []),

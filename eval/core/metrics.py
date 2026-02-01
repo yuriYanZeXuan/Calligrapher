@@ -18,6 +18,39 @@ from torch.nn.functional import cosine_similarity
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+def extract_text_from_prompt(prompt: str) -> str:
+        """Extract text content from prompt (text within quotes)."""
+        import re
+        # Extract text within quotes (English and Chinese quotes)
+        # Supports: "text", 'text', “text”, ‘text’, 「text」, 『text』
+        
+        # Combined pattern for all quote types
+        patterns = [
+            r'"([^"]+)"',          # English double quotes
+            r"'([^']+)'",          # English single quotes
+            r'“([^”]+)”',          # Chinese double quotes
+            r'‘([^’]+)’',          # Chinese single quotes
+            r'「([^」]+)」',        # Corner brackets
+            r'『([^』]+)』'         # Double corner brackets
+        ]
+        
+        pattern = '|'.join(patterns)
+        
+        matches = re.findall(pattern, prompt)
+        # findall returns tuples for groups, flatten and filter empty
+        # Each match is a tuple where only one element is non-empty corresponding to the matched group
+        quoted_texts = []
+        for match in matches:
+            for group in match:
+                if group:
+                    quoted_texts.append(group)
+                    
+        print(f"Extracted quoted texts: {quoted_texts}")
+        print("============")
+        if quoted_texts:
+            return ' '.join(quoted_texts)
+        # If no quoted text, return the full prompt
+        return prompt
 
 class OCRMetrics:
     """OCR-based metrics for text accuracy evaluation."""
@@ -336,15 +369,7 @@ class VLMMetrics:
             image = image.convert('RGB')
         return image
     
-    def _extract_text_from_prompt(self, prompt: str) -> str:
-        """Extract text content from prompt (text within quotes)."""
-        import re
-        # Extract text within single or double quotes
-        quoted_texts = re.findall(r'["\']([^"\']+)["\']', prompt)
-        if quoted_texts:
-            return ' '.join(quoted_texts)
-        # If no quoted text, return the full prompt
-        return prompt
+    
     
     def _compute_text_accuracy(self, ground_truth: str, recognized: str) -> Dict[str, float]:
         """Compute text accuracy using Levenshtein distance (same as OCR metrics)."""
@@ -387,7 +412,7 @@ class VLMMetrics:
         image = self._prepare_image(image)
         
         # Extract ground truth text from prompt
-        ground_truth = self._extract_text_from_prompt(prompt)
+        ground_truth = extract_text_from_prompt(prompt)
         
         # Prompt for text recognition - ask VLM to output all visible text
         text_prompt = '''Please read and output ALL the text content visible in this image.

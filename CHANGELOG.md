@@ -34,7 +34,7 @@ The training pipeline was completely re-architected to support a full reinforcem
 ### 3.2. Parallel Reward Client
 
 - **`train/rl_ip/reward.py`**: A new `RewardClient` was implemented. It can connect to multiple reward server instances and uses a thread pool to send reward requests in parallel using a round-robin distribution. This is crucial for preventing the reward calculation from becoming a bottleneck in multi-GPU training.
-- **Weighted Reward Combination**: The client automatically combines the `vlm_score` and `ocr_confidence` from the server based on the `--ocr_weight` and `--vlm_weight` arguments, providing a single `combined_score` to the training loop.
+- **Weighted Reward Combination**: The client automatically combines the `vlm_score` and `ocr_score` from the server based on the `--ocr_weight` and `--vlm_weight` arguments, providing a single `combined_score` to the training loop.
 
 ### 3.3. Core RL Logic and Training Loop
 

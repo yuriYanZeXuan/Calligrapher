@@ -1,3 +1,4 @@
+from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 from PIL import Image
@@ -112,7 +113,54 @@ class SimpleDataset(Dataset):
             "mask": mask_tensor,
         }
 
+class LTB_Dataset(Dataset):
+    """LongText-Bench dataset loader."""
 
+    def __init__(self, args, accelerator):
+        self.args = args
+        self.accelerator = accelerator
+        self.dataset = self._load_data()
+
+    def _load_data(self):
+        path = Path(self.args.train_data_json)
+        if not path.exists():
+            raise FileNotFoundError(f"Dataset not found: {path}")
+
+        samples = []
+        with open(path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                data = json.loads(line)
+                samples.append({
+                    "prompt": data["prompt"],
+                    "image_path": data["image_path"],
+                })
+
+        with self.accelerator.main_process_first():
+            if self.args.seed is not None:
+                random.Random(self.args.seed).shuffle(samples)
+            if self.args.max_train_samples:
+                samples = samples[:self.args.max_train_samples]
+
+        return samples
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        img = Image.open(item["image_path"]).convert("RGB")
+        pixel_values = self.transform(img)
+
+        return {
+            "pixel_values": pixel_values,
+            "prompts": item["prompt"],
+        }
+
+        
 def collate_fn(examples, clip_image_processor):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()

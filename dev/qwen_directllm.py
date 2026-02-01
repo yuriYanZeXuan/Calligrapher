@@ -12,10 +12,10 @@ client = OpenAI(
 
 # Example 2: 非流式调用 LLM 服务
 completion = client.chat.completions.create(
-    model="qwen2.5-vl-32b-instruct",  # 在 Body 中指明要访问的模型名
+    model="qwen3-vl-235b-a22b-instruct",  # 在 Body 中指明要访问的模型名
     messages=[
         {"role": "system", "content": "你是一个AI助手"},
-        {"role": "user", "content": "帮我制定一份日本的五天四夜的旅游攻略，小红书风格"}
+        {"role": "user", "content": "你好"}
     ],
     stream=False,
     max_tokens=4096,
@@ -23,3 +23,4 @@ completion = client.chat.completions.create(
 )
 
 print(completion.model_dump_json())
+# {"id":"chatcmpl-98643f5ab6f727b05074a819eec770b3","choices":[{"finish_reason":"stop","index":0,"logprobs":null,"message":{"content":"你好！有什么我可以帮你的吗？😊","refusal":null,"role":"assistant","annotations":null,"audio":null,"function_call":null,"tool_calls":[],"reasoning":null,"reasoning_content":null},"stop_reason":null,"token_ids":null}],"created":1769939382,"model":"qwen3-vl-235b-a22b-instruct","object":"chat.completion","service_tier":null,"system_fingerprint":null,"usage":{"completion_tokens":10,"prompt_tokens":18,"total_tokens":28,"completion_tokens_details":null,"prompt_tokens_details":null},"prompt_logprobs":null,"prompt_token_ids":null,"kv_transfer_params":null}

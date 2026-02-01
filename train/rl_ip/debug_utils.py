@@ -1,70 +1,52 @@
+"""Debug utilities for saving reward evaluation samples."""
+
 import os
 import uuid
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
 
 from PIL import Image
 
-# Save interval can be configured via env var; default every 100 calls
-DEBUG_SAVE_INTERVAL = int(os.environ.get("REWARD_DEBUG_SAVE_INTERVAL", "100"))
-_DEBUG_SAVE_COUNTER = 0
+SAVE_INTERVAL = int(os.environ.get("REWARD_DEBUG_INTERVAL", "100"))
+_save_counter = 0
 
 
-def _resolve_debug_dir() -> str:
-    return os.environ.get("REWARD_DEBUG_DIR", "reward_debug_output")
-
-
-def save_debug_sample(
+def save_debug(
     image: Image.Image,
-    masked_image: Image.Image,
+    masked: Image.Image,
     prompt: str,
-    vlm_score: float,
-    ocr_confidence: float,
+    vlm: float,
+    ocr: float,
     ocr_text: str = "",
     prefix: str = "reward",
-    timestep: Optional[str] = None,
+    timestep: str | None = None,
 ) -> None:
-    """Save debug artifacts for reward evaluation.
+    """Save debug artifacts. Called every SAVE_INTERVAL times."""
+    global _save_counter
+    _save_counter += 1
 
-    Files are named with a timestamp + random suffix to avoid collisions, so no
-    inter-process locking is required.
-    """
-
-    # Sampling: save once every DEBUG_SAVE_INTERVAL calls
-    global _DEBUG_SAVE_COUNTER
-    _DEBUG_SAVE_COUNTER += 1
-    if DEBUG_SAVE_INTERVAL > 0 and (_DEBUG_SAVE_COUNTER % DEBUG_SAVE_INTERVAL) != 0:
+    if SAVE_INTERVAL > 0 and _save_counter % SAVE_INTERVAL != 0:
         return
 
-    debug_dir = _resolve_debug_dir()
-    os.makedirs(debug_dir, exist_ok=True)
+    out_dir = Path(os.environ.get("REWARD_DEBUG_DIR", "reward_debug"))
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    unique = uuid.uuid4().hex[:8]
-    base_parts = [prefix, timestamp, unique]
-    if timestep is not None:
-        safe_timestep = str(timestep).replace(":", "-").replace(" ", "_")
-        base_parts.append(f"t_{safe_timestep}")
-    base_parts.extend([f"vlm_{vlm_score:.2f}", f"ocr_{ocr_confidence:.2f}"])
-    base_name = "_".join(base_parts)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    uid = uuid.uuid4().hex[:8]
+    parts = [prefix, ts, uid]
+    if timestep:
+        parts.append(f"t_{timestep.replace(':', '-').replace(' ', '_')}")
+    parts.extend([f"vlm_{vlm:.2f}", f"ocr_{ocr:.2f}"])
 
-    image_path = os.path.join(debug_dir, f"{base_name}.png")
-    masked_path = os.path.join(debug_dir, f"{base_name}_masked.png")
-    info_path = os.path.join(debug_dir, f"{base_name}.txt")
+    base = "_".join(parts)
 
-    try:
-        image.save(image_path)
-        masked_image.save(masked_path)
-        with open(info_path, "w", encoding="utf-8") as f:
-            f.write(f"Prompt: {prompt}\n")
-            f.write(f"VLM Score: {vlm_score}\n")
-            f.write(f"OCR Confidence: {ocr_confidence}\n")
-            if timestep is not None:
-                f.write(f"Denoise Timestep: {timestep}\n")
-            if ocr_text:
-                f.write(f"OCR Text: {ocr_text}\n")
-    except Exception as exc:
-        # Debug saving should never interrupt the reward flow.
-        print(f"[debug_utils] Failed to save debug sample: {exc}")
+    image.save(out_dir / f"{base}.png")
+    masked.save(out_dir / f"{base}_masked.png")
 
+    lines = [f"Prompt: {prompt}", f"VLM: {vlm}", f"OCR: {ocr}"]
+    if timestep:
+        lines.append(f"Timestep: {timestep}")
+    if ocr_text:
+        lines.append(f"OCR Text: {ocr_text}")
 
+    (out_dir / f"{base}.txt").write_text("\n".join(lines), encoding="utf-8")

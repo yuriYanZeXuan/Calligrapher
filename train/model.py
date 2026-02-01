@@ -6,6 +6,7 @@ from typing import Dict, Iterable, Tuple
 from transformers import (
     CLIPTokenizer,
     T5TokenizerFast,
+    AutoTokenizer,
     CLIPTextModel,
     CLIPTextModelWithProjection,
     T5EncoderModel,
@@ -34,27 +35,41 @@ def import_model_class_from_model_name_or_path(
         raise ValueError(f"{model_class} is not supported.")
 
 def load_text_encoders_and_tokenizers(args):
+    # Z-Image checkpoints typically only ship a single tokenizer/text_encoder.
+    if args.model_type == "zimage":
+        tokenizer_one = AutoTokenizer.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision, use_fast=True
+        )
+        text_encoder_cls_one = import_model_class_from_model_name_or_path(
+            args.pretrained_model_name_or_path, args.revision, subfolder="text_encoder"
+        )
+        text_encoder_one = text_encoder_cls_one.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
+        )
+        return tokenizer_one, None, text_encoder_one, None
+
+    # FLUX/Qwen-style: dual encoders (CLIP + T5)
     tokenizer_one = CLIPTokenizer.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="tokenizer", use_fast=True
     )
     tokenizer_two = T5TokenizerFast.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="tokenizer_2", revision=args.revision
     )
-    
+
     text_encoder_cls_one = import_model_class_from_model_name_or_path(
         args.pretrained_model_name_or_path, args.revision
     )
     text_encoder_cls_two = import_model_class_from_model_name_or_path(
         args.pretrained_model_name_or_path, args.revision, subfolder="text_encoder_2"
     )
-    
+
     text_encoder_one = text_encoder_cls_one.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
     )
     text_encoder_two = text_encoder_cls_two.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="text_encoder_2", revision=args.revision, variant=args.variant
     )
-    
+
     return tokenizer_one, tokenizer_two, text_encoder_one, text_encoder_two
 
 def load_vae_and_transformer(args):
@@ -68,11 +83,13 @@ def load_vae_and_transformer(args):
         from .flux_ip.transformer_flux_inpainting import FluxTransformer2DModel as TransformerModel
     elif args.model_type == 'qwen':
         from .qwen_ip.transformer import QwenTransformer2DModel as TransformerModel
+    elif args.model_type == 'zimage':
+        from .zimage_ip.transformer_z_image import ZImageTransformer2DModel as TransformerModel
     else:
         raise ValueError(f"Unknown model_type: {args.model_type}")
 
     transformer = TransformerModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant
+        args.pretrained_model_name_or_path, subfolder="transformer"
     )
     return vae, transformer
 
@@ -395,17 +412,15 @@ def set_ip_adapter_active(transformer, adapter_name: str):
 def use_ip_adapter(transformer, adapter_name: str):
     previous = []
     for processor in transformer.attn_processors.values():
-        if hasattr(processor, "get_active_adapter"):
-            previous.append((processor, processor.get_active_adapter()))
-            processor.set_active_adapter(adapter_name)
-        elif hasattr(processor, "set_active_adapter"):
-            previous.append((processor, None))
+        if hasattr(processor, "set_active_adapter"):
+            old_adapter = processor.get_active_adapter() if hasattr(processor, "get_active_adapter") else None
+            previous.append((processor, old_adapter))
             processor.set_active_adapter(adapter_name)
     try:
         yield
     finally:
         for processor, adapter in previous:
-            if adapter is not None and hasattr(processor, "set_active_adapter"):
+            if adapter is not None:
                 processor.set_active_adapter(adapter)
 
 

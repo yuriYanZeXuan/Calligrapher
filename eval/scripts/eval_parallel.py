@@ -40,11 +40,11 @@ from PIL import Image
 import torch
 import torch.multiprocessing as mp
 
-from eval.core.metrics import extract_text_from_prompt
-
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+from eval.core.metrics import extract_text_from_prompt
 
 # Default local model paths
 DEFAULT_MINERU_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/MinerU_VLM"
@@ -540,6 +540,20 @@ def compute_summary(output_path: str) -> Dict:
         if cat_vqa:
             cat_summary['vqa_mean'] = round(sum(cat_vqa) / len(cat_vqa), 4)
             
+        cat_vlm_acc = [r['vlm_text_accuracy'] for r in cat_results if 'vlm_text_accuracy' in r]
+        cat_vlm_ned = [r['vlm_text_ned'] for r in cat_results if 'vlm_text_ned' in r]
+        cat_vlm_quality = [r['vlm_image_quality'] for r in cat_results if 'vlm_image_quality' in r]
+        cat_vlm_overall = [r['vlm_overall'] for r in cat_results if 'vlm_overall' in r]
+
+        if cat_vlm_acc:
+            cat_summary['vlm_text_accuracy_mean'] = round(sum(cat_vlm_acc) / len(cat_vlm_acc), 4)
+        if cat_vlm_ned:
+            cat_summary['vlm_text_ned_mean'] = round(sum(cat_vlm_ned) / len(cat_vlm_ned), 4)
+        if cat_vlm_quality:
+            cat_summary['vlm_image_quality_mean'] = round(sum(cat_vlm_quality) / len(cat_vlm_quality), 4)
+        if cat_vlm_overall:
+            cat_summary['vlm_overall_mean'] = round(sum(cat_vlm_overall) / len(cat_vlm_overall), 4)
+
         cat_aesthetic = [r['aesthetic_score'] for r in cat_results if 'aesthetic_score' in r]
         if cat_aesthetic:
             cat_summary['aesthetic_mean'] = round(sum(cat_aesthetic) / len(cat_aesthetic), 4)

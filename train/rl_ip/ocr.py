@@ -1,89 +1,56 @@
-from paddleocr import PaddleOCR
-from PIL import Image
+"""OCR scoring using PaddleOCR."""
+
 import numpy as np
-from typing import Optional
-try:
-    from paddleocr import PaddleOCRVL
-    PADDLEOCRVL_AVAILABLE = True
-except ImportError:
-    PADDLEOCRVL_AVAILABLE = False
-    print("PaddleOCRVL is not available in this PaddleOCR installation.")
+from PIL import Image
+from paddleocr import PaddleOCR
+
 
 class OCRScorer:
-    def __init__(self, device=None):
-        # Initialize PaddleOCR based on the reference script to disable unnecessary modules.
-        # 'ch' lang model supports both Chinese and English.
-        self.ocr_model = PaddleOCR(
-            use_doc_orientation_classify=False, # 通过 use_doc_orientation_classify 参数指定不使用文档方向分类模型
-            use_doc_unwarping=False, # 通过 use_doc_unwarping 参数指定不使用文本图像矫正模型
-            use_textline_orientation=False, # 通过 use_textline_orientation 参数指定不使用文本行方向分类模型
-        )
-        # Alternative initialization with PaddleOCRVL if available
-        # if PADDLEOCRVL_AVAILABLE:
-        #     self.ocr_model = PaddleOCRVL()
-        print("Initialized PaddleOCR Model.")
+    """PaddleOCR-based text recognition scorer."""
 
-    def score(self, image_pil: Image.Image, mask_pil: Optional[Image.Image] = None) -> tuple[str, float]:
-        """
-        Performs OCR on a PIL image using the .predict() method
-        and returns the recognized text and average confidence score.
-        """
-        # Convert PIL image to numpy array for PaddleOCR
-        image_np = np.array(image_pil.convert('RGB'))
-        if mask_pil is not None:
-            mask_resized = mask_pil.resize(image_pil.size, Image.NEAREST)
-            mask_array = (np.array(mask_resized) > 127).astype(np.uint8)
-            image_np = image_np.copy()
-            image_np[mask_array == 0] = 255
-        
-        try:
-            # Use the predict method as specified in the reference
-            result = self.ocr_model.predict(input=image_np)
-            
-            # The result is a list containing one Result object
-            if not result or not result[0]:
-                return "", 0.0
-            
-            json_result = result[0].json
-            
-            # The actual data is nested inside the 'res' key
-            ocr_data = json_result.get('res', {})
-            
-            # Extract recognized texts and their scores as per the documentation
-            texts = ocr_data.get('rec_texts', [])
-            confidences = ocr_data.get('rec_scores', [])
-            
-            if texts and confidences:
-                full_text = " ".join(texts)
-                avg_confidence = np.mean(confidences) if confidences else 0.0
-                return full_text, float(avg_confidence)
-            else:
-                return "", 0.0
-        except Exception as e:
-            print(f"An error occurred during PaddleOCR prediction: {e}")
+    def __init__(self):
+        # Disable unnecessary modules for speed
+        self.model = PaddleOCR(
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+        )
+
+    def score(self, img: Image.Image) -> tuple[str, float]:
+        """Recognize text and return (text, confidence)."""
+        arr = np.array(img.convert("RGB"))
+        result = self.model.predict(input=arr)
+
+        if not result or not result[0]:
             return "", 0.0
 
-if __name__ == '__main__':
-    # Example usage:
-    # Create a dummy black image with white text
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-        img = Image.new('RGB', (200, 50), color = 'black')
-        d = ImageDraw.Draw(img)
-        try:
-            # Try to load a common font
-            font = ImageFont.truetype("Arial.ttf", 20)
-        except IOError:
-            # Use a default font if Arial is not available
-            font = ImageFont.load_default()
-        d.text((10,10), "Hello World", fill='white', font=font)
-        
-        scorer = OCRScorer()
-        text, confidence = scorer.score(img)
-        print(f"Recognized Text: '{text}', Confidence: {confidence:.4f}")
+        data = result[0].json.get("res", {})
+        texts = data.get("rec_texts", [])
+        confs = data.get("rec_scores", [])
 
-    except ImportError:
-        print("PIL/Pillow is required for the example. Please install it.")
-    except Exception as e:
-        print(f"An error occurred during the example: {e}")
-        print("This might be due to missing fonts or other system dependencies for PIL.")
+        if not texts or not confs:
+            return "", 0.0
+
+        return " ".join(texts), float(np.mean(confs))
+
+
+def main():
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.new("RGB", (200, 50), color="black")
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font = ImageFont.truetype("Arial.ttf", 20)
+    except IOError:
+        font = ImageFont.load_default()
+
+    draw.text((10, 10), "Hello World", fill="white", font=font)
+
+    scorer = OCRScorer()
+    text, conf = scorer.score(img)
+    print(f"Text: '{text}', Confidence: {conf:.3f}")
+
+
+if __name__ == "__main__":
+    main()

@@ -3,10 +3,10 @@
 Parallel evaluation script for text rendering tasks with multi-GPU support.
 
 Features:
-- Multi-GPU parallel evaluation (data parallelism)
-- Local model weights loading
-- JSONL output with append mode
-- Resume from checkpoint
+- Metric-by-metric evaluation (run all samples for one metric, then next metric)
+- GPU memory released after each metric completes
+- JSONL output with streaming write (one line per sample)
+- Fine-grained resume: skip only if specific metric already exists for a sample
 
 Usage:
     # 8-GPU parallel evaluation
@@ -15,10 +15,10 @@ Usage:
         --benchmark eval/LongText-Bench/text_prompts.jsonl \
         --benchmark_type longtext \
         --output eval_results/output.jsonl \
-        --metrics ocr clip \
+        --metrics vqa ocr clip \
         --gpus 8
 
-    # Resume from checkpoint
+    # Resume from checkpoint (checks each metric field per sample)
     python eval/scripts/eval_parallel.py \
         --results_dir /path/to/results \
         --benchmark eval/LongText-Bench/text_prompts.jsonl \
@@ -32,8 +32,10 @@ import sys
 import json
 import argparse
 import math
+import gc
+import fcntl
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from PIL import Image
 import torch
 import torch.multiprocessing as mp
@@ -45,6 +47,15 @@ sys.path.insert(0, str(project_root))
 # Default local model paths
 DEFAULT_MINERU_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/MinerU_VLM"
 DEFAULT_VLM_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B"
+
+# Metric name to output field mapping
+METRIC_FIELDS = {
+    'vqa': ['vqa_score'],
+    'ocr': ['ocr_acc', 'ocr_ned'],
+    'clip': ['clip_score'],
+    'vlm': ['vlm_text_accuracy', 'vlm_image_quality', 'vlm_overall'],
+    'aesthetic': ['aesthetic_score'],
+}
 
 
 def load_longtext_benchmark(benchmark_path: str) -> List[Dict]:
@@ -161,28 +172,109 @@ def find_result_image(results_dir: str, sample_id: str) -> Optional[str]:
     return None
 
 
-def load_existing_results(output_path: str) -> set:
-    """Load existing sample IDs from output file."""
-    existing_ids = set()
+def load_existing_results(output_path: str) -> Dict[str, Dict]:
+    """Load existing results from output file as a dict mapping id -> result dict."""
+    existing = {}
     if not os.path.exists(output_path):
-        return existing_ids
+        return existing
     
     with open(output_path, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            data = json.loads(line)
-            if 'id' in data:
-                existing_ids.add(data['id'])
+            try:
+                data = json.loads(line)
+                if 'id' in data:
+                    existing[data['id']] = data
+            except json.JSONDecodeError:
+                continue
     
-    return existing_ids
+    return existing
 
 
-def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path: str):
-    """Worker function for parallel evaluation."""
+def get_samples_needing_metric(dataset: List[Dict], existing_results: Dict[str, Dict], metric: str) -> List[Dict]:
+    """Get samples that don't have the specified metric computed yet."""
+    fields = METRIC_FIELDS.get(metric, [])
+    if not fields:
+        return dataset
+    
+    samples_to_eval = []
+    for sample in dataset:
+        sample_id = sample['id']
+        if sample_id not in existing_results:
+            # Sample not in results at all, need to evaluate
+            samples_to_eval.append(sample)
+        else:
+            # Check if all metric fields exist
+            result = existing_results[sample_id]
+            if not all(field in result for field in fields):
+                samples_to_eval.append(sample)
+    
+    return samples_to_eval
+
+
+def update_result_in_file(output_path: str, sample_id: str, updates: Dict):
+    """Update a specific sample's result in the JSONL file."""
+    # Read all results
+    results = load_existing_results(output_path)
+    
+    # Update or create entry
+    if sample_id in results:
+        results[sample_id].update(updates)
+    else:
+        results[sample_id] = {'id': sample_id, **updates}
+    
+    # Write back all results (atomic write)
+    temp_path = output_path + '.tmp'
+    with open(temp_path, 'w', encoding='utf-8') as f:
+        for result in results.values():
+            f.write(json.dumps(result, ensure_ascii=False) + '\n')
+    
+    os.replace(temp_path, output_path)
+
+
+def append_or_update_result(output_path: str, sample_id: str, updates: Dict, lock_file: str):
+    """Append or update a result with file locking for multi-process safety."""
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    
+    # Use a separate lock file for coordination
+    with open(lock_file, 'a') as lf:
+        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        try:
+            # Read existing results
+            results = {}
+            if os.path.exists(output_path):
+                with open(output_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                data = json.loads(line)
+                                if 'id' in data:
+                                    results[data['id']] = data
+                            except json.JSONDecodeError:
+                                continue
+            
+            # Update or create entry
+            if sample_id in results:
+                results[sample_id].update(updates)
+            else:
+                results[sample_id] = {'id': sample_id, **updates}
+            
+            # Write back all results
+            with open(output_path, 'w', encoding='utf-8') as f:
+                for result in results.values():
+                    f.write(json.dumps(result, ensure_ascii=False) + '\n')
+        finally:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+
+
+def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict], 
+                            output_path: str, metric: str, existing_results: Dict[str, Dict]):
+    """Worker function for evaluating a single metric across assigned samples."""
     import time
-    time.sleep(rank * 1.0)
+    time.sleep(rank * 0.5)
     device = f"cuda:{rank}"
     
     # Data partitioning
@@ -193,140 +285,162 @@ def worker_fn(rank: int, world_size: int, args, dataset: List[Dict], output_path
     my_dataset = dataset[start_idx:end_idx]
     
     if not my_dataset:
-        print(f"[GPU {rank}] No samples assigned")
+        print(f"[GPU {rank}] No samples assigned for metric '{metric}'")
         return
     
-    # Initialize evaluators
+    print(f"[GPU {rank}] Evaluating metric '{metric}' on {len(my_dataset)} samples")
+    
+    # Initialize only the needed evaluator
     from eval.core.metrics import OCRMetrics, CLIPMetrics, VLMMetrics, VQAScoreMetrics, AestheticScoreMetrics
     
-    evaluators = {}
-    if 'ocr' in args.metrics:
-        evaluators['ocr'] = OCRMetrics(model_path=args.mineru_path)
-    if 'clip' in args.metrics:
-        evaluators['clip'] = CLIPMetrics(device=device)
-    if 'vlm' in args.metrics:
-        evaluators['vlm'] = VLMMetrics(model_path=args.vlm_path, device=device)
-    if 'vqa' in args.metrics:
-        evaluators['vqa'] = VQAScoreMetrics(device=device)
-    if 'aesthetic' in args.metrics:
-        evaluators['aesthetic'] = AestheticScoreMetrics(device=device)
+    evaluator = None
+    if metric == 'vqa':
+        evaluator = VQAScoreMetrics(device=device)
+    elif metric == 'ocr':
+        evaluator = OCRMetrics(model_path=args.mineru_path)
+    elif metric == 'clip':
+        evaluator = CLIPMetrics(device=device)
+    elif metric == 'vlm':
+        evaluator = VLMMetrics(model_path=args.vlm_path, device=device)
+    elif metric == 'aesthetic':
+        evaluator = AestheticScoreMetrics(device=device)
     
-    # Resume: filter already evaluated samples
-    if args.resume:
-        existing_ids = load_existing_results(output_path)
-        my_dataset = [s for s in my_dataset if s['id'] not in existing_ids]
-        if not my_dataset:
-            print(f"[GPU {rank}] All samples already evaluated")
-            return
-        print(f"[GPU {rank}] {len(my_dataset)} samples to evaluate")
+    if evaluator is None:
+        print(f"[GPU {rank}] Unknown metric: {metric}")
+        return
     
-    import fcntl
+    lock_file = output_path + '.lock'
     
     for sample in my_dataset:
         sample_id = sample['id']
-        result = {'id': sample_id}
         
         # Find image
         image_path = find_result_image(args.results_dir, sample_id)
         if not image_path:
-            result['error'] = 'Image not found'
-            append_result(output_path, result)
+            updates = {'error': 'Image not found'}
+            append_or_update_result(output_path, sample_id, updates, lock_file)
             continue
         
-        # Load image - no try-except, let errors propagate
-        image = Image.open(image_path).convert('RGB')
+        # Prepare updates dict
+        updates = {
+            'prompt': sample['prompt'],
+            'category': sample.get('category', ''),
+            'image_path': image_path,
+        }
         
-        # Ground truth text
-        gt_text = sample.get('text', [])
-        gt_text = ' '.join(gt_text) if isinstance(gt_text, list) else sample['prompt']
+        try:
+            if metric == 'vqa':
+                score = evaluator.compute_score(image_path, sample['prompt'])
+                updates['vqa_score'] = round(float(score), 4)
+            
+            elif metric == 'ocr':
+                image = Image.open(image_path).convert('RGB')
+                gt_text = sample.get('text', [])
+                gt_text = ' '.join(gt_text) if isinstance(gt_text, list) else sample['prompt']
+                ocr_metrics = evaluator.compute_accuracy(image, gt_text)
+                updates['ocr_acc'] = round(ocr_metrics['ocr_acc'], 4)
+                updates['ocr_ned'] = round(ocr_metrics['ocr_ned'], 4)
+            
+            elif metric == 'clip':
+                score = evaluator.compute_clip_score(image_path, sample['prompt'])
+                updates['clip_score'] = round(float(score), 2)
+            
+            elif metric == 'vlm':
+                image = Image.open(image_path).convert('RGB')
+                vlm_result = evaluator.evaluate_text_rendering(image, sample['prompt'])
+                updates['vlm_text_accuracy'] = round(vlm_result['text_accuracy'], 4)
+                updates['vlm_image_quality'] = round(vlm_result['image_quality'], 4)
+                updates['vlm_overall'] = round(vlm_result['overall'], 4)
+            
+            elif metric == 'aesthetic':
+                score = evaluator.compute_score(image_path)
+                updates['aesthetic_score'] = round(float(score), 4)
         
-        # Evaluate OCR - no try-except, let errors propagate
-        if 'ocr' in evaluators:
-            ocr_metrics = evaluators['ocr'].compute_accuracy(image, gt_text)
-            result['ocr_acc'] = round(ocr_metrics['ocr_acc'], 4)
-            result['ocr_ned'] = round(ocr_metrics['ocr_ned'], 4)
+        except Exception as e:
+            updates[f'{metric}_error'] = str(e)
         
-        # Evaluate CLIP - no try-except, let errors propagate
-        if 'clip' in evaluators:
-            score = evaluators['clip'].compute_clip_score(image_path, sample['prompt'])
-            result['clip_score'] = round(score, 2)
-        
-        # Evaluate VLM - no try-except, let errors propagate
-        if 'vlm' in evaluators:
-            vlm_result = evaluators['vlm'].evaluate_text_rendering(image, sample['prompt'])
-            result['vlm_text_accuracy'] = round(vlm_result['text_accuracy'], 4)
-            result['vlm_image_quality'] = round(vlm_result['image_quality'], 4)
-            result['vlm_overall'] = round(vlm_result['overall'], 4)
-        
-        # Evaluate VQA - no try-except, let errors propagate
-        if 'vqa' in evaluators:
-            score = evaluators['vqa'].compute_score(image_path, sample['prompt'])
-            result['vqa_score'] = round(score, 4)
-
-        # Evaluate Aesthetic - no try-except, let errors propagate
-        if 'aesthetic' in evaluators:
-            score = evaluators['aesthetic'].compute_score(image_path)
-            result['aesthetic_score'] = round(score, 4)
-        
-        # Additional metadata
-        result['prompt'] = sample['prompt']
-        result['category'] = sample.get('category', '')
-        result['image_path'] = image_path
-        
-        # Append to output file
-        append_result(output_path, result)
+        # Write result immediately
+        append_or_update_result(output_path, sample_id, updates, lock_file)
         
         if args.verbose:
-            print(f"[GPU {rank}] Evaluated: {sample_id}")
+            print(f"[GPU {rank}] {metric}: {sample_id}")
+    
+    # Cleanup evaluator to free GPU memory
+    del evaluator
+    gc.collect()
+    torch.cuda.empty_cache()
+    print(f"[GPU {rank}] Completed metric '{metric}', GPU memory released")
 
 
-def append_result(output_path: str, result: Dict):
-    """Append a single result to JSONL file with file locking."""
-    import fcntl
+def run_metric_evaluation(args, dataset: List[Dict], output_path: str, metric: str):
+    """Run evaluation for a single metric across all GPUs."""
+    print(f"\n{'='*60}")
+    print(f"Evaluating metric: {metric}")
+    print(f"{'='*60}")
     
-    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    # Load existing results for resume
+    existing_results = load_existing_results(output_path) if args.resume else {}
     
-    with open(output_path, 'a', encoding='utf-8') as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        f.write(json.dumps(result, ensure_ascii=False) + '\n')
-        f.flush()
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    # Filter samples that need this metric
+    samples_to_eval = get_samples_needing_metric(dataset, existing_results, metric)
+    
+    if not samples_to_eval:
+        print(f"All samples already have metric '{metric}' computed. Skipping.")
+        return
+    
+    print(f"Samples to evaluate: {len(samples_to_eval)} / {len(dataset)}")
+    
+    # Determine number of GPUs to use
+    num_gpus = min(args.gpus, len(samples_to_eval))
+    if num_gpus < 1:
+        num_gpus = 1
+    
+    print(f"Using {num_gpus} GPUs for metric '{metric}'")
+    
+    # Launch parallel workers
+    if num_gpus > 1:
+        mp.spawn(
+            worker_fn_single_metric,
+            args=(num_gpus, args, samples_to_eval, output_path, metric, existing_results),
+            nprocs=num_gpus,
+            join=True
+        )
+    else:
+        # Single GPU mode
+        worker_fn_single_metric(0, 1, args, samples_to_eval, output_path, metric, existing_results)
+    
+    # Force GPU memory cleanup
+    gc.collect()
+    torch.cuda.empty_cache()
+    print(f"Metric '{metric}' evaluation completed. GPU memory released.")
 
 
 def compute_summary(output_path: str) -> Dict:
     """Compute summary statistics from output file."""
-    results = []
-    with open(output_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                results.append(json.loads(line))
-            except json.JSONDecodeError:
-                print(f"Warning: Skipping invalid JSON line in {line}")
-                continue
+    results = list(load_existing_results(output_path).values())
     
     if not results:
         return {}
     
     summary = {'total_evaluated': len(results)}
     
-    # OCR summary - support both old and new format
-    ocr_acc_scores = [r.get('ocr_acc', r.get('ocr_accuracy', 0)) for r in results if 'ocr_acc' in r or 'ocr_accuracy' in r]
+    # OCR summary
+    ocr_acc_scores = [r['ocr_acc'] for r in results if 'ocr_acc' in r]
     ocr_ned_scores = [r['ocr_ned'] for r in results if 'ocr_ned' in r]
     
     if ocr_acc_scores:
         summary['ocr_acc'] = {
             'mean': round(sum(ocr_acc_scores) / len(ocr_acc_scores), 4),
             'min': round(min(ocr_acc_scores), 4),
-            'max': round(max(ocr_acc_scores), 4)
+            'max': round(max(ocr_acc_scores), 4),
+            'count': len(ocr_acc_scores)
         }
     if ocr_ned_scores:
         summary['ocr_ned'] = {
             'mean': round(sum(ocr_ned_scores) / len(ocr_ned_scores), 4),
             'min': round(min(ocr_ned_scores), 4),
-            'max': round(max(ocr_ned_scores), 4)
+            'max': round(max(ocr_ned_scores), 4),
+            'count': len(ocr_ned_scores)
         }
     
     # CLIP summary
@@ -335,7 +449,8 @@ def compute_summary(output_path: str) -> Dict:
         summary['clip'] = {
             'mean': round(sum(clip_scores) / len(clip_scores), 2),
             'min': round(min(clip_scores), 2),
-            'max': round(max(clip_scores), 2)
+            'max': round(max(clip_scores), 2),
+            'count': len(clip_scores)
         }
     
     # VLM summary
@@ -344,7 +459,8 @@ def compute_summary(output_path: str) -> Dict:
         summary['vlm'] = {
             'mean': round(sum(vlm_scores) / len(vlm_scores), 4),
             'min': round(min(vlm_scores), 4),
-            'max': round(max(vlm_scores), 4)
+            'max': round(max(vlm_scores), 4),
+            'count': len(vlm_scores)
         }
 
     # VQA summary
@@ -353,7 +469,8 @@ def compute_summary(output_path: str) -> Dict:
         summary['vqa'] = {
             'mean': round(sum(vqa_scores) / len(vqa_scores), 4),
             'min': round(min(vqa_scores), 4),
-            'max': round(max(vqa_scores), 4)
+            'max': round(max(vqa_scores), 4),
+            'count': len(vqa_scores)
         }
 
     # Aesthetic summary
@@ -362,10 +479,11 @@ def compute_summary(output_path: str) -> Dict:
         summary['aesthetic'] = {
             'mean': round(sum(aesthetic_scores) / len(aesthetic_scores), 4),
             'min': round(min(aesthetic_scores), 4),
-            'max': round(max(aesthetic_scores), 4)
+            'max': round(max(aesthetic_scores), 4),
+            'count': len(aesthetic_scores)
         }
     
-    # Category-wise
+    # Category-wise breakdown
     categories = {}
     for r in results:
         cat = r.get('category', 'unknown')
@@ -376,12 +494,14 @@ def compute_summary(output_path: str) -> Dict:
     summary['by_category'] = {}
     for cat, cat_results in categories.items():
         cat_summary = {'count': len(cat_results)}
-        cat_ocr_acc = [r.get('ocr_acc', r.get('ocr_accuracy', 0)) for r in cat_results if 'ocr_acc' in r or 'ocr_accuracy' in r]
+        
+        cat_ocr_acc = [r['ocr_acc'] for r in cat_results if 'ocr_acc' in r]
         cat_ocr_ned = [r['ocr_ned'] for r in cat_results if 'ocr_ned' in r]
         if cat_ocr_acc:
             cat_summary['ocr_acc_mean'] = round(sum(cat_ocr_acc) / len(cat_ocr_acc), 4)
         if cat_ocr_ned:
             cat_summary['ocr_ned_mean'] = round(sum(cat_ocr_ned) / len(cat_ocr_ned), 4)
+        
         cat_clip = [r['clip_score'] for r in cat_results if 'clip_score' in r]
         if cat_clip:
             cat_summary['clip_mean'] = round(sum(cat_clip) / len(cat_clip), 2)
@@ -400,7 +520,7 @@ def compute_summary(output_path: str) -> Dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Parallel evaluation with multi-GPU support')
+    parser = argparse.ArgumentParser(description='Parallel evaluation with multi-GPU support (metric-by-metric)')
     
     parser.add_argument('--results_dir', type=str, required=True,
                        help='Directory containing generated images')
@@ -415,27 +535,27 @@ def main():
                        help='Path to local MinerU VLM model')
     parser.add_argument('--vlm_path', type=str, default=DEFAULT_VLM_PATH,
                        help='Path to local Qwen2.5-VL model')
-    parser.add_argument('--metrics', nargs='+', default=['ocr', 'clip'],
+    parser.add_argument('--metrics', nargs='+', default=['vqa', 'ocr', 'clip'],
                        choices=['ocr', 'clip', 'vlm', 'vqa', 'aesthetic'],
-                       help='Metrics to compute')
+                       help='Metrics to compute (evaluated in order specified)')
     parser.add_argument('--gpus', type=int, default=8,
                        help='Number of GPUs to use')
     parser.add_argument('--resume', action='store_true',
-                       help='Resume from existing output file')
+                       help='Resume: skip samples that already have the metric computed')
     parser.add_argument('--verbose', action='store_true',
                        help='Print progress for each sample')
     
     args = parser.parse_args()
     
     print("="*60)
-    print("Parallel Evaluation - Text Rendering")
+    print("Parallel Evaluation - Metric-by-Metric Mode")
     print("="*60)
     print(f"Results dir: {args.results_dir}")
     print(f"Benchmark: {args.benchmark}")
     print(f"Type: {args.benchmark_type}")
     print(f"Output: {args.output}")
     print(f"GPUs: {args.gpus}")
-    print(f"Metrics: {args.metrics}")
+    print(f"Metrics (in order): {args.metrics}")
     print(f"MinerU: {args.mineru_path}")
     print(f"VLM: {args.vlm_path}")
     print(f"Resume: {args.resume}")
@@ -446,34 +566,24 @@ def main():
     dataset = load_benchmark(args.benchmark, args.benchmark_type)
     print(f"Loaded {len(dataset)} samples")
     
-    # Check resume
+    # Show resume status if applicable
     if args.resume and os.path.exists(args.output):
         existing = load_existing_results(args.output)
-        to_eval = len([s for s in dataset if s['id'] not in existing])
-        print(f"Resume mode: {len(existing)} already evaluated, {to_eval} remaining")
+        print(f"\nResume mode: Found {len(existing)} existing results")
+        for metric in args.metrics:
+            remaining = len(get_samples_needing_metric(dataset, existing, metric))
+            print(f"  - {metric}: {len(dataset) - remaining}/{len(dataset)} done, {remaining} remaining")
     
-    # Check if all done
-    if args.resume:
-        existing = load_existing_results(args.output)
-        remaining = [s for s in dataset if s['id'] not in existing]
-        if not remaining:
-            print("\nAll samples already evaluated!")
-            summary = compute_summary(args.output)
-            print("\nSummary:")
-            print(json.dumps(summary, indent=2))
-            return
-    
-    # Launch parallel workers
-    print(f"\nLaunching {args.gpus} workers...")
+    # Set multiprocessing start method
     mp.set_start_method('spawn', force=True)
-    mp.spawn(
-        worker_fn,
-        args=(args.gpus, args, dataset, args.output),
-        nprocs=args.gpus,
-        join=True
-    )
     
-    print("\nAll workers completed!")
+    # Evaluate metrics one by one
+    for metric in args.metrics:
+        run_metric_evaluation(args, dataset, args.output, metric)
+    
+    print("\n" + "="*60)
+    print("All metrics evaluation completed!")
+    print("="*60)
     
     # Compute and save summary
     summary = compute_summary(args.output)
@@ -481,9 +591,7 @@ def main():
     with open(summary_path, 'w', encoding='utf-8') as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     
-    print("\n" + "="*60)
-    print("Evaluation Summary")
-    print("="*60)
+    print("\nEvaluation Summary:")
     print(json.dumps(summary, indent=2))
     print(f"\nResults: {args.output}")
     print(f"Summary: {summary_path}")

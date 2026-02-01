@@ -429,13 +429,12 @@ Rate from 0-10, respond with only a number.'''
 class VQAScoreMetrics:
     """VQA Score metrics using local VQAScore implementation."""
     
-    def __init__(self, model: str = 'clip-flant5-xxl', device: str = 'cuda', cache_dir: Optional[str] = None):
+    def __init__(self, model: str = 'clip-flant5-xxl', device: str = 'cuda'):
         """Initialize VQA Score metrics.
         
         Args:
             model: VQA model name (default: 'clip-flant5-xxl')
             device: Device for inference
-            cache_dir: Optional cache directory for model weights (not used, for compatibility)
         """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
@@ -443,7 +442,6 @@ class VQAScoreMetrics:
         
         # Import local VQAScore from TextCrafter_Eval
         from eval.TextCrafter_Eval.vqascore import VQAScore
-        
         self.vqa_model = VQAScore(model=model, device=device)
         
         self.available = True

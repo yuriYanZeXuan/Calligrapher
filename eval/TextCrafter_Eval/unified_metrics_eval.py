@@ -13,6 +13,10 @@ from tqdm import tqdm
 import torch
 from eval.mineru_ocr import create_mineru_client, blocks_to_text
 
+# Global cache directory for all models
+CACHE_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight"
+
+
 def convert_numpy_types(obj):
     """Recursively convert numpy types to Python native types for JSON serialization"""
     if isinstance(obj, np.integer):
@@ -27,11 +31,13 @@ def convert_numpy_types(obj):
         return [convert_numpy_types(item) for item in obj]
     return obj
 
+
 class UnifiedMetricsEvaluator:
-    def __init__(self, device: str = "auto", cache_dir: str = None, use_hf_mirror: bool = True):
+    def __init__(self, device: str = "auto"):
         """Initialize evaluator"""
         self.device = "cuda" if torch.cuda.is_available() and device != "cpu" else "cpu"
         self.models = {}
+        print(f"Initializing UnifiedMetricsEvaluator with device: {self.device}, cache_dir: {CACHE_DIR}")
         self._load_models()
     
     def _load_models(self):
@@ -65,7 +71,7 @@ class UnifiedMetricsEvaluator:
         try:
             import open_clip
             # Get cache directory (if set)
-            cache_dir = os.environ.get('HF_HOME', None)
+            cache_dir = CACHE_DIR
             if cache_dir:
                 model, _, preprocess = open_clip.create_model_and_transforms(
                     'ViT-L-14', pretrained='openai', cache_dir=cache_dir)
@@ -89,7 +95,7 @@ class UnifiedMetricsEvaluator:
         # Import local VQAScore
         try:
             from .vqascore import VQAScore
-            self.models['vqa'] = VQAScore(model='clip-flant5-xxl', device=self.device)
+            self.models['vqa'] = VQAScore(model='clip-flant5-xxl', device=self.device,cache_dir=CACHE_DIR)
             self.t2v_available = True
         except ImportError:
             self.t2v_available = False
@@ -502,12 +508,6 @@ def main():
     parser.add_argument('--output_file', required=True, help='result output file path')
     parser.add_argument('--device', default='auto', choices=['auto', 'cuda', 'cpu'], 
                        help='computing device')
-    parser.add_argument('--cache_dir', default='/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight', 
-                       help='HuggingFace model cache directory path (default: /share/dnk/checkpoint)')
-    parser.add_argument('--use_hf_mirror', action='store_true', default=True,
-                       help='whether to use HuggingFace mirror (default: True)')
-    parser.add_argument('--no_hf_mirror', dest='use_hf_mirror', action='store_false',
-                       help='do not use HuggingFace mirror')
     
     args = parser.parse_args()
     
@@ -515,30 +515,10 @@ def main():
     logging.basicConfig(level=logging.INFO, 
                        format='%(asctime)s - %(levelname)s - %(message)s')
     
-    # Set environment variables before initializing evaluator
-    if args.use_hf_mirror:
-        os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-        logging.info("Using HuggingFace mirror: https://hf-mirror.com")
-    
-    # Set huggingface cache directory
-    if args.cache_dir:
-        cache_dir = os.path.abspath(args.cache_dir)
-        os.makedirs(cache_dir, exist_ok=True)
-        # Set all relevant cache environment variables
-        os.environ['HF_HOME'] = cache_dir
-        os.environ['HF_HUB_CACHE'] = cache_dir
-        os.environ['TRANSFORMERS_CACHE'] = cache_dir
-        os.environ['HF_DATASETS_CACHE'] = cache_dir
-        os.environ['TORCH_HOME'] = cache_dir
-        os.environ['HUGGINGFACE_HUB_CACHE'] = cache_dir
-        logging.info(f"Set HuggingFace cache directory to: {cache_dir}")
+    logging.info(f"Using cache directory: {CACHE_DIR}")
     
     # Initialize evaluator
-    evaluator = UnifiedMetricsEvaluator(
-        device=args.device, 
-        cache_dir=args.cache_dir,
-        use_hf_mirror=args.use_hf_mirror
-    )
+    evaluator = UnifiedMetricsEvaluator(device=args.device)
     
     # Run evaluation
     evaluator.evaluate_full_dataset(args.benchmark_dir, args.result_dir, args.output_file)

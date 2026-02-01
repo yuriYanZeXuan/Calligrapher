@@ -22,7 +22,7 @@ from tqdm.auto import tqdm
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from .dataset import LTB_Dataset, collate_fn
+from .dataset import LTB_Dataset, collate_ltb
 from .flux_ip.utils import (
     encode_prompt,
     get_sigmas,
@@ -275,6 +275,7 @@ def parse_args():
     p.add_argument("--resolution", type=int, default=512)
     p.add_argument("--train_batch_size", type=int, default=1)
     p.add_argument("--max_train_steps", type=int, default=10000)
+    p.add_argument("--max_train_samples", type=int, default=None)
     p.add_argument("--learning_rate", type=float, default=1e-4)
     p.add_argument("--gradient_accumulation_steps", type=int, default=1)
     p.add_argument("--mixed_precision", default="fp16", choices=["no", "fp16", "bf16"])
@@ -412,7 +413,7 @@ def main():
     dataset = LTB_Dataset(args, accelerator)
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=args.train_batch_size, shuffle=True,
-        collate_fn=collate_fn,
+        collate_fn=collate_ltb,
     )
 
     lr_scheduler = get_scheduler(

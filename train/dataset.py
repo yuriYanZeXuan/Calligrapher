@@ -6,7 +6,7 @@ from torchvision import transforms
 import random
 import numpy as np
 import os
-
+import json
 class SimpleDataset(Dataset):
     def __init__(self, args, accelerator):
         self.args = args
@@ -120,6 +120,14 @@ class LTB_Dataset(Dataset):
         self.args = args
         self.accelerator = accelerator
         self.dataset = self._load_data()
+        self.transform = transforms.Compose(
+            [
+                transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.CenterCrop(args.resolution),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+            ]
+        )
 
     def _load_data(self):
         path = Path(self.args.train_data_json)
@@ -161,6 +169,12 @@ class LTB_Dataset(Dataset):
         }
 
         
+def collate_ltb(examples):
+    pixel_values = torch.stack([e["pixel_values"] for e in examples]).to(memory_format=torch.contiguous_format).float()
+    prompts = [e["prompts"] for e in examples]
+    return {"pixel_values": pixel_values, "prompts": prompts}
+
+
 def collate_fn(examples, clip_image_processor):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()

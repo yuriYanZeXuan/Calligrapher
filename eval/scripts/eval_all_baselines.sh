@@ -2,7 +2,7 @@
 MINERU_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/MinerU_VLM"
 VLM_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B"
 
-MODELS=(qwenimage zimage glmimage nanobanana fluxdev fluxklein)
+MODELS=(qwenimage z_image glm_image fluxdev fluxklein)
 
 BENCH_NAMES=(LongText-Bench CVTG-2K OneIG-Bench)
 BENCH_PATHS=(eval/LongText-Bench eval/CVTG-2K eval/OneIG-Bench/OneIG-Bench_text.json)
@@ -28,6 +28,6 @@ for model in "${MODELS[@]}"; do
       --metrics vqa ocr clip vlm aesthetic \
       --mineru_path "${MINERU_PATH}" \
       --vlm_path "${VLM_PATH}" \
-      --resume \
+      --resume 
   done
 done

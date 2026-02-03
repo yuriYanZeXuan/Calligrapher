@@ -61,25 +61,34 @@ METRIC_FIELDS = {
 
 
 def load_longtext_benchmark(benchmark_path: str) -> List[Dict]:
-    """Load LongText-Bench data from jsonl file."""
+    """Load LongText-Bench data from jsonl file or directory."""
     samples = []
-    lang_prefix = 'zh' if 'zh' in benchmark_path else 'en'
+    benchmark_path = Path(benchmark_path)
     
-    with open(benchmark_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            item = json.loads(line)
-            prompt_id = item.get('prompt_id', len(samples))
-            sample_id = f"longtext_{lang_prefix}_{prompt_id}"
-            samples.append({
-                'id': sample_id,
-                'prompt': item.get('prompt', ''),
-                'text': item.get('text', []),
-                'category': item.get('category', ''),
-                'length': item.get('length', '')
-            })
+    # If directory, scan all .jsonl files
+    if benchmark_path.is_dir():
+        jsonl_files = list(benchmark_path.glob('*.jsonl'))
+    else:
+        jsonl_files = [benchmark_path]
+    
+    for jsonl_file in jsonl_files:
+        lang_prefix = 'zh' if 'zh' in jsonl_file.name else 'en'
+        
+        with open(jsonl_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                item = json.loads(line)
+                prompt_id = item.get('prompt_id', len(samples))
+                sample_id = f"longtext_{lang_prefix}_{prompt_id}"
+                samples.append({
+                    'id': sample_id,
+                    'prompt': item.get('prompt', ''),
+                    'text': item.get('text', []),
+                    'category': item.get('category', ''),
+                    'length': item.get('length', '')
+                })
     
     return samples
 

@@ -45,8 +45,8 @@ def extract_text_from_prompt(prompt: str) -> str:
                 if group:
                     quoted_texts.append(group)
                     
-        print(f"Extracted quoted texts: {quoted_texts}")
-        print("============")
+        # print(f"Extracted quoted texts: {quoted_texts}")
+        # print("============")
         if quoted_texts:
             return ' '.join(quoted_texts)
         # If no quoted text, return the full prompt

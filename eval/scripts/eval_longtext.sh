@@ -12,7 +12,7 @@ python eval/scripts/evaluate.py \
     --benchmark_type longtext \
     --generated baselines/results/z_image/LongText-Bench \
     --output eval_results/z_image_longtext_en.json \
-    --metrics ocr clip \
+    --metrics vqa ocr clip vlm aesthetic \
     --mineru_path "$MINERU_PATH" \
     --vlm_path "$VLM_PATH"
 

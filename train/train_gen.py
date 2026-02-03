@@ -367,9 +367,16 @@ def main():
             enc2.to(accelerator.device, dtype=dtype)
 
     if args.gradient_checkpointing:
-        transformer.gradient_checkpointing = True
-        enc1.gradient_checkpointing_enable()
-        if enc2 is not None:
+        # For diffusers models (e.g. ZImageTransformer2DModel), setting the flag is not enough:
+        # we must initialize the checkpointing function via `enable_gradient_checkpointing()`.
+        if hasattr(transformer, "enable_gradient_checkpointing"):
+            transformer.enable_gradient_checkpointing()
+        else:
+            transformer.gradient_checkpointing = True
+
+        if hasattr(enc1, "gradient_checkpointing_enable"):
+            enc1.gradient_checkpointing_enable()
+        if enc2 is not None and hasattr(enc2, "gradient_checkpointing_enable"):
             enc2.gradient_checkpointing_enable()
 
     # Z-Image LoRA (inject AFTER .to so LoRA params match device/dtype)
@@ -495,7 +502,7 @@ def main():
 
                 # Add noise
                 noise = torch.randn_like(latents)
-                u = compute_density_for_timestep_sampling("logit_normal", latents.shape[0])
+                u = compute_density_for_timestep_sampling("logit_normal", latents.shape[0], logit_mean=0.0, logit_std=1.0,mode_scale=1.29)
                 ts = scheduler.timesteps[(u * scheduler.config.num_train_timesteps).long()].to(latents.device)
                 sigmas = get_sigmas(scheduler, ts, latents.ndim, latents.dtype, latents.device)
                 noisy = sigmas * noise + (1.0 - sigmas) * latents

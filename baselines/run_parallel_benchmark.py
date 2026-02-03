@@ -29,6 +29,7 @@ sys.path.extend([
     os.path.join(BASE_DIR, 'glm_image'),
     os.path.join(BASE_DIR, 'z_image'),
     os.path.join(BASE_DIR, 'qwenimage'),
+    os.path.join(BASE_DIR, 'nanobanana'),
 ])
 
 # Model paths configuration
@@ -285,6 +286,23 @@ class QwenImageWrapper(ModelWrapper):
         )
         result.images[0].save(output_path)
 
+class NanoBananaWrapper(ModelWrapper):
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from inference_nanobanana import NanoBananaGenerator
+        # API-based model, device parameter is not used but kept for compatibility
+        self.generator = NanoBananaGenerator(device=device)
+
+    def generate(self, prompt, output_path, **kwargs):
+        self.generator.generate(
+            prompt=prompt,
+            output_path=output_path,
+            seed=42,
+            temperature=1.0,
+            aspect_ratio="1:1",
+            image_size="1K"
+        )
+
 # Model registry
 MODELS = {
     'textflux': TextFluxWrapper,
@@ -296,7 +314,8 @@ MODELS = {
     'fluxklein': FluxKleinWrapper,
     'glm_image': GlmImageWrapper,
     'z_image': ZImageWrapper,
-    'qwenimage': QwenImageWrapper
+    'qwenimage': QwenImageWrapper,
+    'nanobanana': NanoBananaWrapper
 }
 
 # --- Data Loading ---

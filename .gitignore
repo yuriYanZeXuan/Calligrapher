@@ -24,3 +24,7 @@
 .env
 eval/LTB_iid
 papers-content
+papers-content.tar.gz
+*.DS_Store
+eval/stats/*
+test.ipynb

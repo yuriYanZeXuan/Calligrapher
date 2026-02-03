@@ -1,0 +1,60 @@
+# 富文本数据集构建配置文件
+
+# 按text_length分布的数据量配置（词数范围 -> 占比）
+length_distribution:
+  - range: [0, 50]
+    ratio: 0.10
+  - range: [50, 100]
+    ratio: 0.10
+  - range: [100, 200]
+    ratio: 0.20
+  - range: [200, 400]
+    ratio: 0.30
+  - range: [400, 800]
+    ratio: 0.20
+  - range: [800, 1600]
+    ratio: 0.10
+
+# 支持的语种列表
+languages:
+  - code: "en"
+    name: "English"
+    name_zh: "英语"
+  - code: "zh"
+    name: "Chinese"
+    name_zh: "中文"
+  - code: "ko"
+    name: "Korean"
+    name_zh: "韩语"
+  - code: "ja"
+    name: "Japanese"
+    name_zh: "日语"
+  - code: "ar"
+    name: "Arabic"
+    name_zh: "阿拉伯语"
+  - code: "fr"
+    name: "French"
+    name_zh: "法语"
+
+# 每语种目标样本数量
+total_samples_per_lang: 10000
+
+# 渲染配置
+render:
+  page_width: 1000
+  page_height: 1400
+  min_font_size: 14
+  max_font_size: 32
+
+# 数据源路径（相对于项目根目录）
+paths:
+  papers_content: "papers-content"
+  output_dir: "eval/Web_rendered"
+  ltb_input: "eval/LongText-Bench"
+  ltb_output: "eval/LTB_iid"
+
+# LLM API 配置
+llm:
+  model: "qwen3-vl-235b-a22b-instruct"
+  max_tokens: 4096
+  temperature: 0.7

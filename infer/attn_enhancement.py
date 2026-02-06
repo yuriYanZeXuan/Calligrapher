@@ -663,30 +663,49 @@ class AttentionEnhancement:
                 subfolder="attn_enhance",
             )
 
-            # 保存 enhancement bias 可视化（缩小到合理尺寸）
-            bias = state.get_bias(x_seq_len + cap_seq_len, mask_latent.device, torch.float32)
+            # --- bias 可视化 1: text×image 交叉子矩阵 ---
+            # 只提取 text_indices 行 × image_indices 列 的紧凑子矩阵
+            bias = state.get_bias(
+                x_seq_len + cap_seq_len, mask_latent.device, torch.float32
+            )
             bias_np = bias[0, 0].cpu().numpy()
-            # 只截取有内容的区域（非零行列的范围）
-            nz_rows = np.where(bias_np.any(axis=1))[0]
-            nz_cols = np.where(bias_np.any(axis=0))[0]
-            if len(nz_rows) > 0 and len(nz_cols) > 0:
-                r0, r1 = nz_rows[0], nz_rows[-1] + 1
-                c0, c1 = nz_cols[0], nz_cols[-1] + 1
-                # 加一点边距
-                margin = 10
-                r0, c0 = max(0, r0 - margin), max(0, c0 - margin)
-                r1, c1 = min(bias_np.shape[0], r1 + margin), min(bias_np.shape[1], c1 + margin)
-                bias_crop = bias_np[r0:r1, c0:c1]
-            else:
-                bias_crop = bias_np
+            text_abs = [x_seq_len + i for i in text_indices if i < cap_seq_len]
+            image_abs = [i for i in image_indices if i < x_seq_len]
+            if text_abs and image_abs:
+                # image→text 子矩阵: rows=image_patches, cols=text_tokens
+                sub = bias_np[np.ix_(image_abs, text_abs)]  # (M, T)
+                # 放大到可见尺寸
+                h_px = max(sub.shape[0], 4)
+                w_px = max(sub.shape[1] * 8, 64)  # text token 较少，横向放大
+                sub_img = _attn_to_heatmap(sub, size=(w_px, h_px))
+                token_labels = ", ".join(
+                    f"{tokenizer.decode([real_ids[i]])!r}" for i in text_indices if i < len(real_ids)
+                )
+                logger.save_image(
+                    sub_img,
+                    "attn_enhance_bias_submatrix",
+                    caption=(
+                        f"bias submatrix (img_patches × text_tokens): "
+                        f"{sub.shape[0]}×{sub.shape[1]}  "
+                        f"log_scale={math.log(config.attn_enhance_scale):.3f}\n"
+                        f"text tokens: {token_labels}"
+                    ),
+                    subfolder="attn_enhance",
+                )
 
-            bias_img = _attn_to_heatmap(bias_crop, size=(512, 512))
+            # --- bias 可视化 2: image patch 空间增强图 ---
+            # 每个 patch 被增强的 text token 数 → reshape (Hp, Wp)
+            patch_enhance = np.zeros(x_seq_len, dtype=np.float32)
+            for idx in image_abs:
+                patch_enhance[idx] = 1.0
+            spatial = patch_enhance[: Hp * Wp].reshape(Hp, Wp)
+            spatial_img = _attn_to_heatmap(spatial, size=(Wp * 8, Hp * 8))
             logger.save_image(
-                bias_img,
-                "attn_enhance_bias_matrix",
+                spatial_img,
+                "attn_enhance_spatial_mask",
                 caption=(
-                    f"enhancement bias (log_scale={math.log(config.attn_enhance_scale):.3f})  "
-                    f"crop=[{r0}:{r1}, {c0}:{c1}]  "
+                    f"enhanced patch spatial map ({Hp}×{Wp})  "
+                    f"patches={len(image_abs)}/{num_patches}  "
                     f"i2t={config.attn_enhance_image_to_text} t2i={config.attn_enhance_text_to_image}"
                 ),
                 subfolder="attn_enhance",

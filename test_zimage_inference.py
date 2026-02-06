@@ -80,12 +80,12 @@ def test_with_glyph_injection(inference, output_dir: Path):
     print("测试 3: 使用 Glyph Injection")
     print("="*60)
     
-    prompt = "一幅展示爱因斯坦站在黑板前的图片，黑板上写着二次方程求根公式，教室里光线柔和"
+    prompt = '一幅展示爱因斯坦站在黑板前的图片，黑板上写着"x=(-b±√(b²-4ac))/2a"，教室里光线柔和'
     
     text_regions = [
         {
             "bbox": [0.25, 0.15, 0.75, 0.45],  # 黑板区域
-            "content": "x = (-b ± √(b²-4ac)) / 2a"
+            "content": "x=(-b±√(b²-4ac))/2a"
         }
     ]
     

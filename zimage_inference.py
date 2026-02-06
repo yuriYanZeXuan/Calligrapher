@@ -295,7 +295,8 @@ class ZImageInference:
         if K > 1 and inject_until_step > 0:
             latent = self._denoise_local_resample(
                 noise, timesteps, prompt_embeds,
-                mask_exp, K, inject_until_step, config
+                mask_exp, K, inject_until_step, config,
+                injection_data=injection_data
             )
         else:
             latent = self._denoise_template_inject(
@@ -324,9 +325,13 @@ class ZImageInference:
         K: int,
         inject_until_step: int,
         config: GenerationConfig,
+        injection_data: dict = None,
     ) -> torch.Tensor:
         """
-        局部重采样去噪：text-region 用 K 个噪声分支，每步取平均。
+        局部重采样 + Glyph Injection 去噪。
+        
+        每个分支独立去噪后先注入文字模板 latent（glyph injection），
+        再在 text-region 取 K 个分支的平均写回，兼顾文字模板引导和多分支降噪。
         
         Args:
             noise: 主干噪声 (1, C, H, W)
@@ -336,9 +341,11 @@ class ZImageInference:
             K: 分支数
             inject_until_step: 局部重采样截止步数
             config: 生成配置
+            injection_data: glyph injector 准备的注入数据（mask + text latent list）
         """
         base_seed = config.seed or 0
         dtype = self.pipeline.transformer.dtype
+        do_inject = config.use_glyph_injection and injection_data is not None
         
         # ---------- 构造 K 个分支 ----------
         # 区域外共享 noise，区域内各用不同种子
@@ -349,9 +356,9 @@ class ZImageInference:
             branch = noise * (1 - mask_exp) + local_noise * mask_exp
             branches.append(branch)
         
-        print(f"局部重采样: K={K}, inject_until_step={inject_until_step}/{len(timesteps)}")
+        print(f"局部重采样: K={K}, inject_until_step={inject_until_step}/{len(timesteps)}, glyph_inject={do_inject}")
         
-        # ---------- 阶段 1: 多分支去噪 ----------
+        # ---------- 阶段 1: 多分支去噪 + glyph injection ----------
         for step_idx, t in enumerate(timesteps[:inject_until_step]):
             timestep = t.expand(1)
             timestep_norm = (1000 - timestep) / 1000
@@ -378,6 +385,13 @@ class ZImageInference:
                 branches[k] = self.pipeline.scheduler.step(
                     noise_pred_k.to(torch.float32), t, branches[k], return_dict=False
                 )[0]
+                
+                # 每个分支都注入文字模板 latent
+                if do_inject:
+                    branches[k] = self.glyph_injector.inject_latent(
+                        branches[k], injection_data, step_idx + 1,
+                        config=config.injection_config
+                    )
             # 最后一次 step 已将 _step_index 推进到 saved_idx + 1
             
             # 文字区域取 K 个分支的平均，然后回写到每个分支
@@ -388,7 +402,7 @@ class ZImageInference:
         # 取第 0 分支作为合并后的 latent（此时所有分支完全一致）
         latent = branches[0]
         
-        # ---------- 阶段 2: 单分支正常去噪 ----------
+        # ---------- 阶段 2: 单分支正常去噪 + glyph injection ----------
         for step_idx, t in enumerate(timesteps[inject_until_step:]):
             timestep = t.expand(1)
             timestep_norm = (1000 - timestep) / 1000
@@ -405,6 +419,14 @@ class ZImageInference:
             latent = self.pipeline.scheduler.step(
                 noise_pred.to(torch.float32), t, latent, return_dict=False
             )[0]
+            
+            # 阶段 2 也持续注入文字模板
+            if do_inject:
+                global_step = inject_until_step + step_idx + 1
+                latent = self.glyph_injector.inject_latent(
+                    latent, injection_data, global_step,
+                    config=config.injection_config
+                )
         
         return latent
     

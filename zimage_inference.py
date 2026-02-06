@@ -292,17 +292,40 @@ class ZImageInference:
         mask = injection_data["mask_latent"]       # (1, 1, h, w)
         mask_exp = mask.expand_as(noise)            # (1, C, h, w)
         
+        # ---- Attention Enhancement ----
+        attn_enh = None
+        if config.injection_config.attn_enhance_enabled:
+            from infer.attn_enhancement import AttentionEnhancement
+            attn_enh = AttentionEnhancement.create(
+                config=config.injection_config,
+                tokenizer=self.pipeline.tokenizer,
+                prompt=prompt,
+                mask_latent=injection_data["mask_latent"],
+                latent_height=latent_height,
+                latent_width=latent_width,
+                cap_ori_len=len(prompt_embeds[0]),
+                num_layers=len(self.pipeline.transformer.layers),
+            )
+            if attn_enh is not None:
+                attn_enh.install(self.pipeline.transformer)
+        
         if K > 1 and inject_until_step > 0:
             latent = self._denoise_local_resample(
                 noise, timesteps, prompt_embeds,
                 mask_exp, K, inject_until_step, config,
-                injection_data=injection_data
+                injection_data=injection_data,
+                attn_enh=attn_enh
             )
         else:
             latent = self._denoise_template_inject(
                 noise, timesteps, prompt_embeds,
-                injection_data, config
+                injection_data, config,
+                attn_enh=attn_enh
             )
+        
+        # 卸载 attention enhancement
+        if attn_enh is not None:
+            attn_enh.uninstall(self.pipeline.transformer)
         
         # 解码
         latent = latent.to(self.pipeline.vae.dtype)
@@ -326,6 +349,7 @@ class ZImageInference:
         inject_until_step: int,
         config: GenerationConfig,
         injection_data: dict = None,
+        attn_enh=None,
     ) -> torch.Tensor:
         """
         局部重采样 + Glyph Injection 去噪。
@@ -342,6 +366,7 @@ class ZImageInference:
             inject_until_step: 局部重采样截止步数
             config: 生成配置
             injection_data: glyph injector 准备的注入数据（mask + text latent list）
+            attn_enh: AttentionEnhancement 实例（可选）
         """
         base_seed = config.seed or 0
         dtype = self.pipeline.transformer.dtype
@@ -358,8 +383,12 @@ class ZImageInference:
         
         print(f"局部重采样: K={K}, inject_until_step={inject_until_step}/{len(timesteps)}, glyph_inject={do_inject}")
         
+        total_steps = len(timesteps)
+        
         # ---------- 阶段 1: 多分支去噪 + glyph injection ----------
         for step_idx, t in enumerate(timesteps[:inject_until_step]):
+            if attn_enh is not None:
+                attn_enh.set_step(step_idx, total_steps)
             timestep = t.expand(1)
             timestep_norm = (1000 - timestep) / 1000
             
@@ -404,6 +433,8 @@ class ZImageInference:
         
         # ---------- 阶段 2: 单分支正常去噪 + glyph injection ----------
         for step_idx, t in enumerate(timesteps[inject_until_step:]):
+            if attn_enh is not None:
+                attn_enh.set_step(inject_until_step + step_idx, total_steps)
             timestep = t.expand(1)
             timestep_norm = (1000 - timestep) / 1000
             
@@ -439,12 +470,16 @@ class ZImageInference:
         prompt_embeds: list,
         injection_data: dict,
         config: GenerationConfig,
+        attn_enh=None,
     ) -> torch.Tensor:
         """原有的 text-latent 模板注入去噪"""
         dtype = self.pipeline.transformer.dtype
         latent = noise.clone()
+        total_steps = len(timesteps)
         
         for step_idx, t in enumerate(timesteps):
+            if attn_enh is not None:
+                attn_enh.set_step(step_idx, total_steps)
             timestep = t.expand(1)
             timestep_norm = (1000 - timestep) / 1000
             

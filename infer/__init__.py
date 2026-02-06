@@ -10,6 +10,7 @@ Z-Image 推理模块
 from .prompt_refiner import PromptRefiner, refine_prompt
 from .glyph_injector import GlyphInjector
 from .test_time_scaling import TestTimeScaling, MultiGPUTestTimeScaling, create_multi_gpu_tts
+from .attn_enhancement import AttentionEnhancement
 
 __all__ = [
     "PromptRefiner",
@@ -18,4 +19,5 @@ __all__ = [
     "TestTimeScaling",
     "MultiGPUTestTimeScaling",
     "create_multi_gpu_tts",
+    "AttentionEnhancement",
 ]

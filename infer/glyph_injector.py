@@ -95,16 +95,34 @@ class InjectionConfig:
         mask_strength: 空间混合强度 (0-1)，控制文字 latent 在 mask 区域的混合权重
         timestep_ratio: 时间步注入比例 (0-1)，仅在前 X% 的去噪步骤中注入
         num_local_samples: 局部重采样分支数 K，在 text region 用 K 个不同噪声去噪后取平均
+        
+        attn_enhance_scale: attention reweighting 倍率，对 text-token ↔ glyph-patch 的注意力乘以该值
+        attn_enhance_timestep_ratio: 仅在前 X% 的去噪时间步中激活增强 (0-1)
+        attn_enhance_layer_ratio: 仅在前 X% 的 transformer block 层中激活增强 (0-1)
+        attn_enhance_text_to_image: 增强 text→image 方向的注意力 (text token 更关注 glyph patch)
+        attn_enhance_image_to_text: 增强 image→text 方向的注意力 (glyph patch 更关注 text token)
     """
     mask_strength: float = 0.8
     timestep_ratio: float = 1.0
     num_local_samples: int = 3
+    
+    # Prompt-Latent Attention Enhancement
+    attn_enhance_scale: float = 2.0
+    attn_enhance_timestep_ratio: float = 0.5
+    attn_enhance_layer_ratio: float = 0.3
+    attn_enhance_text_to_image: bool = True
+    attn_enhance_image_to_text: bool = True
 
     def should_inject(self, step_idx: int, total_steps: int) -> bool:
         """判断当前步是否需要注入"""
         if self.timestep_ratio >= 1.0:
             return True
         return step_idx < int(total_steps * self.timestep_ratio)
+    
+    @property
+    def attn_enhance_enabled(self) -> bool:
+        """注意力增强是否启用"""
+        return self.attn_enhance_text_to_image or self.attn_enhance_image_to_text
 
 
 class GlyphInjector:
@@ -146,8 +164,8 @@ class GlyphInjector:
         text: str, 
         width: int, 
         height: int,
-        background_color: str = "white",
-        text_color: str = "black"
+        background_color: str = "black",
+        text_color: str = "white"
     ) -> Image.Image:
         """
         渲染文字模板图像

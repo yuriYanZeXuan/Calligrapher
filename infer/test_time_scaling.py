@@ -5,7 +5,7 @@ Test Time Scaling: 基于 Beam Search 的测试时缩放接口
 """
 
 import os
-from typing import Optional, Callable
+from typing import Optional, Callable, Union
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 from infer.mylogger import TTSLogger
+from infer.glyph_injector import InjectionConfig
 
 # 加载环境变量
 load_dotenv(Path(__file__).parent.parent / '.env')
@@ -188,7 +189,7 @@ class MultiGPUTestTimeScaling:
         logger: TTSLogger = None,
         vlm_score_mode: str = "rank",
         glyph_injector=None,
-        injection_strength: float = 0.8,
+        injection_strength: Union[InjectionConfig, float] = None,
     ):
         self.model_path = model_path
         self.devices = devices
@@ -198,7 +199,7 @@ class MultiGPUTestTimeScaling:
         self.logger = logger or TTSLogger(run_name="multi_gpu_tts")
         self.vlm_score_mode = vlm_score_mode  # "rank" 或 "abs_score"
         self.glyph_injector = glyph_injector
-        self.injection_strength = injection_strength
+        self.injection_config = InjectionConfig.from_value(injection_strength)
         
         self.logger.info(f"多 GPU TTS 初始化，使用 {self.num_gpus} 张 GPU: {devices}")
         
@@ -276,7 +277,7 @@ class MultiGPUTestTimeScaling:
     
     def _denoise_step(self, device: str, latent: torch.Tensor, prompt_embeds: list, t,
                       injection_data: dict = None, step_idx: int = 0,
-                      injection_strength: float = 0.8) -> tuple[torch.Tensor, torch.Tensor]:
+                      injection_config: Union[InjectionConfig, float, None] = None) -> tuple[torch.Tensor, torch.Tensor]:
         """单步去噪，返回 (next_latent, predicted_x0)
         
         flow matching: x_t = x_0 + σ·v  →  x_0 = x_t - σ·v
@@ -292,7 +293,7 @@ class MultiGPUTestTimeScaling:
         if injection_data is not None and self.glyph_injector is not None:
             latent = self.glyph_injector.inject_latent(
                 latent, injection_data, step_idx,
-                injection_strength=injection_strength
+                injection_strength=injection_config or self.injection_config
             )
         
         latent_input = latent.to(pipe.transformer.dtype).unsqueeze(2)
@@ -350,7 +351,7 @@ class MultiGPUTestTimeScaling:
             latent, latent_0 = self._denoise_step(
                 device, latent, prompt_embeds, t,
                 injection_data=injection_data, step_idx=i,
-                injection_strength=self.injection_strength,
+                injection_config=self.injection_config,
             )
         
         return cand_idx, device, latent, prompt, prompt_embeds, latent_0, injection_data
@@ -447,7 +448,7 @@ class MultiGPUTestTimeScaling:
                 cand.latent, cand.latent_0 = self._denoise_step(
                     cand.device, cand.latent, cand.prompt_embeds, t.to(cand.device),
                     injection_data=cand.injection_data, step_idx=step_idx,
-                    injection_strength=self.injection_strength,
+                    injection_config=self.injection_config,
                 )
             self.logger.info(f"  步骤 {step_idx + 1}/{len(timesteps)} 完成")
         
@@ -622,7 +623,7 @@ def create_test_time_scaling(pipeline, prompt_refiner=None, device: str = "cuda"
 
 def create_multi_gpu_tts(model_path: str, devices: list[str] = None, prompt_refiner=None,
                          logger: TTSLogger = None, vlm_score_mode: str = "rank",
-                         glyph_injector=None, injection_strength: float = 0.8) -> MultiGPUTestTimeScaling:
+                         glyph_injector=None, injection_strength: Union[InjectionConfig, float, None] = None) -> MultiGPUTestTimeScaling:
     """创建多 GPU TTS"""
     if devices is None:
         num_gpus = torch.cuda.device_count()

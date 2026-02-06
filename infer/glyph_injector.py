@@ -10,8 +10,8 @@ Glyph Injector: 文字渲染和 latent 注入接口
 
 import os
 import math
-from typing import Optional, Tuple
-from dataclasses import dataclass
+from typing import Optional, Tuple, Union
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -87,6 +87,33 @@ class TextRegion:
         return (x1, y1, x2, y2)
 
 
+@dataclass
+class InjectionConfig:
+    """注入强度配置
+    
+    Attributes:
+        mask_strength: 空间混合强度 (0-1)，控制文字 latent 在 mask 区域的混合权重
+        timestep_ratio: 时间步注入比例 (0-1)，仅在前 X% 的去噪步骤中注入
+    """
+    mask_strength: float = 0.8
+    timestep_ratio: float = 1.0
+
+    @staticmethod
+    def from_value(v: Union["InjectionConfig", float, None]) -> "InjectionConfig":
+        """兼容旧接口：float → InjectionConfig(mask_strength=v)"""
+        if v is None:
+            return InjectionConfig()
+        if isinstance(v, (int, float)):
+            return InjectionConfig(mask_strength=float(v))
+        return v
+
+    def should_inject(self, step_idx: int, total_steps: int) -> bool:
+        """判断当前步是否需要注入"""
+        if self.timestep_ratio >= 1.0:
+            return True
+        return step_idx < int(total_steps * self.timestep_ratio)
+
+
 class GlyphInjector:
     """
     文字注入器
@@ -99,7 +126,8 @@ class GlyphInjector:
         vae,
         scheduler,
         device: str = "cuda",
-        dtype: torch.dtype = torch.bfloat16
+        dtype: torch.dtype = torch.bfloat16,
+        logger=None,
     ):
         """
         初始化
@@ -109,11 +137,13 @@ class GlyphInjector:
             scheduler: Flow matching 调度器
             device: 设备
             dtype: 数据类型
+            logger: TTSLogger 实例（可选）
         """
         self.vae = vae
         self.scheduler = scheduler
         self.device = device
         self.dtype = dtype
+        self.logger = logger
         
         # VAE 缩放因子
         self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1) if hasattr(vae, 'config') else 8
@@ -318,16 +348,43 @@ class GlyphInjector:
             
             injection_data["latent_lists"].append(latent_list)
             injection_data["regions"].append((x1, y1, x2, y2))
+            
+            # 日志可视化：保存渲染的文字模板、mask 和全图
+            if self.logger is not None:
+                ts_str = ",".join(f"{t:.1f}" for t in timesteps[:5].tolist())
+                if len(timesteps) > 5:
+                    ts_str += f"...({len(timesteps)} steps)"
+                
+                caption = (
+                    f"text=\"{region.content}\"  "
+                    f"bbox=({x1},{y1},{x2},{y2})  "
+                    f"size={region_width}x{region_height}\n"
+                    f"timesteps=[{ts_str}]  "
+                    f"latent={list(text_latent.shape)}"
+                )
+                
+                region_idx = len(injection_data["regions"]) - 1
+                self.logger.save_image(text_img, f"glyph_region_{region_idx}_text",
+                                       caption=caption, subfolder="glyph")
+                self.logger.save_image(full_text_img, f"glyph_region_{region_idx}_full",
+                                       caption=caption, subfolder="glyph")
+                
+                # 保存 mask 为灰度图
+                mask_pil = Image.fromarray(text_mask)
+                self.logger.save_image(mask_pil.convert("RGB"), f"glyph_region_{region_idx}_mask",
+                                       caption=caption, subfolder="glyph")
         
         # 将 mask 下采样到 latent 空间
-        latent_h = height // (self.vae_scale_factor * 2)
-        latent_w = width // (self.vae_scale_factor * 2)
+        # ZImage/Flux latent 尺寸 = 2 * (pixel / (vae_scale_factor * 2))
+        latent_h = 2 * (height // (self.vae_scale_factor * 2))
+        latent_w = 2 * (width // (self.vae_scale_factor * 2))
         mask_latent = cv2.resize(full_mask, (latent_w, latent_h), interpolation=cv2.INTER_NEAREST)
         mask_latent = torch.from_numpy(mask_latent).float() / 255.0
         mask_latent = mask_latent.unsqueeze(0).unsqueeze(0).to(self.device)
         
         injection_data["mask_latent"] = mask_latent
         injection_data["full_mask"] = full_mask
+        injection_data["total_steps"] = len(timesteps)
         
         return injection_data
     
@@ -336,7 +393,7 @@ class GlyphInjector:
         current_latent: torch.Tensor,
         injection_data: dict,
         step_idx: int,
-        injection_strength: float = 1.0
+        injection_strength: Union[InjectionConfig, float] = 1.0
     ) -> torch.Tensor:
         """
         在当前 latent 中注入文字区域的 latent
@@ -345,11 +402,18 @@ class GlyphInjector:
             current_latent: 当前去噪步骤的 latent
             injection_data: prepare_injection 返回的数据
             step_idx: 当前步骤索引
-            injection_strength: 注入强度 (0-1)
+            injection_strength: InjectionConfig 或 float（向后兼容，等价于 mask_strength）
             
         Returns:
             注入后的 latent
         """
+        cfg = InjectionConfig.from_value(injection_strength)
+        total_steps = injection_data.get("total_steps", len(injection_data["latent_lists"][0]))
+        
+        # timestep 维度：超过注入比例则跳过
+        if not cfg.should_inject(step_idx, total_steps):
+            return current_latent
+        
         mask = injection_data["mask_latent"]
         
         # 合并所有区域的 latent（取第一个区域的，简化处理）
@@ -361,19 +425,21 @@ class GlyphInjector:
         # 扩展 mask 到 latent 的 channel 维度
         mask = mask.expand_as(current_latent)
         
-        # 混合注入
-        injected = current_latent * (1 - mask * injection_strength) + text_latent * mask * injection_strength
+        # mask 维度：空间混合强度
+        s = cfg.mask_strength
+        injected = current_latent * (1 - mask * s) + text_latent * mask * s
         
         return injected
 
 
-def create_glyph_injector(pipeline, device: str = "cuda") -> GlyphInjector:
+def create_glyph_injector(pipeline, device: str = "cuda", logger=None) -> GlyphInjector:
     """
     从 pipeline 创建 GlyphInjector
     
     Args:
         pipeline: ZImagePipeline 实例
         device: 设备
+        logger: TTSLogger 实例（可选）
         
     Returns:
         GlyphInjector 实例
@@ -382,7 +448,8 @@ def create_glyph_injector(pipeline, device: str = "cuda") -> GlyphInjector:
         vae=pipeline.vae,
         scheduler=pipeline.scheduler,
         device=device,
-        dtype=pipeline.vae.dtype
+        dtype=pipeline.vae.dtype,
+        logger=logger,
     )
 
 

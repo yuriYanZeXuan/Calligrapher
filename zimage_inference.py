@@ -30,8 +30,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from train.zimage_ip.pipeline_z_image import ZImagePipeline
 from infer.prompt_refiner import PromptRefiner, refine_prompt
-from infer.glyph_injector import GlyphInjector, TextRegion, create_glyph_injector
+from infer.glyph_injector import GlyphInjector, TextRegion, InjectionConfig, create_glyph_injector
 from infer.test_time_scaling import TestTimeScaling, create_test_time_scaling
+from infer.mylogger import TTSLogger
 
 # 默认模型路径
 DEFAULT_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-image-sft"
@@ -42,7 +43,7 @@ class GenerationConfig:
     """生成配置"""
     height: int = 1024
     width: int = 1024
-    num_inference_steps: int = 9
+    num_inference_steps: int = 50
     guidance_scale: float = 0.0
     seed: Optional[int] = None
     
@@ -52,7 +53,11 @@ class GenerationConfig:
     
     # Glyph Injection
     use_glyph_injection: bool = True
-    injection_strength: float = 0.8
+    injection_strength: Union[InjectionConfig, float] = None  # None → 使用默认 InjectionConfig()
+    
+    def get_injection_config(self) -> InjectionConfig:
+        """获取 InjectionConfig（兼容 float）"""
+        return InjectionConfig.from_value(self.injection_strength)
     
     # Test Time Scaling
     use_tts: bool = False
@@ -73,7 +78,8 @@ class ZImageInference:
         self,
         model_path: str = DEFAULT_MODEL_PATH,
         device: Union[str, list[str]] = "cuda",
-        dtype: torch.dtype = torch.bfloat16
+        dtype: torch.dtype = torch.bfloat16,
+        logger: TTSLogger = None,
     ):
         """
         初始化
@@ -82,9 +88,11 @@ class ZImageInference:
             model_path: 模型路径
             device: 设备，支持单卡 "cuda:0" 或多卡 ["cuda:0", "cuda:1", ...]
             dtype: 数据类型
+            logger: TTSLogger 实例，为 None 时自动创建
         """
         self.model_path = model_path
         self.dtype = dtype
+        self.logger = logger or TTSLogger(run_name="zimage_inference")
         
         # 处理设备列表
         if isinstance(device, str):
@@ -126,7 +134,8 @@ class ZImageInference:
         if self._glyph_injector is None:
             self._glyph_injector = create_glyph_injector(
                 self.pipeline, 
-                device=self.primary_device
+                device=self.primary_device,
+                logger=self.logger,
             )
         return self._glyph_injector
     
@@ -137,7 +146,8 @@ class ZImageInference:
             self._tts = create_test_time_scaling(
                 self.pipeline,
                 self.prompt_refiner,
-                device=self.primary_device
+                device=self.primary_device,
+                logger=self.logger,
             )
         return self._tts
     
@@ -285,7 +295,7 @@ class ZImageInference:
                     latent, 
                     injection_data, 
                     step_idx,
-                    injection_strength=config.injection_strength
+                    injection_strength=config.get_injection_config()
                 )
             
             # Transformer 前向

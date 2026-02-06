@@ -31,7 +31,7 @@ def main():
         from infer.prompt_refiner import PromptRefiner
         
         tts = create_multi_gpu_tts(
-            model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-image-sft",
+            model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-image",
             devices=devices,
             prompt_refiner=PromptRefiner()
         )

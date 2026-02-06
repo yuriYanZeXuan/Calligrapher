@@ -147,6 +147,7 @@ class TTSLogger:
     # 支持中文的字体搜索列表（Linux 服务器 → macOS 兜底）
     _FONT_CANDIDATES = [
         # Linux Noto CJK（最常见的服务器中文字体）
+        "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/anytext/font/Arial_Unicode.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",

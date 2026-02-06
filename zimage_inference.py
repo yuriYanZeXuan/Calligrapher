@@ -305,6 +305,7 @@ class ZImageInference:
                 latent_width=latent_width,
                 cap_ori_len=len(prompt_embeds[0]),
                 num_layers=len(self.pipeline.transformer.layers),
+                logger=self.logger,
             )
             if attn_enh is not None:
                 attn_enh.install(self.pipeline.transformer)

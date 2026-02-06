@@ -259,7 +259,7 @@ def main():
     parser.add_argument(
         "--model_path", 
         type=str, 
-        default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-image-sft",
+        default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image",
         help="模型路径"
     )
     parser.add_argument(

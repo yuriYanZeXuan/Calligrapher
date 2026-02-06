@@ -5,7 +5,7 @@ Prompt-Latent Attention Enhancement
 通过在 attention logits 添加 log(scale) 偏置实现，兼容 F.scaled_dot_product_attention。
 
 用法:
-    enh = AttentionEnhancement.create(config, tokenizer, prompt, mask_latent, ...)
+    enh = AttentionEnhancement.create(config, tokenizer, prompt, mask_latent, ..., logger=logger)
     enh.install(transformer)
     for step in steps:
         enh.set_step(step, total)
@@ -15,13 +15,59 @@ Prompt-Latent Attention Enhancement
 
 import math
 import re
-from dataclasses import dataclass
 from typing import List, Optional
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+from PIL import Image
 
 SEQ_MULTI_OF = 32
+
+
+# ============ 可视化工具 ============
+
+
+def _attn_to_heatmap(attn_map: np.ndarray, size: tuple = None) -> Image.Image:
+    """将 2D attention 数组转为 热力图 PIL Image。
+
+    Args:
+        attn_map: (H, W) float array, 值域 [0, 1] 或任意范围（会自动归一化）。
+        size: 可选的输出尺寸 (w, h)。
+    """
+    arr = attn_map.astype(np.float32)
+    lo, hi = arr.min(), arr.max()
+    if hi - lo > 1e-8:
+        arr = (arr - lo) / (hi - lo)
+    else:
+        arr = np.zeros_like(arr)
+
+    # Jet-like colormap：蓝(0) → 青 → 绿 → 黄 → 红(1)
+    r = np.clip(1.5 - abs(4 * arr - 3), 0, 1)
+    g = np.clip(1.5 - abs(4 * arr - 2), 0, 1)
+    b = np.clip(1.5 - abs(4 * arr - 1), 0, 1)
+    rgb = (np.stack([r, g, b], axis=-1) * 255).astype(np.uint8)
+
+    img = Image.fromarray(rgb)
+    if size is not None:
+        img = img.resize(size, Image.NEAREST)
+    return img
+
+
+def _make_patch_grid_image(
+    mask: np.ndarray, indices: List[int], Hp: int, Wp: int, cell: int = 8
+) -> Image.Image:
+    """可视化 glyph patch 选中情况。
+
+    返回一张 (Wp*cell, Hp*cell) 的图：灰色=mask覆盖的patch，黑色=未选中。
+    """
+    grid = np.zeros((Hp, Wp), dtype=np.uint8)
+    for idx in indices:
+        r, c = divmod(idx, Wp)
+        if r < Hp:
+            grid[r, c] = 200
+    img = Image.fromarray(grid).resize((Wp * cell, Hp * cell), Image.NEAREST)
+    return img
 
 
 # ============ Token / Patch 索引提取 ============
@@ -58,11 +104,9 @@ def find_quoted_token_indices(
 
     result: list[int] = []
     for text in matches:
-        # 优先尝试裸文本编码
         sub_ids = tokenizer.encode(text, add_special_tokens=False)
         found = _find_subseq(real_ids, sub_ids)
         if found is None:
-            # 退化：带引号一起编码，去掉引号 token
             sub_ids_q = tokenizer.encode(f'"{text}"', add_special_tokens=False)
             found = _find_subseq(real_ids, sub_ids_q)
         if found is not None:
@@ -98,7 +142,6 @@ def compute_glyph_patch_indices(
     H, W = mask.shape
     Hp, Wp = H // patch_size, W // patch_size
 
-    # reshape → (Hp, p, Wp, p)，对 patch 内取 max
     mask_grid = mask[: Hp * patch_size, : Wp * patch_size].reshape(
         Hp, patch_size, Wp, patch_size
     )
@@ -121,6 +164,9 @@ class _EnhancementState:
         x_seq_len: int,
         cap_seq_len: int,
         num_layers: int,
+        logger=None,
+        Hp: int = 0,
+        Wp: int = 0,
     ):
         self.config = config
         self.text_indices = text_indices
@@ -128,10 +174,45 @@ class _EnhancementState:
         self.x_seq_len = x_seq_len
         self.cap_seq_len = cap_seq_len
         self.num_layers = num_layers
+        self.logger = logger
+        self.Hp = Hp
+        self.Wp = Wp
 
         self.current_step = 0
         self.total_steps = 1
         self._bias_cache: dict = {}
+        # 记录已经可视化过的 (step, layer) 组合，避免重复保存
+        self._logged_pairs: set = set()
+
+    # ---- 日志步选择 ----
+    # 只在第一个增强 step 和中间 step 各记录一次 layer-0 的 attention map
+
+    @property
+    def _log_steps(self) -> set:
+        """需要记录 attention map 的去噪步集合。"""
+        if self.logger is None:
+            return set()
+        limit = max(1, int(self.total_steps * self.config.attn_enhance_timestep_ratio))
+        steps = {0}
+        if limit > 2:
+            steps.add(limit // 2)
+        return steps
+
+    def should_log_attn(self, layer_idx: int) -> bool:
+        """当前 (step, layer) 是否需要可视化 attention。"""
+        if self.logger is None:
+            return False
+        if layer_idx != 0:
+            return False
+        pair = (self.current_step, layer_idx)
+        if pair in self._logged_pairs:
+            return False
+        if self.current_step not in self._log_steps:
+            return False
+        return True
+
+    def mark_logged(self, layer_idx: int):
+        self._logged_pairs.add((self.current_step, layer_idx))
 
     def should_enhance(self, layer_idx: int) -> bool:
         if not self.text_indices or not self.image_indices:
@@ -144,35 +225,36 @@ class _EnhancementState:
             return False
         return True
 
-    def get_bias(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        """构造 (1, 1, L, L) 的 additive attention bias。
-
-        在 text-token ↔ glyph-patch 交叉位置填入 log(scale)，其余为 0。
-        """
+    def get_bias(
+        self, seq_len: int, device: torch.device, dtype: torch.dtype
+    ) -> torch.Tensor:
+        """构造 (1, 1, L, L) 的 additive attention bias。"""
         key = (seq_len, device)
         if key in self._bias_cache:
             return self._bias_cache[key].to(dtype)
 
-        bias = torch.zeros(1, 1, seq_len, seq_len, device=device, dtype=torch.float32)
+        bias = torch.zeros(
+            1, 1, seq_len, seq_len, device=device, dtype=torch.float32
+        )
 
         x_len = self.x_seq_len
         log_scale = math.log(max(self.config.attn_enhance_scale, 1e-6))
 
-        # 绝对位置：unified = [image_patches (x_len), caption_tokens (cap_len)]
         text_abs = torch.tensor(
             [x_len + i for i in self.text_indices if i < self.cap_seq_len],
-            dtype=torch.long, device=device,
+            dtype=torch.long,
+            device=device,
         )
         image_abs = torch.tensor(
             [i for i in self.image_indices if i < x_len],
-            dtype=torch.long, device=device,
+            dtype=torch.long,
+            device=device,
         )
 
         if len(text_abs) == 0 or len(image_abs) == 0:
             self._bias_cache[key] = bias
             return bias.to(dtype)
 
-        # 利用 advanced indexing 一次性填充 M×T 个位置
         if self.config.attn_enhance_image_to_text:
             bias[0, 0, image_abs.unsqueeze(1), text_abs.unsqueeze(0)] = log_scale
 
@@ -187,19 +269,14 @@ class _EnhancementState:
 
 
 class EnhancedAttnProcessor:
-    """包装原始 attention processor，在激活时使用 logit-bias 增强注意力。
-
-    非激活时（错误的 layer/timestep）直接 fallback 到原始 processor，零开销。
-    """
+    """包装原始 attention processor，在激活时使用 logit-bias 增强注意力。"""
 
     def __init__(self, original, layer_idx: int, state: _EnhancementState):
-        # 用 object.__setattr__ 避免触发 __getattr__
         object.__setattr__(self, "_original", original)
         object.__setattr__(self, "_layer_idx", layer_idx)
         object.__setattr__(self, "_state", state)
 
     def __getattr__(self, name):
-        """透传所有属性到原始 processor（兼容 to_k_ip 等 IP-Adapter 属性）。"""
         return getattr(self._original, name)
 
     def __call__(
@@ -214,13 +291,21 @@ class EnhancedAttnProcessor:
         state: _EnhancementState = self._state
         if not state.should_enhance(self._layer_idx):
             return self._original(
-                attn, hidden_states,
+                attn,
+                hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
-                freqs_cis=freqs_cis, **kwargs,
+                freqs_cis=freqs_cis,
+                **kwargs,
             )
         return self._forward_with_bias(
-            attn, hidden_states, attention_mask, freqs_cis, state, **kwargs,
+            attn,
+            hidden_states,
+            attention_mask,
+            freqs_cis,
+            state,
+            self._layer_idx,
+            **kwargs,
         )
 
     @staticmethod
@@ -230,6 +315,7 @@ class EnhancedAttnProcessor:
         attention_mask: Optional[torch.Tensor],
         freqs_cis: Optional[torch.Tensor],
         state: _EnhancementState,
+        layer_idx: int,
         **kwargs,
     ) -> torch.Tensor:
         """与 ZSingleStreamAttnProcessor 相同的计算流程，但注入 logit bias。"""
@@ -246,8 +332,8 @@ class EnhancedAttnProcessor:
         if attn.norm_k is not None:
             key = attn.norm_k(key)
 
-        # RoPE（直接复用原始实现）
         if freqs_cis is not None:
+
             def _rope(x_in, fc):
                 with torch.amp.autocast("cuda", enabled=False):
                     x = torch.view_as_complex(
@@ -262,24 +348,30 @@ class EnhancedAttnProcessor:
         dtype = query.dtype
         query, key = query.to(dtype), key.to(dtype)
 
-        # (B, N, H, D) → (B, H, N, D)
         B, N, H, D = query.shape
-        q = query.transpose(1, 2)
+        q = query.transpose(1, 2)  # (B, H, N, D)
         k = key.transpose(1, 2)
         v = value.transpose(1, 2).to(dtype)
 
-        # 构造 float attention mask: padding → -inf, 其余 → 0
-        attn_bias = state.get_bias(N, q.device, q.dtype)  # (1, 1, N, N)
+        do_log = state.should_log_attn(layer_idx)
+
+        # ---- 可视化：增强前后 attention 对比 ----
+        if do_log:
+            state.mark_logged(layer_idx)
+            _log_attn_comparison(q, k, attention_mask, state, layer_idx)
+
+        # 构造 float attention mask + enhancement bias
+        attn_bias = state.get_bias(N, q.device, q.dtype)
 
         if attention_mask is not None:
             if attention_mask.ndim == 2:
-                attention_mask = attention_mask[:, None, None, :]  # (B, 1, 1, N)
+                attention_mask = attention_mask[:, None, None, :]
             pad_bias = torch.zeros_like(attention_mask, dtype=q.dtype)
             pad_bias.masked_fill_(~attention_mask.bool(), float("-inf"))
-            attn_bias = attn_bias + pad_bias  # broadcast → (B, 1, N, N)
+            attn_bias = attn_bias + pad_bias
 
         out = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_bias, dropout_p=0.0, is_causal=False,
+            q, k, v, attn_mask=attn_bias, dropout_p=0.0, is_causal=False
         )
 
         hidden_states = out.transpose(1, 2).flatten(2, 3).to(dtype)
@@ -287,6 +379,163 @@ class EnhancedAttnProcessor:
         if len(attn.to_out) > 1:
             output = attn.to_out[1](output)
         return output
+
+
+# ============ Attention Map 可视化 ============
+
+
+@torch.no_grad()
+def _log_attn_comparison(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    state: _EnhancementState,
+    layer_idx: int,
+):
+    """在 enhance 前后分别计算 attention weights，可视化 text→image 响应图。
+
+    只取 batch=0，对所有 head 取平均，提取 text-token 对 image-patch 的 attention
+    并 reshape 为 (Hp, Wp) 空间热力图。
+    """
+    logger = state.logger
+    step = state.current_step
+    B, H, N, D = q.shape
+    x_len = state.x_seq_len
+
+    # 计算 raw scores（只取 batch 0）
+    scores = torch.matmul(q[0], k[0].transpose(-2, -1)) / math.sqrt(D)  # (H, N, N)
+
+    # padding mask
+    if attention_mask is not None:
+        mask = attention_mask
+        if mask.ndim == 2:
+            mask = mask[:, None, None, :]
+        scores = scores.masked_fill(~mask[0].bool(), float("-inf"))
+
+    # ---- 增强前 ----
+    weights_before = torch.softmax(scores, dim=-1)  # (H, N, N)
+
+    # ---- 增强后 ----
+    enhance_bias = state.get_bias(N, q.device, scores.dtype)  # (1, 1, N, N)
+    weights_after = torch.softmax(scores + enhance_bias[0, 0], dim=-1)
+
+    # 提取：text tokens 对 image patches 的 attention（text→image 方向）
+    # unified = [image(x_len), caption(cap_len)]
+    text_abs = [x_len + i for i in state.text_indices if i < state.cap_seq_len]
+    image_abs = [i for i in state.image_indices if i < x_len]
+
+    if not text_abs or not image_abs:
+        return
+
+    text_t = torch.tensor(text_abs, device=q.device)
+    # image→text: image patch 行对 text token 列的 attention
+    # 对 text tokens 取平均，得到每个 image patch 的 "对文字的关注度"
+
+    # (1) image→text 响应图：每个 image patch 对所有 text token 的平均 attention
+    _save_response_map(
+        weights_before, weights_after, state,
+        row_indices=list(range(x_len)),  # 所有 image patches
+        col_indices=text_abs,            # text tokens
+        tag="img2txt", step=step, layer_idx=layer_idx,
+    )
+
+    # (2) text→image 响应图：每个 text token 对所有 image patch 的 attention，reshape 成空间图
+    _save_response_map(
+        weights_before, weights_after, state,
+        row_indices=text_abs,            # text tokens
+        col_indices=list(range(x_len)),  # 所有 image patches
+        tag="txt2img", step=step, layer_idx=layer_idx,
+    )
+
+
+def _save_response_map(
+    w_before: torch.Tensor,
+    w_after: torch.Tensor,
+    state: _EnhancementState,
+    row_indices: List[int],
+    col_indices: List[int],
+    tag: str,
+    step: int,
+    layer_idx: int,
+):
+    """提取 attention 子矩阵并保存热力图。
+
+    row_indices → query 方向, col_indices → key 方向
+    对所有 head 取平均 → (len(row), len(col))
+    然后根据 tag 决定聚合维度和 reshape 方式。
+    """
+    logger = state.logger
+    H = w_before.shape[0]  # num heads
+    x_len = state.x_seq_len
+    Hp, Wp = state.Hp, state.Wp
+
+    row_t = torch.tensor(row_indices, device=w_before.device)
+    col_t = torch.tensor(col_indices, device=w_before.device)
+
+    # 提取子矩阵：(H, len(row), len(col))
+    sub_before = w_before[:, row_t][:, :, col_t].float().mean(dim=0).cpu().numpy()
+    sub_after = w_after[:, row_t][:, :, col_t].float().mean(dim=0).cpu().numpy()
+
+    if tag == "img2txt":
+        # row=image patches, col=text tokens
+        # 对 text token 维度求和 → 每个 image patch 对文字的总关注度 → reshape (Hp, Wp)
+        resp_before = sub_before.sum(axis=1)  # (num_image_patches,)
+        resp_after = sub_after.sum(axis=1)
+
+        # 映射到完整 patch grid
+        grid_before = np.zeros(x_len, dtype=np.float32)
+        grid_after = np.zeros(x_len, dtype=np.float32)
+        for i, idx in enumerate(row_indices):
+            if idx < x_len:
+                grid_before[idx] = resp_before[i]
+                grid_after[idx] = resp_after[i]
+        map_before = grid_before[:Hp * Wp].reshape(Hp, Wp)
+        map_after = grid_after[:Hp * Wp].reshape(Hp, Wp)
+
+    elif tag == "txt2img":
+        # row=text tokens, col=image patches
+        # 对 text token 维度求平均 → 每个 image patch 被文字关注的程度 → reshape (Hp, Wp)
+        resp_before = sub_before.mean(axis=0)  # (num_image_patches,)
+        resp_after = sub_after.mean(axis=0)
+
+        grid_before = np.zeros(x_len, dtype=np.float32)
+        grid_after = np.zeros(x_len, dtype=np.float32)
+        for i, idx in enumerate(col_indices):
+            if idx < x_len:
+                grid_before[idx] = resp_before[i]
+                grid_after[idx] = resp_after[i]
+        map_before = grid_before[:Hp * Wp].reshape(Hp, Wp)
+        map_after = grid_after[:Hp * Wp].reshape(Hp, Wp)
+    else:
+        return
+
+    # 保存热力图（统一 scale 以便对比）
+    vmin = min(map_before.min(), map_after.min())
+    vmax = max(map_before.max(), map_after.max())
+    if vmax - vmin < 1e-10:
+        vmax = vmin + 1
+
+    target_size = (Wp * 8, Hp * 8)
+
+    hm_before = _attn_to_heatmap(map_before, size=target_size)
+    hm_after = _attn_to_heatmap(map_after, size=target_size)
+
+    # 拼接 before | after
+    combined = Image.new("RGB", (target_size[0] * 2 + 4, target_size[1]), (255, 255, 255))
+    combined.paste(hm_before, (0, 0))
+    combined.paste(hm_after, (target_size[0] + 4, 0))
+
+    caption = (
+        f"step={step} layer={layer_idx} [{tag}]  "
+        f"scale={state.config.attn_enhance_scale:.1f}  "
+        f"LEFT=before  RIGHT=after"
+    )
+    logger.save_image(
+        combined,
+        f"attn_{tag}_step{step}_layer{layer_idx}",
+        caption=caption,
+        subfolder="attn_enhance",
+    )
 
 
 # ============ Public API ============
@@ -297,7 +546,7 @@ class AttentionEnhancement:
     Prompt-Latent Attention Enhancement 管理器。
 
     用法:
-        enh = AttentionEnhancement.create(config, tokenizer, prompt, mask_latent, ...)
+        enh = AttentionEnhancement.create(config, tokenizer, prompt, mask_latent, ..., logger=logger)
         enh.install(transformer)       # monkey-patch layers
         enh.set_step(step, total)      # 每个去噪步调用
         enh.uninstall(transformer)     # 还原
@@ -320,23 +569,9 @@ class AttentionEnhancement:
         num_layers: int,
         patch_size: int = 2,
         max_seq_length: int = 512,
+        logger=None,
     ) -> Optional["AttentionEnhancement"]:
-        """工厂方法：提取 token/patch 索引并创建 enhancement。
-
-        Args:
-            config: InjectionConfig 实例
-            tokenizer: pipeline.tokenizer
-            prompt: 原始 prompt 字符串
-            mask_latent: (1, 1, H, W) glyph mask in latent space
-            latent_height, latent_width: latent 空间尺寸
-            cap_ori_len: caption embedding 的原始 token 数（非 padding）
-            num_layers: transformer.layers 的数量
-            patch_size: transformer patch size
-            max_seq_length: tokenizer max length
-
-        Returns:
-            AttentionEnhancement 实例；若无可增强的 token/patch 则返回 None。
-        """
+        """工厂方法：提取 token/patch 索引并创建 enhancement。"""
         if not config.attn_enhance_enabled:
             return None
 
@@ -344,10 +579,13 @@ class AttentionEnhancement:
         image_indices = compute_glyph_patch_indices(mask_latent, patch_size)
 
         if not text_indices or not image_indices:
-            print(
+            msg = (
                 f"[AttnEnhancement] 跳过：text_tokens={len(text_indices)}, "
                 f"glyph_patches={len(image_indices)}"
             )
+            print(msg)
+            if logger:
+                logger.info(msg)
             return None
 
         # 与 transformer.patchify_and_embed 一致的 SEQ_MULTI_OF 对齐
@@ -357,17 +595,103 @@ class AttentionEnhancement:
         cap_seq_len = cap_ori_len + (-cap_ori_len) % SEQ_MULTI_OF
 
         state = _EnhancementState(
-            config, text_indices, image_indices,
-            x_seq_len, cap_seq_len, num_layers,
+            config,
+            text_indices,
+            image_indices,
+            x_seq_len,
+            cap_seq_len,
+            num_layers,
+            logger=logger,
+            Hp=Hp,
+            Wp=Wp,
         )
 
-        print(
+        # ---- 日志：token 选择验证 ----
+        info_msg = (
             f"[AttnEnhancement] 激活：text_tokens={len(text_indices)}, "
-            f"glyph_patches={len(image_indices)}, "
+            f"glyph_patches={len(image_indices)}/{num_patches}, "
             f"scale={config.attn_enhance_scale:.1f}, "
             f"timestep_ratio={config.attn_enhance_timestep_ratio:.0%}, "
             f"layer_ratio={config.attn_enhance_layer_ratio:.0%}"
         )
+        print(info_msg)
+
+        if logger:
+            logger.info(info_msg)
+
+            # 解码选中的 token 显示原文
+            encoding = tokenizer(
+                tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=True,
+                ),
+                padding="max_length",
+                max_length=max_seq_length,
+                truncation=True,
+            )
+            real_ids = encoding.input_ids[: sum(encoding.attention_mask)]
+            selected_ids = [real_ids[i] for i in text_indices if i < len(real_ids)]
+            decoded_tokens = tokenizer.decode(selected_ids)
+            logger.info(
+                f"[AttnEnhancement] 选中 text token indices: {text_indices}"
+            )
+            logger.info(
+                f"[AttnEnhancement] 解码内容: \"{decoded_tokens}\""
+            )
+            logger.info(
+                f"[AttnEnhancement] 逐 token: "
+                + " | ".join(
+                    f"[{i}]={tokenizer.decode([real_ids[i]])!r}"
+                    for i in text_indices
+                    if i < len(real_ids)
+                )
+            )
+            logger.info(
+                f"[AttnEnhancement] glyph patch 数: {len(image_indices)}, "
+                f"patch grid: ({Hp}, {Wp}), x_seq_len={x_seq_len}, cap_seq_len={cap_seq_len}"
+            )
+
+            # 保存 glyph patch 选中可视化
+            mask_np = mask_latent[0, 0].cpu().numpy()
+            patch_grid_img = _make_patch_grid_image(mask_np, image_indices, Hp, Wp, cell=8)
+            logger.save_image(
+                patch_grid_img,
+                "attn_enhance_patch_grid",
+                caption=f"glyph patches: {len(image_indices)}/{num_patches}  grid=({Hp},{Wp})",
+                subfolder="attn_enhance",
+            )
+
+            # 保存 enhancement bias 可视化（缩小到合理尺寸）
+            bias = state.get_bias(x_seq_len + cap_seq_len, mask_latent.device, torch.float32)
+            bias_np = bias[0, 0].cpu().numpy()
+            # 只截取有内容的区域（非零行列的范围）
+            nz_rows = np.where(bias_np.any(axis=1))[0]
+            nz_cols = np.where(bias_np.any(axis=0))[0]
+            if len(nz_rows) > 0 and len(nz_cols) > 0:
+                r0, r1 = nz_rows[0], nz_rows[-1] + 1
+                c0, c1 = nz_cols[0], nz_cols[-1] + 1
+                # 加一点边距
+                margin = 10
+                r0, c0 = max(0, r0 - margin), max(0, c0 - margin)
+                r1, c1 = min(bias_np.shape[0], r1 + margin), min(bias_np.shape[1], c1 + margin)
+                bias_crop = bias_np[r0:r1, c0:c1]
+            else:
+                bias_crop = bias_np
+
+            bias_img = _attn_to_heatmap(bias_crop, size=(512, 512))
+            logger.save_image(
+                bias_img,
+                "attn_enhance_bias_matrix",
+                caption=(
+                    f"enhancement bias (log_scale={math.log(config.attn_enhance_scale):.3f})  "
+                    f"crop=[{r0}:{r1}, {c0}:{c1}]  "
+                    f"i2t={config.attn_enhance_image_to_text} t2i={config.attn_enhance_text_to_image}"
+                ),
+                subfolder="attn_enhance",
+            )
+
         return cls(state)
 
     def install(self, transformer) -> None:
@@ -375,12 +699,16 @@ class AttentionEnhancement:
         if self._installed:
             return
         num_layers = len(transformer.layers)
-        enhance_count = max(1, int(num_layers * self._state.config.attn_enhance_layer_ratio))
+        enhance_count = max(
+            1, int(num_layers * self._state.config.attn_enhance_layer_ratio)
+        )
 
         for idx in range(min(enhance_count, num_layers)):
             layer = transformer.layers[idx]
             original = layer.attention.processor
-            layer.attention.processor = EnhancedAttnProcessor(original, idx, self._state)
+            layer.attention.processor = EnhancedAttnProcessor(
+                original, idx, self._state
+            )
 
         self._installed = True
 

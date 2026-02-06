@@ -235,6 +235,7 @@ class GlyphInjector:
     def decode_latent(self, latent: torch.Tensor) -> Image.Image:
         """将 latent 解码为 PIL Image"""
         with torch.no_grad():
+            latent = latent.to(self.vae.dtype)
             latent = (latent / self.vae.config.scaling_factor) + self.vae.config.shift_factor
             image = self.vae.decode(latent, return_dict=False)[0]
             

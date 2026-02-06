@@ -35,7 +35,7 @@ from infer.test_time_scaling import TestTimeScaling, create_test_time_scaling
 from infer.mylogger import TTSLogger
 
 # 默认模型路径
-DEFAULT_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-image-sft"
+DEFAULT_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image"
 
 
 @dataclass
@@ -43,7 +43,7 @@ class GenerationConfig:
     """生成配置"""
     height: int = 1024
     width: int = 1024
-    num_inference_steps: int = 50
+    num_inference_steps: int = 20
     guidance_scale: float = 0.0
     seed: Optional[int] = None
     

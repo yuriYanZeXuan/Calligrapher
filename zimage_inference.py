@@ -361,20 +361,22 @@ class ZImageInference:
                 self.pipeline.scheduler._init_step_index(t)
             saved_idx = self.pipeline.scheduler._step_index
             
-            # 逐分支前向 + step（格式与单分支完全一致，兼容 diffusers）
+            # 逐分支前向 + step（格式与 pipeline 完全一致）
             for k in range(K):
                 latent_input = branches[k].to(dtype).unsqueeze(2)   # (1,C,1,H,W)
+                latent_list = list(latent_input.unbind(dim=0))      # [(C,1,H,W)]
                 
                 with torch.no_grad():
                     model_out = self.pipeline.transformer(
-                        [latent_input[0]], timestep_norm, prompt_embeds, return_dict=False
+                        latent_list, timestep_norm, prompt_embeds, return_dict=False
                     )[0]
                 
-                noise_pred_k = -model_out[0].float().unsqueeze(0)
+                # 与 pipeline 一致：stack → negate → squeeze 帧维度
+                noise_pred_k = -torch.stack([o.float() for o in model_out], dim=0).squeeze(2)
                 
                 self.pipeline.scheduler._step_index = saved_idx
                 branches[k] = self.pipeline.scheduler.step(
-                    noise_pred_k, t, branches[k], return_dict=False
+                    noise_pred_k.to(torch.float32), t, branches[k], return_dict=False
                 )[0]
             # 最后一次 step 已将 _step_index 推进到 saved_idx + 1
             
@@ -392,10 +394,11 @@ class ZImageInference:
             timestep_norm = (1000 - timestep) / 1000
             
             latent_input = latent.to(dtype).unsqueeze(2)
+            latent_list = list(latent_input.unbind(dim=0))
             
             with torch.no_grad():
                 model_out = self.pipeline.transformer(
-                    [latent_input[0]], timestep_norm, prompt_embeds, return_dict=False
+                    latent_list, timestep_norm, prompt_embeds, return_dict=False
                 )[0]
             
             noise_pred = -torch.stack([o.float() for o in model_out], dim=0).squeeze(2)
@@ -424,10 +427,11 @@ class ZImageInference:
             timestep_norm = (1000 - timestep) / 1000
             
             latent_input = latent.to(dtype).unsqueeze(2)
+            latent_list = list(latent_input.unbind(dim=0))
             
             with torch.no_grad():
                 model_out = self.pipeline.transformer(
-                    [latent_input[0]], timestep_norm, prompt_embeds, return_dict=False
+                    latent_list, timestep_norm, prompt_embeds, return_dict=False
                 )[0]
             
             noise_pred = -torch.stack([o.float() for o in model_out], dim=0).squeeze(2)

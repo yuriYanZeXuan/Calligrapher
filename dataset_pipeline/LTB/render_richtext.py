@@ -31,6 +31,10 @@ def calculate_font_size(text_length: int, min_size: int = 14, max_size: int = 32
 def get_html_template(content_html: str, font_size: int = 20, 
                       page_width: int = 1000, lang: str = "en") -> str:
     """生成 HTML 模板"""
+    # 获取本地 MathJax 路径
+    mathjax_path = Path(__file__).parent / "assets" / "mathjax" / "es5" / "tex-svg.js"
+    mathjax_url = f"file://{mathjax_path.absolute()}"
+    
     # 根据语言设置字体和方向
     font_family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif'
     direction = "ltr"
@@ -136,10 +140,15 @@ window.MathJax = {{
         displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
         processEscapes: true
     }},
-    svg: {{ fontCache: 'global' }}
+    svg: {{ fontCache: 'global' }},
+    startup: {{
+        pageReady: () => {{
+            return MathJax.startup.defaultPageReady();
+        }}
+    }}
 }};
 </script>
-<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+<script src="{mathjax_url}"></script>
 </head>
 <body>
 <div class="content">
@@ -198,12 +207,30 @@ def render_content_to_image(content: str, output_path: Path,
         page.goto(f"file://{html_path.absolute()}")
         page.wait_for_load_state("networkidle")
         
-        # 等待 MathJax 渲染
-        page.wait_for_function(
-            "!window.MathJax || (window.MathJax.typesetPromise && document.querySelector('.MathJax'))",
-            timeout=5000
-        )
-        page.wait_for_timeout(500)
+        # 等待 MathJax 渲染（如果有公式的话）
+        # 检查是否有公式需要渲染
+        has_math = page.evaluate("""() => {
+            const text = document.body.textContent;
+            return text.includes('$') || text.includes('\\\\(') || text.includes('\\\\[');
+        }""")
+        
+        if has_math:
+            # 等待 MathJax 加载和渲染
+            try:
+                page.wait_for_function(
+                    "typeof window.MathJax !== 'undefined' && window.MathJax.typesetPromise",
+                    timeout=5000
+                )
+                # 触发渲染
+                page.evaluate("window.MathJax.typesetPromise()")
+                # 等待渲染完成
+                page.wait_for_timeout(1000)
+            except Exception:
+                # MathJax 加载失败或超时，继续执行
+                pass
+        else:
+            # 没有公式，短暂等待页面稳定
+            page.wait_for_timeout(300)
         
         # 获取内容实际高度
         content_height = page.evaluate('''() => {
@@ -215,14 +242,45 @@ def render_content_to_image(content: str, output_path: Path,
         # 设置页面高度并截图
         min_height = 400
         page_height = max(min_height, content_height)
-        page.set_viewport_size({"width": page_width, "height": page_height})
+        
+        # 调整尺寸为 32 的倍数 (向上取整)
+        target_width = ((page_width + 31) // 32) * 32
+        target_height = ((page_height + 31) // 32) * 32
+        
+        page.set_viewport_size({"width": target_width, "height": target_height})
+        
+        # 注入 CSS 确保背景为白色且填满视口
+        page.add_style_tag(content=f"""
+            html, body {{
+                width: {target_width}px;
+                height: {target_height}px;
+                background-color: white;
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+            }}
+            body {{
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 60px 80px; /* 保持原有的内边距 */
+            }}
+            .content {{
+                width: 100%;
+                max-width: {page_width - 160}px; /* 保持内容宽度限制 */
+            }}
+        """)
+        
         page.wait_for_timeout(200)
         
         # 确保输出目录存在
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # 截图
-        page.screenshot(path=str(output_path), full_page=True)
+        # 截图 (clip 确保只截取视口大小，虽然 viewport 已经设置好了)
+        page.screenshot(
+            path=str(output_path), 
+            clip={"x": 0, "y": 0, "width": target_width, "height": target_height}
+        )
         browser.close()
     
     # 清理临时文件

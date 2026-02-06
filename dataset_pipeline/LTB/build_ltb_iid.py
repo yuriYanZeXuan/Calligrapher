@@ -3,8 +3,10 @@
 LTB_iid 数据集构建脚本
 仿照 LongText-Bench 的风格，按配置的文本长度分布生成新数据
 支持 resume 机制
+支持 --debug 模式（10条样本）
 """
 
+import argparse
 import json
 import random
 from pathlib import Path
@@ -32,9 +34,10 @@ LANGUAGES = ["en", "zh", "ko", "ja", "ar", "fr"]
 
 # 每语种目标样本数
 TOTAL_SAMPLES_PER_LANG = 2000
+DEBUG_SAMPLES_PER_LANG = 10
 
 # 类别列表（参考 LongText-Bench）
-CATEGORIES = ["sign", "caption", "poster", "document", "article", "advertisement"]
+CATEGORIES = ["dialogue", "document", "article", "advertisement"]
 
 # ============ 示例数据加载 ============
 def load_examples(lang: str = "en", num_examples: int = 10) -> list[dict]:
@@ -106,7 +109,7 @@ def generate_prompt_batch(target_text_length: int, category: str,
 2. category 必须是: {category}
 3. text 字段是一个字符串数组，包含场景中需要渲染的文字内容
 4. text 数组中所有文字的总词数（word count）应该约为 {target_text_length} 词
-5. prompt 是详细的场景描述，描述文字出现的环境、样式、排版等
+5. prompt 是详细的场景描述，描述文字出现的环境、样式、排版等，一定要包含用双引号包裹的文字，文字内容要符合{category}的场景。
 6. 使用{lang_name}输出所有内容
 7. 输出格式为 JSON 数组，每个元素包含 category, text, prompt 三个字段
 
@@ -143,10 +146,18 @@ def count_text_length(text_array: list[str]) -> int:
 
 
 # ============ 主流程 ============
-def build_ltb_iid():
-    """构建 LTB_iid 数据集主函数"""
+def build_ltb_iid(debug: bool = False):
+    """构建 LTB_iid 数据集主函数
+    
+    Args:
+        debug: 是否为 debug 模式（仅生成10条样本）
+    """
+    total_samples = DEBUG_SAMPLES_PER_LANG if debug else TOTAL_SAMPLES_PER_LANG
+    
     print("=" * 60)
     print("开始构建 LTB_iid 数据集（LLM 生成模式）")
+    if debug:
+        print(f"[DEBUG 模式] 每语种仅生成 {total_samples} 条样本")
     print("=" * 60)
     
     # 加载进度
@@ -165,7 +176,7 @@ def build_ltb_iid():
         lang_key = f"ltb_iid_{lang}"
         completed_count = completed.get(lang_key, 0)
         
-        if completed_count >= TOTAL_SAMPLES_PER_LANG:
+        if completed_count >= total_samples:
             print(f"  [跳过] {lang} 已完成 {completed_count} 条")
             continue
         
@@ -191,7 +202,7 @@ def build_ltb_iid():
             min_len, max_len = dist["range"]
             ratio = dist["ratio"]
             label = dist["label"]
-            target_count = int(TOTAL_SAMPLES_PER_LANG * ratio)
+            target_count = int(total_samples * ratio)
             
             # 计算该范围已有数量
             existing_in_range = sum(1 for _ in existing_ids if True)  # 简化，按总数计算
@@ -272,4 +283,8 @@ def build_ltb_iid():
 
 
 if __name__ == '__main__':
-    build_ltb_iid()
+    parser = argparse.ArgumentParser(description='构建 LTB_iid 数据集')
+    parser.add_argument('--debug', action='store_true', help='Debug模式，仅生成10条样本')
+    args = parser.parse_args()
+    
+    build_ltb_iid(debug=args.debug)

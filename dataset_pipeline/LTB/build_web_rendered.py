@@ -3,8 +3,10 @@
 Web_rendered 数据集构建主脚本
 集成：提取 -> LLM处理 -> 渲染 -> 保存
 支持 resume 机制
+支持 --debug 模式（10条样本）
 """
 
+import argparse
 import json
 import random
 from pathlib import Path
@@ -13,11 +15,11 @@ from dataclasses import asdict
 import yaml
 
 from extract_content import extract_all, filter_by_length, count_words
-from llm_processor import translate, generate_image_prompt, generate_text_array, rewrite_to_length
+from llm_processor import translate, generate_image_prompt, generate_text_array, rewrite_to_length, clean_extracted_content
 from render_richtext import render_content_to_image
 
 # ============ 写死的配置 ============
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PAPERS_DIR = PROJECT_ROOT / "papers-content"
 OUTPUT_DIR = PROJECT_ROOT / "eval" / "Web_rendered"
 IMAGES_DIR = OUTPUT_DIR / "images"
@@ -37,7 +39,8 @@ LENGTH_DISTRIBUTION = [
 LANGUAGES = ["en", "zh", "ko", "ja", "ar", "fr"]
 
 # 每语种目标样本数
-TOTAL_SAMPLES_PER_LANG = 1000  # 可调整
+TOTAL_SAMPLES_PER_LANG = 1000
+DEBUG_SAMPLES_PER_LANG = 10
 
 # ============ 进度管理 ============
 def load_progress() -> dict:
@@ -78,8 +81,15 @@ def sample_by_distribution(contents: list, total: int) -> list:
 
 
 # ============ 主流程 ============
-def process_single_item(item, lang: str, prompt_id: int) -> dict:
-    """处理单条数据"""
+def process_single_item(item, lang: str, prompt_id: int, use_llm_clean: bool = True) -> dict:
+    """处理单条数据
+    
+    Args:
+        item: 提取的内容项
+        lang: 目标语言
+        prompt_id: 提示词ID
+        use_llm_clean: 是否使用 LLM 清洗内容（去除噪声）
+    """
     content = item.content
     paper_id = item.paper_id
     section = item.section
@@ -88,7 +98,15 @@ def process_single_item(item, lang: str, prompt_id: int) -> dict:
     # 生成唯一ID
     item_id = f"WR_{lang}_{prompt_id}"
     
-    # 翻译（如果不是英文）
+    # 【步骤0】使用 LLM 清洗原始内容（去除引用、符号等噪声）
+    if use_llm_clean:
+        cleaned_content = clean_extracted_content(content)
+        # 如果清洗后为空，跳过此项
+        if not cleaned_content:
+            return None
+        content = cleaned_content
+    
+    # 【步骤1】翻译（如果不是英文）
     if lang == "en":
         translated = content
     else:
@@ -98,7 +116,26 @@ def process_single_item(item, lang: str, prompt_id: int) -> dict:
     prompt = generate_image_prompt(translated, lang)
     
     # 提取关键文本
-    text_array = generate_text_array(translated, lang)
+    # 使用 LLM 提取关键文本片段，并验证它们是否是原文的子集
+    llm_extracted_texts = generate_text_array(translated, lang)
+    
+    # 简单的清理 markdown 函数 (用于验证)
+    def clean_md_for_verify(text):
+        return text.replace('**', '').replace('__', '').replace('`', '').replace('#', '').strip()
+    
+    full_text_clean = clean_md_for_verify(translated)
+    
+    # 验证并过滤
+    verified_texts = []
+    for t in llm_extracted_texts:
+        t_clean = clean_md_for_verify(t)
+        if t_clean and t_clean in full_text_clean:
+            verified_texts.append(t_clean)
+            
+    # 如果验证后为空（LLM幻觉严重），回退到使用全文的前几句
+    if not verified_texts:
+        lines = [clean_md_for_verify(line) for line in translated.split('\n') if clean_md_for_verify(line)]
+        verified_texts = lines[:5] # 取前5句作为 fallback
     
     # 渲染图片
     image_filename = f"{item_id}.png"
@@ -111,11 +148,17 @@ def process_single_item(item, lang: str, prompt_id: int) -> dict:
     )
     
     # 构建输出数据
+    # 构造包含文本的 prompt
+    # 为了满足 "jsonl内保存的prompt也没有完全将text包括" 的要求，我们在 prompt 中包含全文
+    # 这样 prompt 是对图片的完整描述
+    full_clean_text = clean_md_for_verify(translated)
+    prompt_with_text = f"Generate an image of a document with the following text content:\n\n\"{full_clean_text}\"\n\nVisual style: {prompt}"
+
     return {
         "category": "academic",
         "length": get_length_category(text_length),
-        "prompt": prompt,
-        "text": text_array,
+        "prompt": prompt_with_text,
+        "text": verified_texts, 
         "text_length": count_words(translated),
         "prompt_id": prompt_id,
         "source_paper": paper_id,
@@ -134,10 +177,22 @@ def get_length_category(length: int) -> str:
         return "long"
 
 
-def build_dataset():
-    """构建数据集主函数"""
+def build_dataset(debug: bool = False, use_llm_clean: bool = True):
+    """构建数据集主函数
+    
+    Args:
+        debug: 是否为 debug 模式（仅生成10条样本）
+        use_llm_clean: 是否使用 LLM 清洗内容（去除噪声）
+    """
+    total_samples = DEBUG_SAMPLES_PER_LANG if debug else TOTAL_SAMPLES_PER_LANG
+    max_files = 10 if debug else 500
+    
     print("=" * 60)
     print("开始构建 Web_rendered 数据集")
+    if debug:
+        print(f"[DEBUG 模式] 每语种仅生成 {total_samples} 条样本")
+    if use_llm_clean:
+        print("[LLM 清洗] 启用 - 使用大模型去除内容噪声")
     print("=" * 60)
     
     # 加载进度
@@ -151,12 +206,12 @@ def build_dataset():
     
     # 提取所有内容
     print(f"\n[1/4] 从 {PAPERS_DIR} 提取内容...")
-    all_contents = extract_all(PAPERS_DIR, max_files=500)  # 限制文件数量加快测试
+    all_contents = extract_all(PAPERS_DIR, max_files=max_files)
     print(f"  提取了 {len(all_contents)} 条原始内容")
     
     # 按长度分布采样
     print(f"\n[2/4] 按长度分布采样...")
-    sampled = sample_by_distribution(all_contents, TOTAL_SAMPLES_PER_LANG)
+    sampled = sample_by_distribution(all_contents, total_samples)
     print(f"  采样了 {len(sampled)} 条内容")
     
     # 为每种语言处理
@@ -188,7 +243,13 @@ def build_dataset():
             
             print(f"  处理 [{idx+1}/{len(sampled)}] {item_id}...")
             
-            result = process_single_item(item, lang, prompt_id)
+            result = process_single_item(item, lang, prompt_id, use_llm_clean=use_llm_clean)
+            
+            # 如果清洗后内容为空，跳过
+            if result is None:
+                print(f"    [跳过] 内容清洗后为空")
+                continue
+            
             new_data.append(result)
             
             # 更新进度
@@ -217,4 +278,9 @@ def build_dataset():
 
 
 if __name__ == '__main__':
-    build_dataset()
+    parser = argparse.ArgumentParser(description='构建 Web_rendered 数据集')
+    parser.add_argument('--debug', action='store_true', help='Debug模式，仅生成10条样本')
+    parser.add_argument('--no-clean', action='store_true', help='禁用LLM内容清洗（默认启用）')
+    args = parser.parse_args()
+    
+    build_dataset(debug=args.debug, use_llm_clean=not args.no_clean)

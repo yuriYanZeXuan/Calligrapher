@@ -18,15 +18,19 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import torch
 from transformers import AutoTokenizer, PreTrainedModel
 
-from ...image_processor import VaeImageProcessor
-from ...loaders import FromSingleFileMixin, ZImageLoraLoaderMixin
-from ...models.autoencoders import AutoencoderKL
-from ...models.transformers import ZImageTransformer2DModel
-from ...pipelines.pipeline_utils import DiffusionPipeline
-from ...schedulers import FlowMatchEulerDiscreteScheduler
-from ...utils import logging, replace_example_docstring
-from ...utils.torch_utils import randn_tensor
-from .pipeline_output import ZImagePipelineOutput
+# 从同目录导入自定义模块
+from .transformer_z_image import ZImageTransformer2DModel
+from .attention_processor import IPAZImageAttnProcessor
+
+# 从 diffusers 导入标准组件
+from diffusers.image_processor import VaeImageProcessor
+from diffusers.loaders import FromSingleFileMixin, ZImageLoraLoaderMixin
+from diffusers.models.autoencoders import AutoencoderKL
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from diffusers.utils import logging, replace_example_docstring
+from diffusers.utils.torch_utils import randn_tensor
+from diffusers.pipelines.z_image.pipeline_output import ZImagePipelineOutput
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name

@@ -28,3 +28,6 @@ papers-content.tar.gz
 *.DS_Store
 eval/stats/*
 test.ipynb
+./dataset_pipeline/LTB/
+dataset_pipeline/LTB/assets/
+eval/Web_rendered/

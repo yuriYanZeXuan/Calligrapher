@@ -3,17 +3,17 @@
 # 按text_length分布的数据量配置（词数范围 -> 占比）
 length_distribution:
   - range: [0, 50]
-    ratio: 0.10
+    ratio: 0.20
   - range: [50, 100]
-    ratio: 0.10
+    ratio: 0.20
   - range: [100, 200]
-    ratio: 0.20
+    ratio: 0.3
   - range: [200, 400]
-    ratio: 0.30
+    ratio: 0.1
   - range: [400, 800]
-    ratio: 0.20
+    ratio: 0.1
   - range: [800, 1600]
-    ratio: 0.10
+    ratio: 0.1
 
 # 支持的语种列表
 languages:
@@ -56,5 +56,5 @@ paths:
 # LLM API 配置
 llm:
   model: "qwen3-vl-235b-a22b-instruct"
-  max_tokens: 4096
+  max_tokens: 40960
   temperature: 0.7

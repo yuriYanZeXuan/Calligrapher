@@ -48,72 +48,147 @@ def call_llm(system_prompt: str, user_prompt: str,
 
 
 def translate(content: str, target_lang: str) -> str:
-    """翻译文本到目标语言，保持公式格式"""
+    """翻译文本到目标语言，保持公式格式，确保富文本输出"""
     lang_name = LANG_MAP.get(target_lang, target_lang)
     
     system_prompt = f"""你是一个专业的学术翻译专家。请将用户提供的学术文本翻译成{lang_name}。
-要求：
-1. 保持所有数学公式格式不变（如 \\( \\) 或 \\[ \\] 包裹的公式）
-2. 保持表格的Markdown格式不变
-3. 翻译要准确、学术化
-4. 只输出翻译结果，不要添加任何解释"""
+
+【重要】你必须输出真正的富文本 Markdown，而非纯文本！
+
+具体要求：
+1. **标题**：使用 # ## ### 标记章节标题，不要省略
+2. **强调**：关键术语用 **粗体**，定义或强调用 *斜体*
+3. **列表**：枚举内容用 - 或 1. 2. 3. 格式
+4. **引用**：重要引述用 > 块引用
+5. **代码**：技术术语用 `行内代码`
+6. **公式**：数学公式用 $...$ 或 $$...$$ 包裹（LaTeX格式）
+7. **表格**：保持 Markdown 表格格式 |---|---|
+
+翻译要准确流畅。只输出翻译结果，不要添加任何解释或额外说明。"""
     
     user_prompt = content
     return call_llm(system_prompt, user_prompt)
 
 
 def rewrite_to_length(content: str, target_words: int, lang: str = "en") -> str:
-    """改写文本到目标词数"""
+    """改写文本到目标词数，确保富文本输出"""
     lang_name = LANG_MAP.get(lang, lang)
     
     system_prompt = f"""你是一个专业的学术写作专家。请将用户提供的学术文本改写为约{target_words}词的版本。
-要求：
-1. 保持核心含义不变
-2. 保持所有数学公式格式不变
-3. 使用{lang_name}输出
-4. 只输出改写后的文本，不要添加任何解释"""
+
+【重要】你必须输出真正的富文本 Markdown，而非纯文本！
+
+具体要求：
+1. **标题**：使用 # ## ### 标记章节结构
+2. **强调**：关键概念用 **粗体**，强调用 *斜体*
+3. **列表**：多个要点用 - 或数字列表
+4. **引用**：重要内容用 > 块引用
+5. **代码**：技术术语用 `行内代码`
+6. **公式**：保持所有数学公式的 $...$ 或 $$...$$ 格式
+7. 使用{lang_name}输出
+8. 保持核心含义不变
+
+只输出改写后的文本，不要添加任何解释。"""
     
     user_prompt = content
     return call_llm(system_prompt, user_prompt)
 
 
 def generate_image_prompt(content: str, lang: str = "en") -> str:
-    """生成图像生成的prompt描述"""
+    """生成图像生成的prompt描述（符合标准Markdown渲染效果）"""
     lang_name = LANG_MAP.get(lang, lang)
     
-    system_prompt = f"""你是一个专业的视觉设计专家。根据用户提供的学术文本，生成一个详细的图像生成prompt。
-该prompt用于描述如何将这段文本渲染为富文本图片。
+    system_prompt = f"""你是一个视觉描述专家。根据用户提供的文本，生成一个描述该文本渲染成图片后视觉效果的简短描述。
 
-要求：
-1. 使用{lang_name}输出
-2. 描述文本布局、字体风格、公式位置
-3. 描述整体视觉效果和色彩方案
-4. prompt应该详细且可执行
-5. 只输出prompt，不要添加任何解释
+【重要】描述必须符合标准 Markdown/HTML 渲染的实际效果，不要描述过于复杂的设计。
 
-输出格式示例：
-一张学术风格的富文本图片，白色背景，正文使用深灰色衬线字体居中排列。标题使用粗体，段落间距适中。公式使用标准LaTeX渲染样式，居中显示并与文本保持适当间距..."""
+可描述的视觉元素（都是 Markdown 可实现的）：
+- 标题层级（大标题、小标题）和粗体/斜体文字
+- 列表项（项目符号或编号）
+- 块引用（左侧竖线样式）
+- 代码块（灰色背景）
+- 表格（带边框的网格）
+- 数学公式（LaTeX渲染样式）
+- 白色背景、深色文字、简洁排版
+
+不要描述：
+- 复杂的配色方案或渐变
+- 装饰性图形或图标
+- 复杂的布局（多栏、浮动元素等）
+
+使用{lang_name}输出，只输出视觉描述，1-2句话即可。"""
     
-    user_prompt = f"请为以下学术文本生成图像渲染prompt：\n\n{content}"
-    return call_llm(system_prompt, user_prompt)
+    user_prompt = f"请描述以下文本渲染为图片后的视觉效果：\n\n{content[:500]}"
+    return call_llm(system_prompt, user_prompt, max_tokens=256)
 
 
 def generate_text_array(content: str, lang: str = "en") -> list[str]:
-    """从内容中提取关键文本片段（用于 text 字段）"""
+    """从内容中提取关键文本片段（用于 text 字段）
+    
+    【重要】提取的片段必须是原文的精确子串，不能改写或总结
+    """
     lang_name = LANG_MAP.get(lang, lang)
     
-    system_prompt = f"""你是一个文本分析专家。请从用户提供的学术文本中提取3-5个关键文本片段。
-要求：
-1. 每个片段应该是完整的短语或句子
-2. 片段应该代表文本的核心内容
-3. 使用{lang_name}输出
-4. 输出格式为每行一个片段，不要编号或其他标记"""
+    system_prompt = f"""你是一个文本提取专家。请从用户提供的文本中【精确复制】3-5个关键片段。
+
+【关键要求】
+- 你必须从原文中精确复制，一字不差
+- 不要改写、总结或重新措辞
+- 每个片段是原文中的完整句子或短语
+- 片段应代表文本的核心内容
+
+使用{lang_name}输出，每行一个片段，不要编号或其他标记。"""
     
     user_prompt = content
-    result = call_llm(system_prompt, user_prompt)
+    result = call_llm(system_prompt, user_prompt, max_tokens=512)
     # 分割成列表
     texts = [line.strip() for line in result.strip().split('\n') if line.strip()]
     return texts[:5]  # 最多5个
+
+
+def clean_extracted_content(content: str) -> str:
+    """使用 LLM 清洗提取的原始内容，去除噪声保留正文
+    
+    清洗目标：
+    - 去除引用标记、编号残留（如 [1], (2), Fig.1 等）
+    - 去除不完整的句子片段
+    - 去除无意义的符号和格式残留
+    - 去除元信息（如作者、日期、页码等）
+    - 保留完整、连贯、有意义的正文内容
+    - 保留数学公式（$...$, $$...$$）
+    - 保留表格结构
+    """
+    system_prompt = """你是一个学术文本清洗专家。请清洗用户提供的从论文中提取的原始文本。
+
+【清洗目标】
+去除以下噪声：
+- 引用标记：[1], [2,3], (Smith 2020), ¹ 等
+- 编号残留：Fig.1, Table 2, Eq.(3) 等孤立引用
+- 不完整句子：开头或结尾被截断的片段
+- 格式残留：多余的符号、乱码、特殊字符
+- 元信息：页码、作者信息、期刊名等
+- 无意义片段：单独的数字、字母、标点
+
+【必须保留】
+- 完整连贯的正文段落
+- 数学公式（保持 $...$ 或 $$...$$ 格式）
+- 表格结构（保持 Markdown 表格格式）
+- Markdown 格式标记（#标题, **粗体**, *斜体*, -列表 等）
+
+【输出要求】
+- 只输出清洗后的正文内容
+- 保持原文语言（不要翻译）
+- 如果整段内容都是噪声，输出 [EMPTY]
+- 不要添加任何解释"""
+
+    user_prompt = f"请清洗以下文本：\n\n{content}"
+    result = call_llm(system_prompt, user_prompt, max_tokens=2048, temperature=0.3)
+    
+    # 检查是否为空内容
+    if result.strip() == "[EMPTY]" or not result.strip():
+        return ""
+    
+    return result.strip()
 
 
 def process_content(content: str, target_lang: str, target_words: int = None) -> dict:

@@ -164,3 +164,17 @@ python infer_calligrapher_cross_custom.py
 </div>
 
 **Figure:** Qualitative results of Calligrapher under various settings. We demonstrate text customization results respectively under settings of (a) self-reference, (b) cross-reference, and (c) non-text reference. Reference-based image generation results are also incorporated in (d).
+
+
+
+'/Users/yanzexuan/code/Calligrapher/zimage_inference.py'在这里参考'/Users/yanzexuan/code/Calligraph
+er/baselines/z_image/inference_z_image.py''/Users/yanzexuan/code/Calligrapher/train/zimage_ip'目录下的实现，导入使用
+本地的zimage定义的路径和包，然后留下三个接口'/Users/yanzexuan/code/Calligrapher/infer'分别在这里每个创建一个代码文件
+，一个接口是prompt refiner，现在先使用'/Users/yanzexuan/code/Calligrapher/dataset_pipeline/LTB/llm_processor.py'这个
+里面的VLM api来完成，一个接口是Glyph Injector，用于在给定文字渲染的bbox和内容后，先用系统字体库白底黑字渲染有文字内
+容的图像，要求文字字体大小满足基本填满画幅，然后将这个模版回填到输入的位置上，将这个结果用'/Users/yanzexuan/code/Cal
+ligrapher/dev/rotate_dev.py'的工具提取mask和binary图贴到图像上，使用模型推理开始的noise对这个做inversion，保存latent
+的列表，然后对denoise过程来注入其中的latent。第三个接口是Test Time Scaling，可以从不同的初始化噪声，不同的prompt ref
+iner的输出开始，在去噪三步之后得到一个beam的结果，将这个结果用flow matching直接推到T0然后vae decode，用VLM api评分，
+其中保留评分最高的一部分，次之的一部分重新加噪inversion-denoising，然后剩余的重新选取噪声再去噪的，作为beam search的方法来生成。我们有八卡，你的实现应该
+能支持八卡运行。记得参考/skills:minimal-coder,并给出一个测试脚本，比如提示词就是让爱因斯坦写二次方程求根公式。

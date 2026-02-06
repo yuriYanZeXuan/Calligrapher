@@ -89,12 +89,14 @@ def test_with_glyph_injection(inference, output_dir: Path):
         }
     ]
     
+    from infer.glyph_injector import InjectionConfig
+    
     image = inference.generate(
         prompt=prompt,
         text_regions=text_regions,
         use_prompt_refiner=False,
         use_glyph_injection=True,
-        injection_strength=0.7,
+        injection_config=InjectionConfig(mask_strength=1.0, timestep_ratio=1.0),
         use_tts=False,
         seed=42
     )
@@ -152,12 +154,14 @@ def test_full_pipeline(inference, output_dir: Path):
         }
     ]
     
+    from infer.glyph_injector import InjectionConfig
+    
     image = inference.generate(
         prompt=prompt,
         text_regions=text_regions,
         use_prompt_refiner=True,
         use_glyph_injection=True,
-        injection_strength=0.6,
+        injection_config=InjectionConfig(mask_strength=0.6),
         use_tts=False,
         seed=42
     )

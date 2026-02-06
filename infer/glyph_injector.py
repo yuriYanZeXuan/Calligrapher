@@ -10,8 +10,8 @@ Glyph Injector: 文字渲染和 latent 注入接口
 
 import os
 import math
-from typing import Optional, Tuple, Union
-from dataclasses import dataclass, field
+from typing import Optional, Tuple
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -97,15 +97,6 @@ class InjectionConfig:
     """
     mask_strength: float = 0.8
     timestep_ratio: float = 1.0
-
-    @staticmethod
-    def from_value(v: Union["InjectionConfig", float, None]) -> "InjectionConfig":
-        """兼容旧接口：float → InjectionConfig(mask_strength=v)"""
-        if v is None:
-            return InjectionConfig()
-        if isinstance(v, (int, float)):
-            return InjectionConfig(mask_strength=float(v))
-        return v
 
     def should_inject(self, step_idx: int, total_steps: int) -> bool:
         """判断当前步是否需要注入"""
@@ -274,7 +265,6 @@ class GlyphInjector:
             每个时间步对应的 latent 列表
         """
         latent_list = []
-        print(f"timesteps[:10]: {timesteps[:10]},shape {timesteps.shape},in gplyph_injector.py:247")
         for t in timesteps:
             # 计算 sigma (归一化时间步)
             sigma = t.float() / 1000.0
@@ -393,7 +383,7 @@ class GlyphInjector:
         current_latent: torch.Tensor,
         injection_data: dict,
         step_idx: int,
-        injection_strength: Union[InjectionConfig, float] = 1.0
+        config: InjectionConfig = None
     ) -> torch.Tensor:
         """
         在当前 latent 中注入文字区域的 latent
@@ -402,16 +392,18 @@ class GlyphInjector:
             current_latent: 当前去噪步骤的 latent
             injection_data: prepare_injection 返回的数据
             step_idx: 当前步骤索引
-            injection_strength: InjectionConfig 或 float（向后兼容，等价于 mask_strength）
+            config: 注入配置
             
         Returns:
             注入后的 latent
         """
-        cfg = InjectionConfig.from_value(injection_strength)
-        total_steps = injection_data.get("total_steps", len(injection_data["latent_lists"][0]))
+        if config is None:
+            config = InjectionConfig()
+        
+        total_steps = injection_data["total_steps"]
         
         # timestep 维度：超过注入比例则跳过
-        if not cfg.should_inject(step_idx, total_steps):
+        if not config.should_inject(step_idx, total_steps):
             return current_latent
         
         mask = injection_data["mask_latent"]
@@ -425,8 +417,8 @@ class GlyphInjector:
         # 扩展 mask 到 latent 的 channel 维度
         mask = mask.expand_as(current_latent)
         
-        # mask 维度：空间混合强度
-        s = cfg.mask_strength
+        # 空间混合
+        s = config.mask_strength
         injected = current_latent * (1 - mask * s) + text_latent * mask * s
         
         return injected

@@ -12,7 +12,7 @@ Z-Image 推理主入口
 import os
 import sys
 from typing import Optional, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # 禁用 torch.compile 避免错误
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
@@ -53,11 +53,7 @@ class GenerationConfig:
     
     # Glyph Injection
     use_glyph_injection: bool = True
-    injection_strength: Union[InjectionConfig, float] = None  # None → 使用默认 InjectionConfig()
-    
-    def get_injection_config(self) -> InjectionConfig:
-        """获取 InjectionConfig（兼容 float）"""
-        return InjectionConfig.from_value(self.injection_strength)
+    injection_config: InjectionConfig = field(default_factory=InjectionConfig)
     
     # Test Time Scaling
     use_tts: bool = False
@@ -295,7 +291,7 @@ class ZImageInference:
                     latent, 
                     injection_data, 
                     step_idx,
-                    injection_strength=config.get_injection_config()
+                    config=config.injection_config
                 )
             
             # Transformer 前向

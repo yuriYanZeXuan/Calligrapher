@@ -17,6 +17,8 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from pathlib import Path
 
+from infer.mylogger import TTSLogger
+
 # 加载环境变量
 load_dotenv(Path(__file__).parent.parent / '.env')
 
@@ -99,15 +101,17 @@ class MultiGPUTestTimeScaling:
         model_path: str,
         devices: list[str],
         prompt_refiner=None,
-        dtype: torch.dtype = torch.bfloat16
+        dtype: torch.dtype = torch.bfloat16,
+        logger: TTSLogger = None,
     ):
         self.model_path = model_path
         self.devices = devices
         self.num_gpus = len(devices)
         self.prompt_refiner = prompt_refiner
         self.dtype = dtype
+        self.logger = logger or TTSLogger(run_name="multi_gpu_tts")
         
-        print(f"多 GPU TTS 初始化，使用 {self.num_gpus} 张 GPU: {devices}")
+        self.logger.info(f"多 GPU TTS 初始化，使用 {self.num_gpus} 张 GPU: {devices}")
         
         # 每个 GPU 加载一个 pipeline
         self.pipelines = {}
@@ -154,9 +158,11 @@ class MultiGPUTestTimeScaling:
             image = pipe.vae.decode(latent, return_dict=False)[0]
         return pipe.image_processor.postprocess(image, output_type="pil")[0]
     
-    def _denoise_step(self, device: str, latent: torch.Tensor, prompt_embeds: list, t: torch.Tensor) -> torch.Tensor:
+    def _denoise_step(self, device: str, latent: torch.Tensor, prompt_embeds: list, t) -> torch.Tensor:
         """单步去噪"""
         pipe = self.pipelines[device]
+        if not isinstance(t, torch.Tensor):
+            t = torch.tensor([t], dtype=torch.float32)
         timestep = t.expand(1).to(device)
         timestep_norm = (1000 - timestep) / 1000
         
@@ -230,7 +236,7 @@ class MultiGPUTestTimeScaling:
         for device in self.devices[1:]:
             self.pipelines[device].scheduler.set_timesteps(num_inference_steps, device=device)
         
-        print(f"\n=== 阶段 1: 并行去噪 {early_stop_step} 步 ===")
+        self.logger.info(f"=== 阶段 1: 并行去噪 {early_stop_step} 步 ===")
         
         # 并行处理前 early_stop_step 步
         candidates = []
@@ -254,23 +260,30 @@ class MultiGPUTestTimeScaling:
                     device=device,
                     step=early_stop_step
                 ))
-                print(f"  候选 {cand_idx} 完成 ({device})")
+                self.logger.info(f"  候选 {cand_idx} 完成 ({device})")
         
-        print(f"\n=== 阶段 2: VLM 评分 ===")
+        self.logger.info(f"=== 阶段 2: VLM 早停评分 (step={early_stop_step}) ===")
         
-        # 并行评分
-        for cand in candidates:
+        # 评分并记录图片
+        for idx, cand in enumerate(candidates):
             image = self._decode_latent(cand.device, cand.latent)
             cand.score = score_image_with_vlm(image, cand.prompt, text_content)
-            print(f"  {cand.device}: 得分 {cand.score:.2f}")
+            self.logger.log_vlm_score(
+                stage="early_stop",
+                candidate_idx=idx,
+                prompt=cand.prompt,
+                score=cand.score,
+                image=image,
+                extra={"device": cand.device, "step": early_stop_step, "text_content": text_content or ""},
+            )
         
         # 排序筛选
         candidates.sort(key=lambda x: x.score, reverse=True)
         n_keep = max(1, int(beam_size * keep_ratio))
         candidates = candidates[:n_keep]
-        print(f"\n保留 top {n_keep} 候选，最高分: {candidates[0].score:.2f}")
+        self.logger.info(f"保留 top {n_keep} 候选，最高分: {candidates[0].score:.2f}")
         
-        print(f"\n=== 阶段 3: 继续去噪剩余步骤 ===")
+        self.logger.info(f"=== 阶段 3: 继续去噪剩余步骤 ===")
         
         # 继续去噪
         for step_idx in range(early_stop_step, len(timesteps)):
@@ -280,18 +293,29 @@ class MultiGPUTestTimeScaling:
             
             for cand in candidates:
                 cand.latent = self._denoise_step(cand.device, cand.latent, cand.prompt_embeds, t.to(cand.device))
-            print(f"  步骤 {step_idx + 1}/{len(timesteps)} 完成")
+            self.logger.info(f"  步骤 {step_idx + 1}/{len(timesteps)} 完成")
         
         # 最终评分
-        print(f"\n=== 最终评分 ===")
-        for cand in candidates:
+        self.logger.info(f"=== 阶段 4: 最终评分 ===")
+        for idx, cand in enumerate(candidates):
             image = self._decode_latent(cand.device, cand.latent)
             cand.score = score_image_with_vlm(image, cand.prompt, text_content)
-            print(f"  {cand.device}: 最终得分 {cand.score:.2f}")
+            self.logger.log_vlm_score(
+                stage="final",
+                candidate_idx=idx,
+                prompt=cand.prompt,
+                score=cand.score,
+                image=image,
+                extra={"device": cand.device, "text_content": text_content or ""},
+            )
         
         candidates.sort(key=lambda x: x.score, reverse=True)
         best = candidates[0]
         final_image = self._decode_latent(best.device, best.latent)
+        
+        # 保存最终选中的图像
+        self.logger.save_image(final_image, "best_result", caption=f"BEST  score={best.score:.2f}\n{best.prompt[:120]}")
+        self.logger.info(f"最终结果: score={best.score:.2f}, prompt={best.prompt[:80]}...")
         
         return final_image, best.score
 
@@ -299,12 +323,13 @@ class MultiGPUTestTimeScaling:
 class TestTimeScaling:
     """单 GPU Test Time Scaling（兼容旧接口）"""
     
-    def __init__(self, pipeline, prompt_refiner=None, device: str = "cuda", dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, pipeline, prompt_refiner=None, device: str = "cuda", dtype: torch.dtype = torch.bfloat16, logger: TTSLogger = None):
         self.pipeline = pipeline
         self.prompt_refiner = prompt_refiner
         self.device = device
         self.dtype = dtype
         self.vae_scale_factor = pipeline.vae_scale_factor
+        self.logger = logger or TTSLogger(run_name="single_gpu_tts")
     
     def _prepare_latents(self, batch_size: int, height: int, width: int, generator=None) -> torch.Tensor:
         num_channels = self.pipeline.transformer.in_channels
@@ -379,36 +404,58 @@ class TestTimeScaling:
             
             # 早停评分
             if step_idx + 1 == early_stop_step and beam_size > 1:
-                for cand in candidates:
+                self.logger.info(f"=== 早停评分 (step={early_stop_step}) ===")
+                for idx, cand in enumerate(candidates):
                     image = self._decode_latent_to_image(cand.latent)
                     cand.score = score_image_with_vlm(image, cand.prompt, text_content)
+                    self.logger.log_vlm_score(
+                        stage="early_stop",
+                        candidate_idx=idx,
+                        prompt=cand.prompt,
+                        score=cand.score,
+                        image=image,
+                        extra={"step": early_stop_step, "text_content": text_content or ""},
+                    )
                 
                 candidates.sort(key=lambda x: x.score, reverse=True)
                 n_keep = max(1, int(beam_size * keep_ratio))
                 candidates = candidates[:n_keep]
+                self.logger.info(f"保留 top {n_keep}，最高分: {candidates[0].score:.2f}")
         
         # 最终选择
         if len(candidates) > 1:
-            for cand in candidates:
+            self.logger.info("=== 最终评分 ===")
+            for idx, cand in enumerate(candidates):
                 image = self._decode_latent_to_image(cand.latent)
                 cand.score = score_image_with_vlm(image, cand.prompt, text_content)
+                self.logger.log_vlm_score(
+                    stage="final",
+                    candidate_idx=idx,
+                    prompt=cand.prompt,
+                    score=cand.score,
+                    image=image,
+                    extra={"text_content": text_content or ""},
+                )
             candidates.sort(key=lambda x: x.score, reverse=True)
         
         best = candidates[0]
-        return self._decode_latent_to_image(best.latent), best.score
+        final_image = self._decode_latent_to_image(best.latent)
+        self.logger.save_image(final_image, "best_result", caption=f"BEST  score={best.score:.2f}\n{best.prompt[:120]}")
+        self.logger.info(f"最终结果: score={best.score:.2f}")
+        return final_image, best.score
     
     def __call__(self, prompt: str, text_content: Optional[str] = None, **kwargs) -> tuple[Image.Image, float]:
         return self.generate_with_beam_search(prompt, text_content, **kwargs)
 
 
-def create_test_time_scaling(pipeline, prompt_refiner=None, device: str = "cuda") -> TestTimeScaling:
+def create_test_time_scaling(pipeline, prompt_refiner=None, device: str = "cuda", logger: TTSLogger = None) -> TestTimeScaling:
     """创建单 GPU TTS"""
-    return TestTimeScaling(pipeline=pipeline, prompt_refiner=prompt_refiner, device=device, dtype=pipeline.transformer.dtype)
+    return TestTimeScaling(pipeline=pipeline, prompt_refiner=prompt_refiner, device=device, dtype=pipeline.transformer.dtype, logger=logger)
 
 
-def create_multi_gpu_tts(model_path: str, devices: list[str] = None, prompt_refiner=None) -> MultiGPUTestTimeScaling:
+def create_multi_gpu_tts(model_path: str, devices: list[str] = None, prompt_refiner=None, logger: TTSLogger = None) -> MultiGPUTestTimeScaling:
     """创建多 GPU TTS"""
     if devices is None:
         num_gpus = torch.cuda.device_count()
         devices = [f"cuda:{i}" for i in range(num_gpus)]
-    return MultiGPUTestTimeScaling(model_path=model_path, devices=devices, prompt_refiner=prompt_refiner)
+    return MultiGPUTestTimeScaling(model_path=model_path, devices=devices, prompt_refiner=prompt_refiner, logger=logger)

@@ -189,9 +189,10 @@ class GlyphInjector:
             text_mask = binary if black_ratio < 0.5 else cv2.bitwise_not(binary)
         
         # 形态学操作去噪
-        kernel = np.ones((3, 3), np.uint8)
-        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_CLOSE, kernel)
-        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_OPEN, kernel)
+        kernel1 = np.ones((3, 3), np.uint8)
+        kernel2 = np.ones((2, 2), np.uint8)
+        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_CLOSE, kernel1)
+        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_OPEN, kernel2)
         
         return text_mask
     
@@ -243,7 +244,7 @@ class GlyphInjector:
             每个时间步对应的 latent 列表
         """
         latent_list = []
-        
+        print(f"timesteps[:10]: {timesteps[:10]},shape {timesteps.shape},in gplyph_injector.py:247")
         for t in timesteps:
             # 计算 sigma (归一化时间步)
             sigma = t.float() / 1000.0
@@ -391,12 +392,12 @@ if __name__ == "__main__":
     
     text = "x = (-b ± √(b²-4ac)) / 2a"
     img = GlyphInjector.render_text_template(injector, text, 512, 128)
-    img.save("/tmp/test_text_render.png")
+    img.save("./test_text_render.png")
     print(f"文字渲染测试完成: /tmp/test_text_render.png")
     
     # 测试 mask 提取
     img_array = np.array(img)
     img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
     mask = GlyphInjector.extract_text_mask(injector, img_bgr)
-    cv2.imwrite("/tmp/test_text_mask.png", mask)
+    cv2.imwrite("./test_text_mask.png", mask)
     print(f"Mask 提取测试完成: /tmp/test_text_mask.png")

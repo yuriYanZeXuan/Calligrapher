@@ -31,13 +31,14 @@ VLM_MODEL = "qwen3-vl-235b-a22b-instruct"
 @dataclass
 class BeamCandidate:
     """Beam search 候选项"""
-    latent: torch.Tensor
+    latent: torch.Tensor        # 当前步的含噪 latent
     noise: torch.Tensor
     prompt: str
     prompt_embeds: list
     score: float = 0.0
     step: int = 0
     device: str = "cuda:0"
+    latent_0: torch.Tensor = None   # 模型预测的干净 latent (x0)
 
 
 def get_vlm_client() -> OpenAI:
@@ -158,8 +159,11 @@ class MultiGPUTestTimeScaling:
             image = pipe.vae.decode(latent, return_dict=False)[0]
         return pipe.image_processor.postprocess(image, output_type="pil")[0]
     
-    def _denoise_step(self, device: str, latent: torch.Tensor, prompt_embeds: list, t) -> torch.Tensor:
-        """单步去噪"""
+    def _denoise_step(self, device: str, latent: torch.Tensor, prompt_embeds: list, t) -> tuple[torch.Tensor, torch.Tensor]:
+        """单步去噪，返回 (next_latent, predicted_x0)
+        
+        flow matching: x_t = x_0 + σ·v  →  x_0 = x_t - σ·v
+        """
         pipe = self.pipelines[device]
         if not isinstance(t, torch.Tensor):
             t = torch.tensor([t], dtype=torch.float32)
@@ -174,7 +178,16 @@ class MultiGPUTestTimeScaling:
         noise_pred = torch.stack([o.float() for o in model_out], dim=0).squeeze(2)
         noise_pred = -noise_pred
         
-        return pipe.scheduler.step(noise_pred.to(torch.float32), t, latent, return_dict=False)[0]
+        # 从 scheduler 的 sigma 表查找当前 sigma
+        t_val = timestep[0].item()
+        step_idx = (pipe.scheduler.timesteps - t_val).abs().argmin().item()
+        sigma = pipe.scheduler.sigmas[step_idx].to(device)
+        
+        # predicted x0: x_0 = x_t - σ · velocity
+        latent_0 = latent - sigma * noise_pred
+        
+        next_latent = pipe.scheduler.step(noise_pred.to(torch.float32), t, latent, return_dict=False)[0]
+        return next_latent, latent_0
     
     def _process_candidate_on_gpu(
         self,
@@ -194,11 +207,12 @@ class MultiGPUTestTimeScaling:
         latent = self._prepare_latents(device, height, width, seed)
         prompt_embeds = self._encode_prompt(device, prompt)
         
-        # 去噪 num_steps 步
+        # 去噪 num_steps 步，保留最后一步的 latent_0
+        latent_0 = None
         for i, t in enumerate(timesteps[:num_steps]):
-            latent = self._denoise_step(device, latent, prompt_embeds, t)
+            latent, latent_0 = self._denoise_step(device, latent, prompt_embeds, t)
         
-        return cand_idx, device, latent, prompt, prompt_embeds
+        return cand_idx, device, latent, prompt, prompt_embeds, latent_0
     
     def generate_with_beam_search(
         self,
@@ -206,7 +220,7 @@ class MultiGPUTestTimeScaling:
         text_content: Optional[str] = None,
         height: int = 1024,
         width: int = 1024,
-        num_inference_steps: int = 9,
+        num_inference_steps: int = 20,
         beam_size: int = 8,
         early_stop_step: int = 3,
         keep_ratio: float = 0.25,
@@ -251,22 +265,23 @@ class MultiGPUTestTimeScaling:
                 futures[future] = i
             
             for future in as_completed(futures):
-                cand_idx, device, latent, cand_prompt, prompt_embeds = future.result()
+                cand_idx, device, latent, cand_prompt, prompt_embeds, latent_0 = future.result()
                 candidates.append(BeamCandidate(
                     latent=latent,
                     noise=latent.clone(),
                     prompt=cand_prompt,
                     prompt_embeds=prompt_embeds,
                     device=device,
-                    step=early_stop_step
+                    step=early_stop_step,
+                    latent_0=latent_0,
                 ))
                 self.logger.info(f"  候选 {cand_idx} 完成 ({device})")
         
         self.logger.info(f"=== 阶段 2: VLM 早停评分 (step={early_stop_step}) ===")
         
-        # 评分并记录图片
+        # 评分：解码模型预测的 latent_0 得到干净图像（无需额外去噪步数）
         for idx, cand in enumerate(candidates):
-            image = self._decode_latent(cand.device, cand.latent)
+            image = self._decode_latent(cand.device, cand.latent_0)
             cand.score = score_image_with_vlm(image, cand.prompt, text_content)
             self.logger.log_vlm_score(
                 stage="early_stop",
@@ -292,7 +307,7 @@ class MultiGPUTestTimeScaling:
                 callback(step_idx, len(timesteps), len(candidates))
             
             for cand in candidates:
-                cand.latent = self._denoise_step(cand.device, cand.latent, cand.prompt_embeds, t.to(cand.device))
+                cand.latent, cand.latent_0 = self._denoise_step(cand.device, cand.latent, cand.prompt_embeds, t.to(cand.device))
             self.logger.info(f"  步骤 {step_idx + 1}/{len(timesteps)} 完成")
         
         # 最终评分
@@ -354,7 +369,7 @@ class TestTimeScaling:
         text_content: Optional[str] = None,
         height: int = 1024,
         width: int = 1024,
-        num_inference_steps: int = 9,
+        num_inference_steps: int = 20,
         beam_size: int = 8,
         early_stop_step: int = 3,
         keep_ratio: float = 0.25,
@@ -400,13 +415,20 @@ class TestTimeScaling:
                 
                 noise_pred = torch.stack([o.float() for o in model_out], dim=0).squeeze(2)
                 noise_pred = -noise_pred
+                
+                # 计算 predicted x0: x_0 = x_t - σ · velocity
+                t_val = timestep[0].item()
+                s_idx = (self.pipeline.scheduler.timesteps - t_val).abs().argmin().item()
+                sigma = self.pipeline.scheduler.sigmas[s_idx].to(self.device)
+                cand.latent_0 = cand.latent - sigma * noise_pred
+                
                 cand.latent = self.pipeline.scheduler.step(noise_pred.to(torch.float32), t, cand.latent, return_dict=False)[0]
             
             # 早停评分
             if step_idx + 1 == early_stop_step and beam_size > 1:
                 self.logger.info(f"=== 早停评分 (step={early_stop_step}) ===")
                 for idx, cand in enumerate(candidates):
-                    image = self._decode_latent_to_image(cand.latent)
+                    image = self._decode_latent_to_image(cand.latent_0)
                     cand.score = score_image_with_vlm(image, cand.prompt, text_content)
                     self.logger.log_vlm_score(
                         stage="early_stop",

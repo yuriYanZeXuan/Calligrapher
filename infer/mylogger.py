@@ -144,11 +144,51 @@ class TTSLogger:
 
     # ---------- 内部工具 ----------
 
+    # 支持中文的字体搜索列表（Linux 服务器 → macOS 兜底）
+    _FONT_CANDIDATES = [
+        # Linux Noto CJK（最常见的服务器中文字体）
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/OTF/NotoSansCJK-Regular.ttc",
+        # Linux WenQuanYi
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+        # Linux SimHei / SimSun
+        "/usr/share/fonts/truetype/SimHei.ttf",
+        "/usr/share/fonts/chinese/SimHei.ttf",
+        # macOS 中文字体
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+        # 最后兜底的纯英文字体
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+    ]
+    _font_cache = None
+
+    @classmethod
+    def _load_font(cls, size: int = 18):
+        """加载支持中文的字体，结果缓存"""
+        if cls._font_cache is not None:
+            return cls._font_cache.font_variant(size=size)
+
+        for path in cls._FONT_CANDIDATES:
+            if Path(path).exists():
+                try:
+                    cls._font_cache = ImageFont.truetype(path, size)
+                    return cls._font_cache
+                except OSError:
+                    continue
+
+        cls._font_cache = ImageFont.load_default()
+        return cls._font_cache
+
     @staticmethod
-    def _add_caption(image: Image.Image, text: str, bar_height: int = 60) -> Image.Image:
+    def _add_caption(image: Image.Image, text: str, bar_height: int = 40) -> Image.Image:
         """在图片底部添加白色条带 + caption 文字"""
         w, h = image.size
-        # 多行文本时增加高度
         n_lines = text.count("\n") + 1
         total_bar = bar_height * n_lines
 
@@ -156,14 +196,6 @@ class TTSLogger:
         new_img.paste(image, (0, 0))
 
         draw = ImageDraw.Draw(new_img)
-        # 尝试加载等宽字体，失败则用默认
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 16)
-        except OSError:
-            try:
-                font = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", 16)
-            except OSError:
-                font = ImageFont.load_default()
-
+        font = TTSLogger._load_font(size=18)
         draw.text((10, h + 8), text, fill="black", font=font)
         return new_img

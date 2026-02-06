@@ -345,7 +345,7 @@ class ZImageInference:
         branches = []
         for k in range(K):
             gen_k = torch.Generator(device=self.primary_device).manual_seed(base_seed + 1000 + k)
-            local_noise = torch.randn_like(noise, generator=gen_k)
+            local_noise = torch.randn(noise.shape, generator=gen_k, device=noise.device, dtype=noise.dtype)
             branch = noise * (1 - mask_exp) + local_noise * mask_exp
             branches.append(branch)
         
@@ -353,28 +353,26 @@ class ZImageInference:
         
         # ---------- 阶段 1: 多分支去噪 ----------
         for step_idx, t in enumerate(timesteps[:inject_until_step]):
-            # 批量前向：K 个 latent 拼成一个 batch
-            batch = torch.cat(branches, dim=0)                # (K, C, H, W)
-            timestep_batch = t.expand(K)
-            timestep_norm = (1000 - timestep_batch) / 1000
+            timestep = t.expand(1)
+            timestep_norm = (1000 - timestep) / 1000
             
-            latent_input = batch.to(dtype).unsqueeze(2)       # (K, C, 1, H, W)
-            latent_list = list(latent_input.unbind(dim=0))    # K 个 (C, 1, H, W)
-            prompt_embeds_k = prompt_embeds * K               # 复制 K 份
-            
-            with torch.no_grad():
-                model_out = self.pipeline.transformer(
-                    latent_list, timestep_norm, prompt_embeds_k, return_dict=False
-                )[0]
-            
-            # scheduler.step K 次，但只推进 step_index 一次
+            # 管理 scheduler step_index：K 次 step 共享同一步
             if self.pipeline.scheduler._step_index is None:
                 self.pipeline.scheduler._init_step_index(t)
             saved_idx = self.pipeline.scheduler._step_index
             
+            # 逐分支前向 + step（格式与单分支完全一致，兼容 diffusers）
             for k in range(K):
+                latent_input = branches[k].to(dtype).unsqueeze(2)   # (1,C,1,H,W)
+                
+                with torch.no_grad():
+                    model_out = self.pipeline.transformer(
+                        [latent_input[0]], timestep_norm, prompt_embeds, return_dict=False
+                    )[0]
+                
+                noise_pred_k = -model_out[0].float().unsqueeze(0)
+                
                 self.pipeline.scheduler._step_index = saved_idx
-                noise_pred_k = -model_out[k].float().unsqueeze(0)
                 branches[k] = self.pipeline.scheduler.step(
                     noise_pred_k, t, branches[k], return_dict=False
                 )[0]

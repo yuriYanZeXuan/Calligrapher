@@ -239,8 +239,16 @@ class ZImageInference:
         config: GenerationConfig,
         generator: Optional[torch.Generator] = None
     ) -> Image.Image:
-        """带 Glyph Injection 的生成"""
+        """带 Glyph Injection 的生成
         
+        局部重采样算法 (num_local_samples > 1):
+            在 text-region 区域采样 K 个不同种子的噪声，区域外共享原始噪声。
+            timestep_ratio 以内：K 个分支独立去噪，每步将 text-region 替换为 K 个结果的平均。
+            timestep_ratio 以后：合并为单分支正常去噪。
+        
+        模板注入模式 (num_local_samples <= 1):
+            使用原有的 text latent inversion + mask 混合注入。
+        """
         # 转换文字区域格式
         regions = [
             TextRegion(bbox=tuple(r["bbox"]), content=r["content"])
@@ -263,7 +271,7 @@ class ZImageInference:
         self.pipeline.scheduler.set_timesteps(config.num_inference_steps, device=self.primary_device)
         timesteps = self.pipeline.scheduler.timesteps
         
-        # 准备注入数据
+        # 准备注入数据（mask + text latent）
         injection_data = self.glyph_injector.prepare_injection(
             text_regions=regions,
             image_size=(config.width, config.height),
@@ -278,40 +286,22 @@ class ZImageInference:
             do_classifier_free_guidance=False
         )
         
-        # Denoising 循环（后置注入：scheduler step 之后注入，确保文字结构保留到下一步）
-        latent = noise.clone()
+        K = config.injection_config.num_local_samples
+        total_steps = len(timesteps)
+        inject_until_step = int(total_steps * config.injection_config.timestep_ratio)
+        mask = injection_data["mask_latent"]       # (1, 1, h, w)
+        mask_exp = mask.expand_as(noise)            # (1, C, h, w)
         
-        for step_idx, t in enumerate(timesteps):
-            timestep = t.expand(1)
-            timestep_norm = (1000 - timestep) / 1000
-            
-            # Transformer 前向
-            latent_input = latent.to(self.pipeline.transformer.dtype).unsqueeze(2)
-            latent_list = [latent_input[0]]
-            
-            with torch.no_grad():
-                model_out = self.pipeline.transformer(
-                    latent_list, timestep_norm, prompt_embeds, return_dict=False
-                )[0]
-            
-            noise_pred = torch.stack([o.float() for o in model_out], dim=0).squeeze(2)
-            noise_pred = -noise_pred
-            
-            # Scheduler step
-            latent = self.pipeline.scheduler.step(
-                noise_pred.to(torch.float32), t, latent, return_dict=False
-            )[0]
-            
-            # 后置注入：scheduler step 后替换 mask 区域为下一个噪声水平的 text latent
-            # latent_list[step_idx+1] 对应 scheduler step 后的噪声水平
-            # latent_list[N] = clean text latent (sigma=0)，确保最后一步也能注入
-            if config.use_glyph_injection:
-                latent = self.glyph_injector.inject_latent(
-                    latent, 
-                    injection_data, 
-                    step_idx + 1,
-                    config=config.injection_config
-                )
+        if K > 1 and inject_until_step > 0:
+            latent = self._denoise_local_resample(
+                noise, timesteps, prompt_embeds,
+                mask_exp, K, inject_until_step, config
+            )
+        else:
+            latent = self._denoise_template_inject(
+                noise, timesteps, prompt_embeds,
+                injection_data, config
+            )
         
         # 解码
         latent = latent.to(self.pipeline.vae.dtype)
@@ -322,6 +312,138 @@ class ZImageInference:
         
         image = self.pipeline.image_processor.postprocess(image, output_type="pil")[0]
         return image
+    
+    # ------ 局部重采样 ------
+    
+    def _denoise_local_resample(
+        self,
+        noise: torch.Tensor,
+        timesteps: torch.Tensor,
+        prompt_embeds: list,
+        mask_exp: torch.Tensor,
+        K: int,
+        inject_until_step: int,
+        config: GenerationConfig,
+    ) -> torch.Tensor:
+        """
+        局部重采样去噪：text-region 用 K 个噪声分支，每步取平均。
+        
+        Args:
+            noise: 主干噪声 (1, C, H, W)
+            timesteps: scheduler 时间步
+            prompt_embeds: 编码后的 prompt
+            mask_exp: 扩展到 latent 维度的 text-region mask (1, C, H, W)
+            K: 分支数
+            inject_until_step: 局部重采样截止步数
+            config: 生成配置
+        """
+        base_seed = config.seed or 0
+        dtype = self.pipeline.transformer.dtype
+        
+        # ---------- 构造 K 个分支 ----------
+        # 区域外共享 noise，区域内各用不同种子
+        branches = []
+        for k in range(K):
+            gen_k = torch.Generator(device=self.primary_device).manual_seed(base_seed + 1000 + k)
+            local_noise = torch.randn_like(noise, generator=gen_k)
+            branch = noise * (1 - mask_exp) + local_noise * mask_exp
+            branches.append(branch)
+        
+        print(f"局部重采样: K={K}, inject_until_step={inject_until_step}/{len(timesteps)}")
+        
+        # ---------- 阶段 1: 多分支去噪 ----------
+        for step_idx, t in enumerate(timesteps[:inject_until_step]):
+            # 批量前向：K 个 latent 拼成一个 batch
+            batch = torch.cat(branches, dim=0)                # (K, C, H, W)
+            timestep_batch = t.expand(K)
+            timestep_norm = (1000 - timestep_batch) / 1000
+            
+            latent_input = batch.to(dtype).unsqueeze(2)       # (K, C, 1, H, W)
+            latent_list = list(latent_input.unbind(dim=0))    # K 个 (C, 1, H, W)
+            prompt_embeds_k = prompt_embeds * K               # 复制 K 份
+            
+            with torch.no_grad():
+                model_out = self.pipeline.transformer(
+                    latent_list, timestep_norm, prompt_embeds_k, return_dict=False
+                )[0]
+            
+            # scheduler.step K 次，但只推进 step_index 一次
+            if self.pipeline.scheduler._step_index is None:
+                self.pipeline.scheduler._init_step_index(t)
+            saved_idx = self.pipeline.scheduler._step_index
+            
+            for k in range(K):
+                self.pipeline.scheduler._step_index = saved_idx
+                noise_pred_k = -model_out[k].float().unsqueeze(0)
+                branches[k] = self.pipeline.scheduler.step(
+                    noise_pred_k, t, branches[k], return_dict=False
+                )[0]
+            # 最后一次 step 已将 _step_index 推进到 saved_idx + 1
+            
+            # 文字区域取 K 个分支的平均，然后回写到每个分支
+            avg_region = torch.stack(branches, dim=0).mean(dim=0)   # (1, C, H, W)
+            for k in range(K):
+                branches[k] = branches[k] * (1 - mask_exp) + avg_region * mask_exp
+        
+        # 取第 0 分支作为合并后的 latent（此时所有分支完全一致）
+        latent = branches[0]
+        
+        # ---------- 阶段 2: 单分支正常去噪 ----------
+        for step_idx, t in enumerate(timesteps[inject_until_step:]):
+            timestep = t.expand(1)
+            timestep_norm = (1000 - timestep) / 1000
+            
+            latent_input = latent.to(dtype).unsqueeze(2)
+            
+            with torch.no_grad():
+                model_out = self.pipeline.transformer(
+                    [latent_input[0]], timestep_norm, prompt_embeds, return_dict=False
+                )[0]
+            
+            noise_pred = -torch.stack([o.float() for o in model_out], dim=0).squeeze(2)
+            latent = self.pipeline.scheduler.step(
+                noise_pred.to(torch.float32), t, latent, return_dict=False
+            )[0]
+        
+        return latent
+    
+    # ------ 模板注入（原有逻辑） ------
+    
+    def _denoise_template_inject(
+        self,
+        noise: torch.Tensor,
+        timesteps: torch.Tensor,
+        prompt_embeds: list,
+        injection_data: dict,
+        config: GenerationConfig,
+    ) -> torch.Tensor:
+        """原有的 text-latent 模板注入去噪"""
+        dtype = self.pipeline.transformer.dtype
+        latent = noise.clone()
+        
+        for step_idx, t in enumerate(timesteps):
+            timestep = t.expand(1)
+            timestep_norm = (1000 - timestep) / 1000
+            
+            latent_input = latent.to(dtype).unsqueeze(2)
+            
+            with torch.no_grad():
+                model_out = self.pipeline.transformer(
+                    [latent_input[0]], timestep_norm, prompt_embeds, return_dict=False
+                )[0]
+            
+            noise_pred = -torch.stack([o.float() for o in model_out], dim=0).squeeze(2)
+            latent = self.pipeline.scheduler.step(
+                noise_pred.to(torch.float32), t, latent, return_dict=False
+            )[0]
+            
+            if config.use_glyph_injection:
+                latent = self.glyph_injector.inject_latent(
+                    latent, injection_data, step_idx + 1,
+                    config=config.injection_config
+                )
+        
+        return latent
     
     def __call__(
         self,

@@ -94,9 +94,11 @@ class InjectionConfig:
     Attributes:
         mask_strength: 空间混合强度 (0-1)，控制文字 latent 在 mask 区域的混合权重
         timestep_ratio: 时间步注入比例 (0-1)，仅在前 X% 的去噪步骤中注入
+        num_local_samples: 局部重采样分支数 K，在 text region 用 K 个不同噪声去噪后取平均
     """
     mask_strength: float = 0.8
     timestep_ratio: float = 1.0
+    num_local_samples: int = 3
 
     def should_inject(self, step_idx: int, total_steps: int) -> bool:
         """判断当前步是否需要注入"""
@@ -241,7 +243,7 @@ class GlyphInjector:
             
         # 转换为 PIL Image
         image = (image / 2 + 0.5).clamp(0, 1)
-        image = image.cpu().permute(0, 2, 3, 1).numpy()[0]
+        image = image.cpu().float().permute(0, 2, 3, 1).numpy()[0]
         image = (image * 255).astype(np.uint8)
         
         return Image.fromarray(image)
@@ -369,12 +371,13 @@ class GlyphInjector:
                                        caption=caption, subfolder="glyph")
         
         # 将 mask 下采样到 latent 空间
-        # ZImage/Flux latent 尺寸 = 2 * (pixel / (vae_scale_factor * 2))
+        # INTER_AREA 对每个 latent 像素取源像素块均值，笔画不会因采样点偏移而丢失
+        # 再用阈值二值化：块内有 >1% 的笔画像素即视为需要注入
         latent_h = 2 * (height // (self.vae_scale_factor * 2))
         latent_w = 2 * (width // (self.vae_scale_factor * 2))
-        mask_latent = cv2.resize(full_mask, (latent_w, latent_h), interpolation=cv2.INTER_NEAREST)
-        mask_latent = torch.from_numpy(mask_latent).float() / 255.0
-        mask_latent = mask_latent.unsqueeze(0).unsqueeze(0).to(self.device)
+        mask_area = cv2.resize(full_mask, (latent_w, latent_h), interpolation=cv2.INTER_AREA)
+        mask_latent = (mask_area > 2).astype(np.float32)  # 阈值 ~1% of 255
+        mask_latent = torch.from_numpy(mask_latent).unsqueeze(0).unsqueeze(0).to(self.device)
         
         injection_data["mask_latent"] = mask_latent
         injection_data["full_mask"] = full_mask
@@ -420,14 +423,26 @@ class GlyphInjector:
         idx = min(step_idx, len(latent_list) - 1)
         text_latent = latent_list[idx]
         
+        # 扩展 mask 到 latent 的 channel 维度
         mask = injection_data["mask_latent"]
         
         # 扩展 mask 到 latent 的 channel 维度
         mask = mask.expand_as(current_latent)
+        if self.logger is not None:
+            mask_np = (mask[0, 0].detach().cpu().numpy() * 255).astype(np.uint8)
+            mask_pil = Image.fromarray(mask_np)
+            self.logger.save_image(
+                mask_pil.convert("RGB"),
+                f"glyph_latent_mask",
+                caption=f"latent mask  shape={list(mask.shape)}  coverage={mask.float().mean():.4f}",
+                subfolder="glyph",
+            )
+        # injected = text_latent* mask
         
         # 空间混合
         s = config.mask_strength
         injected = current_latent * (1 - mask * s) + text_latent * mask * s
+        # injected = text_latent* mask
         
         # 可视化 injected latent
         if self.logger is not None:

@@ -39,6 +39,7 @@ class BeamCandidate:
     step: int = 0
     device: str = "cuda:0"
     latent_0: torch.Tensor = None   # 模型预测的干净 latent (x0)
+    injection_data: dict = None     # GlyphInjector 的注入数据
 
 
 def get_vlm_client() -> OpenAI:
@@ -186,6 +187,8 @@ class MultiGPUTestTimeScaling:
         dtype: torch.dtype = torch.bfloat16,
         logger: TTSLogger = None,
         vlm_score_mode: str = "rank",
+        glyph_injector=None,
+        injection_strength: float = 0.8,
     ):
         self.model_path = model_path
         self.devices = devices
@@ -194,6 +197,8 @@ class MultiGPUTestTimeScaling:
         self.dtype = dtype
         self.logger = logger or TTSLogger(run_name="multi_gpu_tts")
         self.vlm_score_mode = vlm_score_mode  # "rank" 或 "abs_score"
+        self.glyph_injector = glyph_injector
+        self.injection_strength = injection_strength
         
         self.logger.info(f"多 GPU TTS 初始化，使用 {self.num_gpus} 张 GPU: {devices}")
         
@@ -269,16 +274,26 @@ class MultiGPUTestTimeScaling:
                     score=cand.score, image=images[idx], extra=extra,
                 )
     
-    def _denoise_step(self, device: str, latent: torch.Tensor, prompt_embeds: list, t) -> tuple[torch.Tensor, torch.Tensor]:
+    def _denoise_step(self, device: str, latent: torch.Tensor, prompt_embeds: list, t,
+                      injection_data: dict = None, step_idx: int = 0,
+                      injection_strength: float = 0.8) -> tuple[torch.Tensor, torch.Tensor]:
         """单步去噪，返回 (next_latent, predicted_x0)
         
         flow matching: x_t = x_0 + σ·v  →  x_0 = x_t - σ·v
+        支持可选的 GlyphInjector latent 注入
         """
         pipe = self.pipelines[device]
         if not isinstance(t, torch.Tensor):
             t = torch.tensor([t], dtype=torch.float32)
         timestep = t.expand(1).to(device)
         timestep_norm = (1000 - timestep) / 1000
+        
+        # Glyph Injection: 去噪前将文字 latent 混合进来
+        if injection_data is not None and self.glyph_injector is not None:
+            latent = self.glyph_injector.inject_latent(
+                latent, injection_data, step_idx,
+                injection_strength=injection_strength
+            )
         
         latent_input = latent.to(pipe.transformer.dtype).unsqueeze(2)
         
@@ -290,8 +305,8 @@ class MultiGPUTestTimeScaling:
         
         # 从 scheduler 的 sigma 表查找当前 sigma
         t_val = timestep[0].item()
-        step_idx = (pipe.scheduler.timesteps - t_val).abs().argmin().item()
-        sigma = pipe.scheduler.sigmas[step_idx].to(device)
+        s_idx = (pipe.scheduler.timesteps - t_val).abs().argmin().item()
+        sigma = pipe.scheduler.sigmas[s_idx].to(device)
         
         # predicted x0: x_0 = x_t - σ · velocity
         latent_0 = latent - sigma * noise_pred
@@ -308,7 +323,8 @@ class MultiGPUTestTimeScaling:
         height: int,
         width: int,
         timesteps: list,
-        num_steps: int
+        num_steps: int,
+        text_regions: list = None,
     ) -> tuple:
         """在指定 GPU 上处理一个候选"""
         pipe = self.pipelines[device]
@@ -317,17 +333,33 @@ class MultiGPUTestTimeScaling:
         latent = self._prepare_latents(device, height, width, seed)
         prompt_embeds = self._encode_prompt(device, prompt)
         
+        # 为该候选准备独立的 glyph injection 数据（每个候选噪声不同）
+        injection_data = None
+        if text_regions and self.glyph_injector is not None:
+            ts_tensor = pipe.scheduler.timesteps
+            injection_data = self.glyph_injector.prepare_injection(
+                text_regions=text_regions,
+                image_size=(width, height),
+                noise=latent,
+                timesteps=ts_tensor,
+            )
+        
         # 去噪 num_steps 步，保留最后一步的 latent_0
         latent_0 = None
         for i, t in enumerate(timesteps[:num_steps]):
-            latent, latent_0 = self._denoise_step(device, latent, prompt_embeds, t)
+            latent, latent_0 = self._denoise_step(
+                device, latent, prompt_embeds, t,
+                injection_data=injection_data, step_idx=i,
+                injection_strength=self.injection_strength,
+            )
         
-        return cand_idx, device, latent, prompt, prompt_embeds, latent_0
+        return cand_idx, device, latent, prompt, prompt_embeds, latent_0, injection_data
     
     def generate_with_beam_search(
         self,
         prompt: str,
         text_content: Optional[str] = None,
+        text_regions: list = None,
         height: int = 1024,
         width: int = 1024,
         num_inference_steps: int = 20,
@@ -342,6 +374,7 @@ class MultiGPUTestTimeScaling:
         多 GPU 并行 Beam Search 生成
         
         beam_size 个候选分配到 num_gpus 张 GPU 并行处理
+        支持同时启用 GlyphInjector（传入 text_regions）
         """
         # 准备 prompt 变体
         if self.prompt_refiner and beam_size > 1:
@@ -370,12 +403,13 @@ class MultiGPUTestTimeScaling:
                 device = self.devices[i % self.num_gpus]
                 future = executor.submit(
                     self._process_candidate_on_gpu,
-                    i, device, prompts[i], seed + i, height, width, timesteps, early_stop_step
+                    i, device, prompts[i], seed + i, height, width, timesteps, early_stop_step,
+                    text_regions=text_regions,
                 )
                 futures[future] = i
             
             for future in as_completed(futures):
-                cand_idx, device, latent, cand_prompt, prompt_embeds, latent_0 = future.result()
+                cand_idx, device, latent, cand_prompt, prompt_embeds, latent_0, inj_data = future.result()
                 candidates.append(BeamCandidate(
                     latent=latent,
                     noise=latent.clone(),
@@ -384,6 +418,7 @@ class MultiGPUTestTimeScaling:
                     device=device,
                     step=early_stop_step,
                     latent_0=latent_0,
+                    injection_data=inj_data,
                 ))
                 self.logger.info(f"  候选 {cand_idx} 完成 ({device})")
         
@@ -409,7 +444,11 @@ class MultiGPUTestTimeScaling:
                 callback(step_idx, len(timesteps), len(candidates))
             
             for cand in candidates:
-                cand.latent, cand.latent_0 = self._denoise_step(cand.device, cand.latent, cand.prompt_embeds, t.to(cand.device))
+                cand.latent, cand.latent_0 = self._denoise_step(
+                    cand.device, cand.latent, cand.prompt_embeds, t.to(cand.device),
+                    injection_data=cand.injection_data, step_idx=step_idx,
+                    injection_strength=self.injection_strength,
+                )
             self.logger.info(f"  步骤 {step_idx + 1}/{len(timesteps)} 完成")
         
         # 最终评分
@@ -582,10 +621,12 @@ def create_test_time_scaling(pipeline, prompt_refiner=None, device: str = "cuda"
 
 
 def create_multi_gpu_tts(model_path: str, devices: list[str] = None, prompt_refiner=None,
-                         logger: TTSLogger = None, vlm_score_mode: str = "rank") -> MultiGPUTestTimeScaling:
+                         logger: TTSLogger = None, vlm_score_mode: str = "rank",
+                         glyph_injector=None, injection_strength: float = 0.8) -> MultiGPUTestTimeScaling:
     """创建多 GPU TTS"""
     if devices is None:
         num_gpus = torch.cuda.device_count()
         devices = [f"cuda:{i}" for i in range(num_gpus)]
     return MultiGPUTestTimeScaling(model_path=model_path, devices=devices, prompt_refiner=prompt_refiner,
-                                   logger=logger, vlm_score_mode=vlm_score_mode)
+                                   logger=logger, vlm_score_mode=vlm_score_mode,
+                                   glyph_injector=glyph_injector, injection_strength=injection_strength)

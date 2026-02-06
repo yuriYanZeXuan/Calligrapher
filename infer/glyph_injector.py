@@ -272,6 +272,9 @@ class GlyphInjector:
             # Flow matching inversion
             z_t = (1 - sigma) * latent_0 + sigma * noise
             latent_list.append(z_t.clone())
+        
+        # 追加 sigma=0 的 clean latent，供后置注入最后一步使用
+        latent_list.append(latent_0.clone())
             
         return latent_list
     
@@ -386,12 +389,12 @@ class GlyphInjector:
         config: InjectionConfig = None
     ) -> torch.Tensor:
         """
-        在当前 latent 中注入文字区域的 latent
+        在当前 latent 中注入文字区域的 latent（后置注入）
         
         Args:
-            current_latent: 当前去噪步骤的 latent
+            current_latent: scheduler step 后的 latent
             injection_data: prepare_injection 返回的数据
-            step_idx: 当前步骤索引
+            step_idx: 注入使用的 latent 索引（后置注入时为 denoising_step + 1）
             config: 注入配置
             
         Returns:
@@ -406,13 +409,17 @@ class GlyphInjector:
         if not config.should_inject(step_idx, total_steps):
             return current_latent
         
-        mask = injection_data["mask_latent"]
-        
         # 合并所有区域的 latent（取第一个区域的，简化处理）
-        if injection_data["latent_lists"]:
-            text_latent = injection_data["latent_lists"][0][step_idx]
-        else:
+        if not injection_data["latent_lists"]:
             return current_latent
+        
+        latent_list = injection_data["latent_lists"][0]
+        # latent_list 有 N+1 项：[sigma_0, sigma_1, ..., sigma_{N-1}, clean(sigma=0)]
+        # step_idx 范围: 0 ~ N
+        idx = min(step_idx, len(latent_list) - 1)
+        text_latent = latent_list[idx]
+        
+        mask = injection_data["mask_latent"]
         
         # 扩展 mask 到 latent 的 channel 维度
         mask = mask.expand_as(current_latent)
@@ -420,6 +427,16 @@ class GlyphInjector:
         # 空间混合
         s = config.mask_strength
         injected = current_latent * (1 - mask * s) + text_latent * mask * s
+        
+        # 可视化 injected latent
+        if self.logger is not None:
+            injected_img = self.decode_latent(injected)
+            self.logger.save_image(
+                injected_img,
+                f"glyph_injected_step{step_idx}",
+                caption=f"step={step_idx}/{total_steps}  mask_strength={s:.2f}",
+                subfolder="glyph",
+            )
         
         return injected
 

@@ -281,20 +281,13 @@ class MultiGPUTestTimeScaling:
         """单步去噪，返回 (next_latent, predicted_x0)
         
         flow matching: x_t = x_0 + σ·v  →  x_0 = x_t - σ·v
-        支持可选的 GlyphInjector latent 注入
+        后置注入：scheduler step 之后注入，确保文字结构保留到下一步
         """
         pipe = self.pipelines[device]
         if not isinstance(t, torch.Tensor):
             t = torch.tensor([t], dtype=torch.float32)
         timestep = t.expand(1).to(device)
         timestep_norm = (1000 - timestep) / 1000
-        
-        # Glyph Injection: 去噪前将文字 latent 混合进来
-        if injection_data is not None and self.glyph_injector is not None:
-            latent = self.glyph_injector.inject_latent(
-                latent, injection_data, step_idx,
-                config=injection_config or self.injection_config
-            )
         
         latent_input = latent.to(pipe.transformer.dtype).unsqueeze(2)
         
@@ -313,6 +306,15 @@ class MultiGPUTestTimeScaling:
         latent_0 = latent - sigma * noise_pred
         
         next_latent = pipe.scheduler.step(noise_pred.to(torch.float32), t, latent, return_dict=False)[0]
+        
+        # 后置注入：scheduler step 后替换 mask 区域
+        # 使用 step_idx+1 对应 scheduler step 后的噪声水平
+        if injection_data is not None and self.glyph_injector is not None:
+            next_latent = self.glyph_injector.inject_latent(
+                next_latent, injection_data, step_idx + 1,
+                config=injection_config or self.injection_config
+            )
+        
         return next_latent, latent_0
     
     def _process_candidate_on_gpu(

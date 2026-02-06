@@ -278,21 +278,12 @@ class ZImageInference:
             do_classifier_free_guidance=False
         )
         
-        # Denoising 循环（带注入）
+        # Denoising 循环（后置注入：scheduler step 之后注入，确保文字结构保留到下一步）
         latent = noise.clone()
         
         for step_idx, t in enumerate(timesteps):
             timestep = t.expand(1)
             timestep_norm = (1000 - timestep) / 1000
-            
-            # 注入文字 latent
-            if config.use_glyph_injection:
-                latent = self.glyph_injector.inject_latent(
-                    latent, 
-                    injection_data, 
-                    step_idx,
-                    config=config.injection_config
-                )
             
             # Transformer 前向
             latent_input = latent.to(self.pipeline.transformer.dtype).unsqueeze(2)
@@ -310,6 +301,17 @@ class ZImageInference:
             latent = self.pipeline.scheduler.step(
                 noise_pred.to(torch.float32), t, latent, return_dict=False
             )[0]
+            
+            # 后置注入：scheduler step 后替换 mask 区域为下一个噪声水平的 text latent
+            # latent_list[step_idx+1] 对应 scheduler step 后的噪声水平
+            # latent_list[N] = clean text latent (sigma=0)，确保最后一步也能注入
+            if config.use_glyph_injection:
+                latent = self.glyph_injector.inject_latent(
+                    latent, 
+                    injection_data, 
+                    step_idx + 1,
+                    config=config.injection_config
+                )
         
         # 解码
         latent = latent.to(self.pipeline.vae.dtype)

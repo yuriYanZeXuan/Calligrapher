@@ -248,11 +248,30 @@ class _EnhancementState:
             self._bias_cache[key] = bias
             return bias.to(dtype)
 
+        # 正向增强：glyph patch ↔ text token 注意力放大
         if self.config.attn_enhance_image_to_text:
             bias[0, 0, image_abs.unsqueeze(1), text_abs.unsqueeze(0)] = log_scale
 
         if self.config.attn_enhance_text_to_image:
             bias[0, 0, text_abs.unsqueeze(1), image_abs.unsqueeze(0)] = log_scale
+
+        # 方案 D: 反向抑制 — 非 glyph patch 对 text token 的注意力压制
+        suppress = self.config.attn_suppress_scale
+        if suppress < 1.0 and suppress > 0:
+            log_suppress = math.log(suppress)  # 负值，如 log(0.1) = -2.3
+            # 所有 image patch 索引
+            all_image = torch.arange(x_len, dtype=torch.long, device=device)
+            # 非 glyph patch = 所有 image patch 中去掉 glyph 的
+            glyph_set = set(self.image_indices)
+            non_glyph = torch.tensor(
+                [i for i in range(x_len) if i not in glyph_set],
+                dtype=torch.long, device=device,
+            )
+            if len(non_glyph) > 0:
+                # 非 glyph patch → text token 方向抑制
+                bias[0, 0, non_glyph.unsqueeze(1), text_abs.unsqueeze(0)] = log_suppress
+                # text token → 非 glyph patch 方向抑制
+                bias[0, 0, text_abs.unsqueeze(1), non_glyph.unsqueeze(0)] = log_suppress
 
         self._bias_cache[key] = bias
         return bias.to(dtype)

@@ -295,6 +295,22 @@ class ZImageInference:
             do_classifier_free_guidance=False
         )
         
+        # 方案 E: 双路 prompt — 编码不含文字内容的 clean prompt
+        import re
+        prompt_embeds_clean = None
+        icfg = config.injection_config
+        if icfg.dual_prompt:
+            clean_text = icfg.dual_prompt_clean
+            if clean_text is None:
+                # 自动去除引号内容
+                clean_text = re.sub(r'"[^"]*"', '""', prompt)
+            prompt_embeds_clean, _ = self.pipeline.encode_prompt(
+                prompt=clean_text,
+                device=self.primary_device,
+                do_classifier_free_guidance=False
+            )
+            print(f"[方案E] 双路 prompt: clean=\"{clean_text[:80]}...\"")
+        
         K = config.injection_config.num_local_samples
         total_steps = len(timesteps)
         inject_until_step = int(total_steps * config.injection_config.timestep_ratio)
@@ -330,7 +346,8 @@ class ZImageInference:
             latent = self._denoise_template_inject(
                 noise, timesteps, prompt_embeds,
                 injection_data, config,
-                attn_enh=attn_enh
+                attn_enh=attn_enh,
+                prompt_embeds_clean=prompt_embeds_clean
             )
         
         # 卸载 attention enhancement
@@ -481,11 +498,16 @@ class ZImageInference:
         injection_data: dict,
         config: GenerationConfig,
         attn_enh=None,
+        prompt_embeds_clean: list = None,
     ) -> torch.Tensor:
-        """原有的 text-latent 模板注入去噪"""
+        """模板注入去噪，支持方案 B/E。"""
         dtype = self.pipeline.transformer.dtype
         latent = noise.clone()
         total_steps = len(timesteps)
+        icfg = config.injection_config
+        
+        # 准备 mask（方案 B/E 需要）
+        mask_exp = injection_data["mask_latent"].expand_as(latent)
         
         for step_idx, t in enumerate(timesteps):
             if attn_enh is not None:
@@ -500,16 +522,36 @@ class ZImageInference:
                 model_out = self.pipeline.transformer(
                     latent_list, timestep_norm, prompt_embeds, return_dict=False
                 )[0]
-            
             noise_pred = -torch.stack([o.float() for o in model_out], dim=0).squeeze(2)
+            
+            # 方案 E: 双路 prompt — 非 glyph 区域用 clean prompt 的 noise pred
+            if icfg.dual_prompt and prompt_embeds_clean is not None:
+                with torch.no_grad():
+                    model_out_clean = self.pipeline.transformer(
+                        latent_list, timestep_norm, prompt_embeds_clean, return_dict=False
+                    )[0]
+                noise_pred_clean = -torch.stack([o.float() for o in model_out_clean], dim=0).squeeze(2)
+                noise_pred = mask_exp * noise_pred + (1 - mask_exp) * noise_pred_clean
+            
+            # 方案 B: 噪声预测修正 — 在 noise_pred 上加引导而非替换 latent
+            if icfg.noise_guidance and config.use_glyph_injection:
+                if injection_data["latent_lists"]:
+                    ll = injection_data["latent_lists"][0]
+                    idx = min(step_idx, len(ll) - 1)
+                    text_latent = ll[idx]
+                    s = icfg.get_strength(step_idx, total_steps)
+                    correction = mask_exp * icfg.noise_guidance_scale * (text_latent - latent)
+                    noise_pred = noise_pred - correction  # 负号：引导去噪方向朝 template
+            
             latent = self.pipeline.scheduler.step(
                 noise_pred.to(torch.float32), t, latent, return_dict=False
             )[0]
             
-            if config.use_glyph_injection:
+            # 传统 latent 替换注入（方案 B 启用时跳过）
+            if config.use_glyph_injection and not icfg.noise_guidance:
                 latent = self.glyph_injector.inject_latent(
                     latent, injection_data, step_idx + 1,
-                    config=config.injection_config
+                    config=icfg
                 )
         
         return latent

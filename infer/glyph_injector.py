@@ -91,25 +91,62 @@ class TextRegion:
 class InjectionConfig:
     """注入强度配置
     
-    Attributes:
+    基础注入:
         mask_strength: 空间混合强度 (0-1)，控制文字 latent 在 mask 区域的混合权重
         timestep_ratio: 时间步注入比例 (0-1)，仅在前 X% 的去噪步骤中注入
         num_local_samples: 局部重采样分支数 K，在 text region 用 K 个不同噪声去噪后取平均
-        
-        attn_enhance_scale: attention reweighting 倍率，对 text-token ↔ glyph-patch 的注意力乘以该值
-        attn_enhance_timestep_ratio: 仅在前 X% 的去噪时间步中激活增强 (0-1)
-        attn_enhance_layers: 激活增强的 transformer layer 索引列表，None 表示所有层
-        attn_enhance_text_to_image: 增强 text→image 方向的注意力 (text token 更关注 glyph patch)
-        attn_enhance_image_to_text: 增强 image→text 方向的注意力 (glyph patch 更关注 text token)
+    
+    方案 A - 频率分解注入:
+        freq_decompose: 启用后只注入高频（笔画结构），保留模型生成的低频（颜色/风格）
+        freq_kernel_size: 高斯模糊核大小，用于分离高低频
+    
+    方案 B - 噪声预测修正:
+        noise_guidance: 启用后不直接替换 latent，而是在 noise prediction 上加引导
+        noise_guidance_scale: 引导强度
+    
+    方案 C - 递减注入强度:
+        strength_schedule: 注入强度随时间步的衰减策略 ("constant"/"linear"/"cosine")
+    
+    方案 D - 反向注意力抑制:
+        attn_suppress_scale: 非 glyph 区域对 text token 的注意力抑制倍率 (<1 抑制, 1 不抑制)
+    
+    方案 E - 双路 Prompt:
+        dual_prompt: 启用双路 prompt noise blending
+        dual_prompt_clean: 不含文字内容的场景描述 prompt（None 时自动去除引号内容）
+    
+    Attention Enhancement:
+        attn_enhance_scale: attention reweighting 倍率
+        attn_enhance_timestep_ratio: 仅在前 X% 的去噪时间步中激活增强
+        attn_enhance_layers: 激活增强的 transformer layer 索引列表，None = 所有层
+        attn_enhance_text_to_image: 增强 text→image 方向
+        attn_enhance_image_to_text: 增强 image→text 方向
     """
     mask_strength: float = 1.
     timestep_ratio: float = 1.
     num_local_samples: int = 1
     
+    # 方案 A: 频率分解注入
+    freq_decompose: bool = False
+    freq_kernel_size: int = 5
+    
+    # 方案 B: 噪声预测修正（与直接 latent 替换互斥）
+    noise_guidance: bool = False
+    noise_guidance_scale: float = 3.0
+    
+    # 方案 C: 递减注入强度调度
+    strength_schedule: str = "constant"  # "constant" / "linear" / "cosine"
+    
+    # 方案 D: 反向注意力抑制
+    attn_suppress_scale: float = 1.0  # <1 抑制非 glyph 区域，如 0.1
+    
+    # 方案 E: 双路 Prompt
+    dual_prompt: bool = False
+    dual_prompt_clean: Optional[str] = None  # None = 自动去除引号内容
+    
     # Prompt-Latent Attention Enhancement
     attn_enhance_scale: float = 1.
     attn_enhance_timestep_ratio: float = 1.
-    attn_enhance_layers: Optional[list[int]] = None  # None = 所有层，[0,1,2] = 指定层
+    attn_enhance_layers: Optional[list[int]] = None
     attn_enhance_text_to_image: bool = True
     attn_enhance_image_to_text: bool = True
 
@@ -118,6 +155,19 @@ class InjectionConfig:
         if self.timestep_ratio >= 1.0:
             return True
         return step_idx < int(total_steps * self.timestep_ratio)
+    
+    def get_strength(self, step_idx: int, total_steps: int) -> float:
+        """获取当前步的注入强度（方案 C）"""
+        base = self.mask_strength
+        if self.strength_schedule == "constant":
+            return base
+        t = step_idx / max(total_steps - 1, 1)  # 0→1
+        if self.strength_schedule == "linear":
+            return base * (1.0 - t)
+        if self.strength_schedule == "cosine":
+            import math
+            return base * 0.5 * (1.0 + math.cos(math.pi * t))
+        return base
     
     @property
     def attn_enhance_enabled(self) -> bool:
@@ -265,6 +315,40 @@ class GlyphInjector:
         image = (image * 255).astype(np.uint8)
         
         return Image.fromarray(image)
+    
+    @staticmethod
+    def _freq_decompose_inject(
+        current: torch.Tensor,
+        template: torch.Tensor,
+        mask: torch.Tensor,
+        strength: float,
+        kernel_size: int = 5,
+    ) -> torch.Tensor:
+        """方案 A: 频率分解注入。
+        
+        只注入 template 的高频分量（笔画边缘），保留 current 的低频分量（颜色/风格）。
+        """
+        import torch.nn.functional as F
+        
+        # 用 avg pool 近似高斯模糊，对 latent 的每个 channel 独立操作
+        pad = kernel_size // 2
+        
+        def blur(x):
+            # (1, C, H, W) → avg_pool with padding
+            return F.avg_pool2d(
+                F.pad(x, [pad] * 4, mode="reflect"),
+                kernel_size, stride=1,
+            )
+        
+        template_lf = blur(template)
+        template_hf = template - template_lf
+        
+        current_lf = blur(current)
+        current_hf = current - current_lf
+        
+        # mask 区域：低频用 current（保持风格），高频混入 template（引入笔画结构）
+        blended_hf = current_hf * (1 - mask * strength) + template_hf * (mask * strength)
+        return current_lf + blended_hf
     
     def compute_inversion_latents(
         self, 
@@ -455,12 +539,17 @@ class GlyphInjector:
                 caption=f"latent mask  shape={list(mask.shape)}  coverage={mask.float().mean():.4f}",
                 subfolder="glyph",
             )
-        # injected = text_latent* mask
+        # 获取当前步的注入强度（方案 C: 递减调度）
+        s = config.get_strength(step_idx, total_steps)
         
-        # 空间混合
-        s = config.mask_strength
-        injected = current_latent * (1 - mask * s) + text_latent * mask * s
-        # injected = text_latent* mask
+        # 方案 A: 频率分解 — 只注入高频（笔画结构），保留模型的低频（风格/颜色）
+        if config.freq_decompose:
+            injected = self._freq_decompose_inject(
+                current_latent, text_latent, mask, s, config.freq_kernel_size
+            )
+        else:
+            # 原始全频注入
+            injected = current_latent * (1 - mask * s) + text_latent * mask * s
         
         # 可视化 injected latent
         if self.logger is not None:

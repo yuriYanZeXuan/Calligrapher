@@ -531,10 +531,15 @@ class ZImageInference:
             
             # 方案 E: 双路 prompt — 非 glyph 区域用 clean prompt 的 noise pred
             if icfg.dual_prompt and prompt_embeds_clean is not None:
+                # clean prompt 的 token 数不同，必须挂起 enhancement 避免索引越界
+                if attn_enh is not None:
+                    attn_enh.suspend()
                 with torch.no_grad():
                     model_out_clean = self.pipeline.transformer(
                         latent_list, timestep_norm, prompt_embeds_clean, return_dict=False
                     )[0]
+                if attn_enh is not None:
+                    attn_enh.resume()
                 noise_pred_clean = -torch.stack([o.float() for o in model_out_clean], dim=0).squeeze(2)
                 noise_pred = mask_exp * noise_pred + (1 - mask_exp) * noise_pred_clean
             

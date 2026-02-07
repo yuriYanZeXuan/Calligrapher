@@ -181,6 +181,7 @@ class _EnhancementState:
         self.current_step = 0
         self.total_steps = 1
         self._bias_cache: dict = {}
+        self._suspended = False  # 临时挂起（双路 prompt 时 clean 路径不增强）
         # 记录已经可视化过的 (step, layer) 组合，避免重复保存
         self._logged_pairs: set = set()
 
@@ -192,6 +193,8 @@ class _EnhancementState:
 
         记录条件：每隔 3 个 layer、每隔 3 个 timestep，且未重复记录过。
         """
+        if self._suspended:
+            return False
         if self.logger is None:
             return False
         if layer_idx % 1 != 0:
@@ -207,6 +210,8 @@ class _EnhancementState:
         self._logged_pairs.add((self.current_step, layer_idx))
 
     def should_enhance(self, layer_idx: int) -> bool:
+        if self._suspended:
+            return False
         if not self.text_indices or not self.image_indices:
             return False
         step_ratio = self.current_step / max(self.total_steps, 1)
@@ -769,3 +774,11 @@ class AttentionEnhancement:
         """更新当前去噪步（在每个 timestep 开头调用）。"""
         self._state.current_step = step
         self._state.total_steps = total_steps
+
+    def suspend(self) -> None:
+        """临时挂起增强（双路 prompt 的 clean 路径调用时使用）。"""
+        self._state._suspended = True
+
+    def resume(self) -> None:
+        """恢复增强。"""
+        self._state._suspended = False

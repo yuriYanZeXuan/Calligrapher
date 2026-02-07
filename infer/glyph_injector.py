@@ -98,7 +98,7 @@ class InjectionConfig:
         
         attn_enhance_scale: attention reweighting 倍率，对 text-token ↔ glyph-patch 的注意力乘以该值
         attn_enhance_timestep_ratio: 仅在前 X% 的去噪时间步中激活增强 (0-1)
-        attn_enhance_layer_ratio: 仅在前 X% 的 transformer block 层中激活增强 (0-1)
+        attn_enhance_layers: 激活增强的 transformer layer 索引列表，None 表示所有层
         attn_enhance_text_to_image: 增强 text→image 方向的注意力 (text token 更关注 glyph patch)
         attn_enhance_image_to_text: 增强 image→text 方向的注意力 (glyph patch 更关注 text token)
     """
@@ -109,7 +109,7 @@ class InjectionConfig:
     # Prompt-Latent Attention Enhancement
     attn_enhance_scale: float = 1.
     attn_enhance_timestep_ratio: float = 1.
-    attn_enhance_layer_ratio: float = 1.
+    attn_enhance_layers: Optional[list[int]] = None  # None = 所有层，[0,1,2] = 指定层
     attn_enhance_text_to_image: bool = True
     attn_enhance_image_to_text: bool = True
 

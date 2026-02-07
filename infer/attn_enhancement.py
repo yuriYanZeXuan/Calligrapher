@@ -212,8 +212,9 @@ class _EnhancementState:
         step_ratio = self.current_step / max(self.total_steps, 1)
         if step_ratio >= self.config.attn_enhance_timestep_ratio:
             return False
-        layer_ratio = layer_idx / max(self.num_layers, 1)
-        if layer_ratio >= self.config.attn_enhance_layer_ratio:
+        # layer 过滤：None = 所有层，list = 指定层
+        layers = self.config.attn_enhance_layers
+        if layers is not None and layer_idx not in layers:
             return False
         return True
 
@@ -615,7 +616,7 @@ class AttentionEnhancement:
             f"glyph_patches={len(image_indices)}/{num_patches}, "
             f"scale={config.attn_enhance_scale:.1f}, "
             f"timestep_ratio={config.attn_enhance_timestep_ratio:.0%}, "
-            f"layer_ratio={config.attn_enhance_layer_ratio:.0%}"
+            f"layers={config.attn_enhance_layers or 'all'}"
         )
         print(info_msg)
 
@@ -719,7 +720,7 @@ class AttentionEnhancement:
     def install(self, transformer) -> None:
         """将所有层的 attention processor 替换为增强版。
 
-        增强逻辑（logit bias）只在前 layer_ratio 的层中生效，
+        增强逻辑（logit bias）只在 attn_enhance_layers 指定的层中生效，
         但 attention map 日志记录在所有层上按 layer_idx % 3 == 0 触发。
         """
         if self._installed:

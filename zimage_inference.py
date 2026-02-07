@@ -102,6 +102,7 @@ class ZImageInference:
         self._prompt_refiner = None
         self._glyph_injector = None
         self._tts = None
+        self._output_counter = 0  # 输出图片递增计数器
         
     @property
     def pipeline(self) -> ZImagePipeline:
@@ -231,11 +232,12 @@ class ZImageInference:
                 generator=generator
             ).images[0]
         
-        # 保存最终生成图到 logs 目录
+        # 保存最终生成图到 logs 目录（递增编号，不覆盖）
         if self.logger is not None:
+            self._output_counter += 1
             self.logger.save_image(
-                image, "final_output",
-                caption=f"prompt: {working_prompt[:150]}",
+                image, f"final_{self._output_counter:03d}",
+                caption=f"[{self._output_counter}] {working_prompt[:150]}",
                 subfolder="output",
             )
         

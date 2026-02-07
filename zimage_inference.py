@@ -153,6 +153,7 @@ class ZImageInference:
         prompt: str,
         text_regions: Optional[list[dict]] = None,
         config: Optional[GenerationConfig] = None,
+        run_name: Optional[str] = None,
         **kwargs
     ) -> Image.Image:
         """
@@ -162,6 +163,7 @@ class ZImageInference:
             prompt: 生成 prompt
             text_regions: 文字区域列表，格式 [{"bbox": [x1, y1, x2, y2], "content": "文字"}]
             config: 生成配置
+            run_name: 本次生成的标签名（用于 log 文件命名）
             **kwargs: 额外参数，会覆盖 config 中的设置
             
         Returns:
@@ -232,12 +234,13 @@ class ZImageInference:
                 generator=generator
             ).images[0]
         
-        # 保存最终生成图到 logs 目录（递增编号，不覆盖）
+        # 保存最终生成图到 logs 目录（递增编号 + run_name，不覆盖）
         if self.logger is not None:
             self._output_counter += 1
+            tag = f"{self._output_counter:03d}_{run_name}" if run_name else f"{self._output_counter:03d}"
             self.logger.save_image(
-                image, f"final_{self._output_counter:03d}",
-                caption=f"[{self._output_counter}] {working_prompt[:150]}",
+                image, f"final_{tag}",
+                caption=f"[{tag}] {working_prompt[:150]}",
                 subfolder="output",
             )
         

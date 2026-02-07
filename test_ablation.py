@@ -211,6 +211,7 @@ def run_case(inference, case_name: str, case_info: dict, output_dir: Path, seed:
         injection_config=cfg,
         use_tts=False,
         seed=seed,
+        run_name=case_name,
     )
 
     # 保存图片

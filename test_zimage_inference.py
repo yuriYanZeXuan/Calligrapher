@@ -96,7 +96,7 @@ def test_with_glyph_injection(inference, output_dir: Path):
         text_regions=text_regions,
         use_prompt_refiner=False,
         use_glyph_injection=True,
-        injection_config=InjectionConfig(mask_strength=1.0, timestep_ratio=1.0),
+        injection_config=InjectionConfig(mask_strength=1.0, timestep_ratio=0.5),
         use_tts=False,
         seed=42
     )

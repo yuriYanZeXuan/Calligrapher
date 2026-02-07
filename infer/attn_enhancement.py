@@ -187,27 +187,19 @@ class _EnhancementState:
     # ---- 日志步选择 ----
     # 只在第一个增强 step 和中间 step 各记录一次 layer-0 的 attention map
 
-    @property
-    def _log_steps(self) -> set:
-        """需要记录 attention map 的去噪步集合。"""
-        if self.logger is None:
-            return set()
-        limit = max(1, int(self.total_steps * self.config.attn_enhance_timestep_ratio))
-        steps = {0}
-        if limit > 2:
-            steps.add(limit // 2)
-        return steps
-
     def should_log_attn(self, layer_idx: int) -> bool:
-        """当前 (step, layer) 是否需要可视化 attention。"""
+        """当前 (step, layer) 是否需要可视化 attention。
+
+        记录条件：每隔 3 个 layer、每隔 3 个 timestep，且未重复记录过。
+        """
         if self.logger is None:
             return False
-        if layer_idx != 0:
+        if layer_idx % 3 != 0:
+            return False
+        if self.current_step % 3 != 0:
             return False
         pair = (self.current_step, layer_idx)
         if pair in self._logged_pairs:
-            return False
-        if self.current_step not in self._log_steps:
             return False
         return True
 
@@ -289,7 +281,16 @@ class EnhancedAttnProcessor:
         **kwargs,
     ) -> torch.Tensor:
         state: _EnhancementState = self._state
-        if not state.should_enhance(self._layer_idx):
+        enhancing = state.should_enhance(self._layer_idx)
+
+        # 非增强层：仍需检查是否要记录 attention map（每隔 3 层 / 3 步）
+        if not enhancing:
+            if state.should_log_attn(self._layer_idx):
+                # 走 _forward_with_bias 但不注入 bias（仅记录 attention map）
+                return self._forward_with_bias(
+                    attn, hidden_states, attention_mask, freqs_cis,
+                    state, self._layer_idx, inject_bias=False, **kwargs,
+                )
             return self._original(
                 attn,
                 hidden_states,
@@ -298,14 +299,10 @@ class EnhancedAttnProcessor:
                 freqs_cis=freqs_cis,
                 **kwargs,
             )
+
         return self._forward_with_bias(
-            attn,
-            hidden_states,
-            attention_mask,
-            freqs_cis,
-            state,
-            self._layer_idx,
-            **kwargs,
+            attn, hidden_states, attention_mask, freqs_cis,
+            state, self._layer_idx, inject_bias=True, **kwargs,
         )
 
     @staticmethod
@@ -316,9 +313,14 @@ class EnhancedAttnProcessor:
         freqs_cis: Optional[torch.Tensor],
         state: _EnhancementState,
         layer_idx: int,
+        inject_bias: bool = True,
         **kwargs,
     ) -> torch.Tensor:
-        """与 ZSingleStreamAttnProcessor 相同的计算流程，但注入 logit bias。"""
+        """与 ZSingleStreamAttnProcessor 相同的计算流程。
+
+        inject_bias=True 时注入 logit bias（增强层），
+        inject_bias=False 时仅走手动 attention 以便记录 attention map（非增强层）。
+        """
         query = attn.to_q(hidden_states)
         key = attn.to_k(hidden_states)
         value = attn.to_v(hidden_states)
@@ -353,15 +355,16 @@ class EnhancedAttnProcessor:
         k = key.transpose(1, 2)
         v = value.transpose(1, 2).to(dtype)
 
-        do_log = state.should_log_attn(layer_idx)
-
         # ---- 可视化：增强前后 attention 对比 ----
-        if do_log:
+        if state.should_log_attn(layer_idx):
             state.mark_logged(layer_idx)
             _log_attn_comparison(q, k, attention_mask, state, layer_idx)
 
-        # 构造 float attention mask + enhancement bias
-        attn_bias = state.get_bias(N, q.device, q.dtype)
+        # 构造 attention mask
+        if inject_bias:
+            attn_bias = state.get_bias(N, q.device, q.dtype)  # enhancement bias
+        else:
+            attn_bias = torch.zeros(1, 1, 1, 1, device=q.device, dtype=q.dtype)  # no bias
 
         if attention_mask is not None:
             if attention_mask.ndim == 2:
@@ -714,15 +717,16 @@ class AttentionEnhancement:
         return cls(state)
 
     def install(self, transformer) -> None:
-        """将前 N 层的 attention processor 替换为增强版。"""
+        """将所有层的 attention processor 替换为增强版。
+
+        增强逻辑（logit bias）只在前 layer_ratio 的层中生效，
+        但 attention map 日志记录在所有层上按 layer_idx % 3 == 0 触发。
+        """
         if self._installed:
             return
         num_layers = len(transformer.layers)
-        enhance_count = max(
-            1, int(num_layers * self._state.config.attn_enhance_layer_ratio)
-        )
 
-        for idx in range(min(enhance_count, num_layers)):
+        for idx in range(num_layers):
             layer = transformer.layers[idx]
             original = layer.attention.processor
             layer.attention.processor = EnhancedAttnProcessor(

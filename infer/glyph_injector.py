@@ -104,12 +104,12 @@ class InjectionConfig:
     """
     mask_strength: float = 0.8
     timestep_ratio: float = 1.0
-    num_local_samples: int = 3
+    num_local_samples: int = 1
     
     # Prompt-Latent Attention Enhancement
-    attn_enhance_scale: float = 2.0
-    attn_enhance_timestep_ratio: float = 0.5
-    attn_enhance_layer_ratio: float = 0.3
+    attn_enhance_scale: float = 2000
+    attn_enhance_timestep_ratio: float = 0.8
+    attn_enhance_layer_ratio: float = 0.8
     attn_enhance_text_to_image: bool = True
     attn_enhance_image_to_text: bool = True
 

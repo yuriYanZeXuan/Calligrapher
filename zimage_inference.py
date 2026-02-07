@@ -214,7 +214,7 @@ class ZImageInference:
         
         if config.use_glyph_injection and text_regions:
             # 带文字注入的生成
-            return self._generate_with_injection(
+            image = self._generate_with_injection(
                 prompt=working_prompt,
                 text_regions=text_regions,
                 config=config,
@@ -222,7 +222,7 @@ class ZImageInference:
             )
         else:
             # 普通生成
-            result = self.pipeline(
+            image = self.pipeline(
                 prompt=working_prompt,
                 height=config.height,
                 width=config.width,
@@ -230,7 +230,16 @@ class ZImageInference:
                 guidance_scale=config.guidance_scale,
                 generator=generator
             ).images[0]
-            return result
+        
+        # 保存最终生成图到 logs 目录
+        if self.logger is not None:
+            self.logger.save_image(
+                image, "final_output",
+                caption=f"prompt: {working_prompt[:150]}",
+                subfolder="output",
+            )
+        
+        return image
     
     def _generate_with_injection(
         self,

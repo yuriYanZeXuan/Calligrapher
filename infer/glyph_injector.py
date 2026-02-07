@@ -102,14 +102,14 @@ class InjectionConfig:
         attn_enhance_text_to_image: 增强 text→image 方向的注意力 (text token 更关注 glyph patch)
         attn_enhance_image_to_text: 增强 image→text 方向的注意力 (glyph patch 更关注 text token)
     """
-    mask_strength: float = 0.8
-    timestep_ratio: float = 1.0
+    mask_strength: float = 1.
+    timestep_ratio: float = 1.
     num_local_samples: int = 1
     
     # Prompt-Latent Attention Enhancement
-    attn_enhance_scale: float = 2000
-    attn_enhance_timestep_ratio: float = 0.8
-    attn_enhance_layer_ratio: float = 0.8
+    attn_enhance_scale: float = 1.
+    attn_enhance_timestep_ratio: float = 1.
+    attn_enhance_layer_ratio: float = 1.
     attn_enhance_text_to_image: bool = True
     attn_enhance_image_to_text: bool = True
 

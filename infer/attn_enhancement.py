@@ -194,7 +194,7 @@ class _EnhancementState:
         """
         if self.logger is None:
             return False
-        if layer_idx % 3 != 0:
+        if layer_idx % 1 != 0:
             return False
         if self.current_step % 3 != 0:
             return False

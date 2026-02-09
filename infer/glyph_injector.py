@@ -445,8 +445,15 @@ class GlyphInjector:
         width, height = image_size
         full_mask = np.zeros((height, width), dtype=np.uint8)
 
+        # 从 image_analysis 提取默认背景色，作为合成模版的底色
+        analysis = typography_plan.get("image_analysis", {})
+        dominant = analysis.get("dominant_colors", ["#000000"])
+        default_bg = dominant[0] if dominant else "#000000"
+
+        # 合成全图模版：所有 region 的文字画在同一张图上，编码一次 latent
+        combined_template = Image.new("RGB", (width, height), default_bg)
+
         injection_data = {
-            "masks": [],
             "latent_lists": [],
             "regions": [],
         }
@@ -465,7 +472,7 @@ class GlyphInjector:
 
             # 读取排版参数
             text_color = region_spec.get("color", "#FFFFFF")
-            bg_color = region_spec.get("background_color", "#000000")
+            bg_color = region_spec.get("background_color", default_bg)
             font_weight = region_spec.get("font_weight", "regular")
             force_latex = region_spec.get("is_latex", False)
 
@@ -491,18 +498,12 @@ class GlyphInjector:
             # 将 mask 放入完整图像
             full_mask[y1:y2, x1:x2] = text_mask
 
-            # 编码文字模板为 latent（嵌入完整图像坐标）
-            full_text_img = Image.new("RGB", (width, height), bg_color)
-            full_text_img.paste(text_img, (x1, y1))
-            text_latent = self.encode_image(full_text_img)
+            # 将该 region 的渲染结果粘贴到合成模版上
+            combined_template.paste(text_img, (x1, y1))
 
-            # 计算 inversion latents
-            latent_list = self.compute_inversion_latents(text_latent, noise, timesteps)
-
-            injection_data["latent_lists"].append(latent_list)
             injection_data["regions"].append((x1, y1, x2, y2))
 
-            # 日志
+            # 日志：保存每个 region 的单独渲染
             if self.logger is not None:
                 caption = (
                     f"[plan] text=\"{content}\"  bbox=({x1},{y1},{x2},{y2})  "
@@ -514,15 +515,25 @@ class GlyphInjector:
                     text_img, f"glyph_plan_region_{idx}_text",
                     caption=caption, subfolder="glyph",
                 )
-                self.logger.save_image(
-                    full_text_img, f"glyph_plan_region_{idx}_full",
-                    caption=caption, subfolder="glyph",
-                )
                 mask_pil = Image.fromarray(text_mask)
                 self.logger.save_image(
                     mask_pil.convert("RGB"), f"glyph_plan_region_{idx}_mask",
                     caption=caption, subfolder="glyph",
                 )
+
+        # 编码合成模版为 latent（所有 region 在一张图上），只编码/inversion 一次
+        combined_latent = self.encode_image(combined_template)
+        combined_latent_list = self.compute_inversion_latents(combined_latent, noise, timesteps)
+        injection_data["latent_lists"] = [combined_latent_list]
+
+        # 日志：保存合成模版全图
+        if self.logger is not None:
+            n_regions = len(injection_data["regions"])
+            self.logger.save_image(
+                combined_template, "glyph_plan_combined_template",
+                caption=f"combined template: {n_regions} regions  size={width}x{height}",
+                subfolder="glyph",
+            )
 
         # mask 下采样到 latent 空间
         latent_h = 2 * (height // (self.vae_scale_factor * 2))

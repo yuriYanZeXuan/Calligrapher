@@ -95,7 +95,7 @@ class TTSLogger:
             image = self._add_caption(image, caption)
 
         image.save(save_path, format="PNG")
-        self.info(f"图片已保存: {save_path.relative_to(self.run_dir)}")
+        self.info(f"图片已保存: {save_path}")
         return save_path
 
     # ---------- 结构化记录 ----------

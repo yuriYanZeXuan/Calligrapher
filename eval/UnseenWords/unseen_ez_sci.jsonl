@@ -1,0 +1,35 @@
+{"category": "sci", "length": "short", "prompt": "A scientific textbook displays \"E=mc²\" in mathematical notation.", "text": ["E=mc²"], "text_length": 5, "prompt_id": 0}
+{"category": "sci", "length": "short", "prompt": "A physics lecture board shows \"a²+b²=c²\" written in white chalk.", "text": ["a²+b²=c²"], "text_length": 8, "prompt_id": 1}
+{"category": "sci", "length": "short", "prompt": "A chemistry lab poster features \"F=ma\" in bold formula style.", "text": ["F=ma"], "text_length": 4, "prompt_id": 2}
+{"category": "sci", "length": "short", "prompt": "A research paper displays \"PV=nRT\" in elegant LaTeX font.", "text": ["PV=nRT"], "text_length": 6, "prompt_id": 3}
+{"category": "sci", "length": "short", "prompt": "A classroom blackboard bears \"H₂O\" in handwritten script.", "text": ["H₂O"], "text_length": 3, "prompt_id": 4}
+{"category": "sci", "length": "short", "prompt": "A science museum exhibit shows \"CO₂\" on an information panel.", "text": ["CO₂"], "text_length": 3, "prompt_id": 5}
+{"category": "sci", "length": "short", "prompt": "An academic journal page displays \"πr²\" in serif typography.", "text": ["πr²"], "text_length": 3, "prompt_id": 6}
+{"category": "sci", "length": "short", "prompt": "A laboratory notebook features \"e^(iπ)\" in technical notation.", "text": ["e^(iπ)"], "text_length": 6, "prompt_id": 7}
+{"category": "sci", "length": "short", "prompt": "An engineering blueprint shows \"∫f(x)\" in precise lettering.", "text": ["∫f(x)"], "text_length": 5, "prompt_id": 8}
+{"category": "sci", "length": "short", "prompt": "A university hallway displays \"∂u/∂t\" on an educational poster.", "text": ["∂u/∂t"], "text_length": 5, "prompt_id": 9}
+{"category": "sci", "length": "short", "prompt": "A scientific textbook displays \"∇·E=ρ\" in mathematical notation.", "text": ["∇·E=ρ"], "text_length": 5, "prompt_id": 10}
+{"category": "sci", "length": "short", "prompt": "A physics lecture board shows \"x=(-b±√Δ)/2a\" written in white chalk.", "text": ["x=(-b±√Δ)/2a"], "text_length": 12, "prompt_id": 11}
+{"category": "sci", "length": "short", "prompt": "A chemistry lab poster features \"sin²θ+cos²θ=1\" in bold formula style.", "text": ["sin²θ+cos²θ=1"], "text_length": 13, "prompt_id": 12}
+{"category": "sci", "length": "short", "prompt": "A research paper displays \"lim(x→0)\" in elegant LaTeX font.", "text": ["lim(x→0)"], "text_length": 8, "prompt_id": 13}
+{"category": "sci", "length": "short", "prompt": "A classroom blackboard bears \"Σn=1→∞\" in handwritten script.", "text": ["Σn=1→∞"], "text_length": 6, "prompt_id": 14}
+{"category": "sci", "length": "short", "prompt": "A science museum exhibit shows \"v=d/t\" on an information panel.", "text": ["v=d/t"], "text_length": 5, "prompt_id": 15}
+{"category": "sci", "length": "short", "prompt": "An academic journal page displays \"p=mv\" in serif typography.", "text": ["p=mv"], "text_length": 4, "prompt_id": 16}
+{"category": "sci", "length": "short", "prompt": "A laboratory notebook features \"KE=½mv²\" in technical notation.", "text": ["KE=½mv²"], "text_length": 7, "prompt_id": 17}
+{"category": "sci", "length": "short", "prompt": "An engineering blueprint shows \"PE=mgh\" in precise lettering.", "text": ["PE=mgh"], "text_length": 6, "prompt_id": 18}
+{"category": "sci", "length": "short", "prompt": "A university hallway displays \"λ=h/p\" on an educational poster.", "text": ["λ=h/p"], "text_length": 5, "prompt_id": 19}
+{"category": "sci", "length": "short", "prompt": "A scientific textbook displays \"R=ρL/A\" in mathematical notation.", "text": ["R=ρL/A"], "text_length": 6, "prompt_id": 20}
+{"category": "sci", "length": "short", "prompt": "A physics lecture board shows \"I=V/R\" written in white chalk.", "text": ["I=V/R"], "text_length": 5, "prompt_id": 21}
+{"category": "sci", "length": "short", "prompt": "A chemistry lab poster features \"P=IV\" in bold formula style.", "text": ["P=IV"], "text_length": 4, "prompt_id": 22}
+{"category": "sci", "length": "short", "prompt": "A research paper displays \"c=λf\" in elegant LaTeX font.", "text": ["c=λf"], "text_length": 4, "prompt_id": 23}
+{"category": "sci", "length": "short", "prompt": "A classroom blackboard bears \"Gmm/r²\" in handwritten script.", "text": ["Gmm/r²"], "text_length": 6, "prompt_id": 24}
+{"category": "sci", "length": "short", "prompt": "A science museum exhibit shows \"2H₂+O₂→2H₂O\" on an information panel.", "text": ["2H₂+O₂→2H₂O"], "text_length": 11, "prompt_id": 25}
+{"category": "sci", "length": "short", "prompt": "An academic journal page displays \"C+O₂→CO₂\" in serif typography.", "text": ["C+O₂→CO₂"], "text_length": 8, "prompt_id": 26}
+{"category": "sci", "length": "short", "prompt": "A laboratory notebook features \"NaCl\" in technical notation.", "text": ["NaCl"], "text_length": 4, "prompt_id": 27}
+{"category": "sci", "length": "short", "prompt": "An engineering blueprint shows \"CaCO₃\" in precise lettering.", "text": ["CaCO₃"], "text_length": 5, "prompt_id": 28}
+{"category": "sci", "length": "short", "prompt": "A university hallway displays \"H₂SO₄\" on an educational poster.", "text": ["H₂SO₄"], "text_length": 5, "prompt_id": 29}
+{"category": "sci", "length": "short", "prompt": "A scientific textbook displays \"pH=-lg[H⁺]\" in mathematical notation.", "text": ["pH=-lg[H⁺]"], "text_length": 10, "prompt_id": 30}
+{"category": "sci", "length": "short", "prompt": "A physics lecture board shows \"K=[C]/[A][B]\" written in white chalk.", "text": ["K=[C]/[A][B]"], "text_length": 12, "prompt_id": 31}
+{"category": "sci", "length": "short", "prompt": "A chemistry lab poster features \"ΔG=ΔH-TΔS\" in bold formula style.", "text": ["ΔG=ΔH-TΔS"], "text_length": 9, "prompt_id": 32}
+{"category": "sci", "length": "short", "prompt": "A research paper displays \"Q=cmΔT\" in elegant LaTeX font.", "text": ["Q=cmΔT"], "text_length": 6, "prompt_id": 33}
+{"category": "sci", "length": "short", "prompt": "A classroom blackboard bears \"Nₐ=6.02×10²³\" in handwritten script.", "text": ["Nₐ=6.02×10²³"], "text_length": 12, "prompt_id": 34}

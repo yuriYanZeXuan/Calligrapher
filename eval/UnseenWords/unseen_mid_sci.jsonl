@@ -1,0 +1,45 @@
+{"category": "sci", "length": "short", "prompt": "A scientific textbook displays \"∫∫_D f(x,y)dσ\" in mathematical notation.", "text": ["∫∫_D f(x,y)dσ"], "text_length": 13, "prompt_id": 0}
+{"category": "sci", "length": "short", "prompt": "A physics lecture board shows \"∂²u/∂x²+∂²u/∂y²=0\" written in white chalk.", "text": ["∂²u/∂x²+∂²u/∂y²=0"], "text_length": 17, "prompt_id": 1}
+{"category": "sci", "length": "short", "prompt": "A chemistry lab poster features \"e^(iπ)+1=0\" in bold formula style.", "text": ["e^(iπ)+1=0"], "text_length": 10, "prompt_id": 2}
+{"category": "sci", "length": "short", "prompt": "A research paper displays \"Σₙ₌₁^∞ 1/n²=π²/6\" in elegant LaTeX font.", "text": ["Σₙ₌₁^∞ 1/n²=π²/6"], "text_length": 16, "prompt_id": 3}
+{"category": "sci", "length": "short", "prompt": "A classroom blackboard bears \"det(A-λI)=0\" in handwritten script.", "text": ["det(A-λI)=0"], "text_length": 11, "prompt_id": 4}
+{"category": "sci", "length": "short", "prompt": "A science museum exhibit shows \"∇×(∇×F)=∇(∇·F)-∇²F\" on an information panel.", "text": ["∇×(∇×F)=∇(∇·F)-∇²F"], "text_length": 18, "prompt_id": 5}
+{"category": "sci", "length": "short", "prompt": "An academic journal page displays \"∮_C Pdx+Qdy=∬_D (∂Q/∂x-∂P/∂y)dσ\" in serif typography.", "text": ["∮_C Pdx+Qdy=∬_D (∂Q/∂x-∂P/∂y)dσ"], "text_length": 31, "prompt_id": 6}
+{"category": "sci", "length": "short", "prompt": "A laboratory notebook features \"lim(x→∞) (1+1/x)^x=e\" in technical notation.", "text": ["lim(x→∞) (1+1/x)^x=e"], "text_length": 20, "prompt_id": 7}
+{"category": "sci", "length": "short", "prompt": "An engineering blueprint shows \"f(z)=Σaₙ(z-z₀)ⁿ\" in precise lettering.", "text": ["f(z)=Σaₙ(z-z₀)ⁿ"], "text_length": 15, "prompt_id": 8}
+{"category": "sci", "length": "short", "prompt": "A university hallway displays \"Γ(z)=∫₀^∞ t^(z-1)e^(-t)dt\" on an educational poster.", "text": ["Γ(z)=∫₀^∞ t^(z-1)e^(-t)dt"], "text_length": 25, "prompt_id": 9}
+{"category": "sci", "length": "short", "prompt": "A theoretical physics paper presents \"ζ(s)=Σₙ₌₁^∞ 1/n^s\" in complex notation.", "text": ["ζ(s)=Σₙ₌₁^∞ 1/n^s"], "text_length": 17, "prompt_id": 10}
+{"category": "sci", "length": "short", "prompt": "A quantum mechanics textbook shows \"∂u/∂t=α(∂²u/∂x²)\" in elegant symbols.", "text": ["∂u/∂t=α(∂²u/∂x²)"], "text_length": 16, "prompt_id": 11}
+{"category": "sci", "length": "short", "prompt": "An advanced chemistry journal displays \"□φ=∂²φ/∂t²-∇²φ=0\" in reaction format.", "text": ["□φ=∂²φ/∂t²-∇²φ=0"], "text_length": 16, "prompt_id": 12}
+{"category": "sci", "length": "short", "prompt": "A mathematical proof features \"[A,B]=AB-BA\" in rigorous notation.", "text": ["[A,B]=AB-BA"], "text_length": 11, "prompt_id": 13}
+{"category": "sci", "length": "short", "prompt": "A thermodynamics lecture shows \"δ(x)=∞(x=0),0(x≠0)\" on a green chalkboard.", "text": ["δ(x)=∞(x=0),0(x≠0)"], "text_length": 18, "prompt_id": 14}
+{"category": "sci", "length": "short", "prompt": "A scientific textbook displays \"iℏ∂ψ/∂t=Ĥψ\" in mathematical notation.", "text": ["iℏ∂ψ/∂t=Ĥψ"], "text_length": 10, "prompt_id": 15}
+{"category": "sci", "length": "short", "prompt": "A physics lecture board shows \"E²=(pc)²+(m₀c²)²\" written in white chalk.", "text": ["E²=(pc)²+(m₀c²)²"], "text_length": 16, "prompt_id": 16}
+{"category": "sci", "length": "short", "prompt": "A chemistry lab poster features \"F⃗=q(E⃗+v⃗×B⃗)\" in bold formula style.", "text": ["F⃗=q(E⃗+v⃗×B⃗)"], "text_length": 14, "prompt_id": 17}
+{"category": "sci", "length": "short", "prompt": "A research paper displays \"∇·E⃗=ρ/ε₀\" in elegant LaTeX font.", "text": ["∇·E⃗=ρ/ε₀"], "text_length": 9, "prompt_id": 18}
+{"category": "sci", "length": "short", "prompt": "A classroom blackboard bears \"∇×E⃗=-∂B⃗/∂t\" in handwritten script.", "text": ["∇×E⃗=-∂B⃗/∂t"], "text_length": 12, "prompt_id": 19}
+{"category": "sci", "length": "short", "prompt": "A science museum exhibit shows \"∇·B⃗=0\" on an information panel.", "text": ["∇·B⃗=0"], "text_length": 6, "prompt_id": 20}
+{"category": "sci", "length": "short", "prompt": "An academic journal page displays \"∇×B⃗=μ₀J⃗+μ₀ε₀∂E⃗/∂t\" in serif typography.", "text": ["∇×B⃗=μ₀J⃗+μ₀ε₀∂E⃗/∂t"], "text_length": 20, "prompt_id": 21}
+{"category": "sci", "length": "short", "prompt": "A laboratory notebook features \"S=k_B lnΩ\" in technical notation.", "text": ["S=k_B lnΩ"], "text_length": 9, "prompt_id": 22}
+{"category": "sci", "length": "short", "prompt": "An engineering blueprint shows \"dS≥δQ/T\" in precise lettering.", "text": ["dS≥δQ/T"], "text_length": 7, "prompt_id": 23}
+{"category": "sci", "length": "short", "prompt": "A university hallway displays \"pV^γ=const\" on an educational poster.", "text": ["pV^γ=const"], "text_length": 10, "prompt_id": 24}
+{"category": "sci", "length": "short", "prompt": "A theoretical physics paper presents \"F=-k_BT lnZ\" in complex notation.", "text": ["F=-k_BT lnZ"], "text_length": 11, "prompt_id": 25}
+{"category": "sci", "length": "short", "prompt": "A quantum mechanics textbook shows \"ħω=ħck=2πℏc/λ\" in elegant symbols.", "text": ["ħω=ħck=2πℏc/λ"], "text_length": 13, "prompt_id": 26}
+{"category": "sci", "length": "short", "prompt": "An advanced chemistry journal displays \"Δx·Δp≥ℏ/2\" in reaction format.", "text": ["Δx·Δp≥ℏ/2"], "text_length": 9, "prompt_id": 27}
+{"category": "sci", "length": "short", "prompt": "A mathematical proof features \"Eₙ=-13.6eV/n²\" in rigorous notation.", "text": ["Eₙ=-13.6eV/n²"], "text_length": 13, "prompt_id": 28}
+{"category": "sci", "length": "short", "prompt": "A thermodynamics lecture shows \"λ_dB=h/p=h/(mv)\" on a green chalkboard.", "text": ["λ_dB=h/p=h/(mv)"], "text_length": 15, "prompt_id": 29}
+{"category": "sci", "length": "short", "prompt": "A scientific textbook displays \"2KMnO₄+5H₂C₂O₄+3H₂SO₄→K₂SO₄+2MnSO₄+10CO₂+8H₂O\" in mathematical notation.", "text": ["2KMnO₄+5H₂C₂O₄+3H₂SO₄→K₂SO₄+2MnSO₄+10CO₂+8H₂O"], "text_length": 45, "prompt_id": 30}
+{"category": "sci", "length": "short", "prompt": "A physics lecture board shows \"C₆H₁₂O₆+6O₂→6CO₂+6H₂O\" written in white chalk.", "text": ["C₆H₁₂O₆+6O₂→6CO₂+6H₂O"], "text_length": 21, "prompt_id": 31}
+{"category": "sci", "length": "short", "prompt": "A chemistry lab poster features \"Cr₂O₇²⁻+6Fe²⁺+14H⁺→2Cr³⁺+6Fe³⁺+7H₂O\" in bold formula style.", "text": ["Cr₂O₇²⁻+6Fe²⁺+14H⁺→2Cr³⁺+6Fe³⁺+7H₂O"], "text_length": 35, "prompt_id": 32}
+{"category": "sci", "length": "short", "prompt": "A research paper displays \"[Cu(NH₃)₄]²⁺\" in elegant LaTeX font.", "text": ["[Cu(NH₃)₄]²⁺"], "text_length": 12, "prompt_id": 33}
+{"category": "sci", "length": "short", "prompt": "A classroom blackboard bears \"[Fe(CN)₆]³⁻\" in handwritten script.", "text": ["[Fe(CN)₆]³⁻"], "text_length": 11, "prompt_id": 34}
+{"category": "sci", "length": "short", "prompt": "A science museum exhibit shows \"C₂H₅OH+3O₂→2CO₂+3H₂O\" on an information panel.", "text": ["C₂H₅OH+3O₂→2CO₂+3H₂O"], "text_length": 20, "prompt_id": 35}
+{"category": "sci", "length": "short", "prompt": "An academic journal page displays \"CH₃COOH⇌CH₃COO⁻+H⁺\" in serif typography.", "text": ["CH₃COOH⇌CH₃COO⁻+H⁺"], "text_length": 18, "prompt_id": 36}
+{"category": "sci", "length": "short", "prompt": "A laboratory notebook features \"K_w=[H⁺][OH⁻]=10⁻¹⁴\" in technical notation.", "text": ["K_w=[H⁺][OH⁻]=10⁻¹⁴"], "text_length": 19, "prompt_id": 37}
+{"category": "sci", "length": "short", "prompt": "An engineering blueprint shows \"E=E°-(RT/nF)lnQ\" in precise lettering.", "text": ["E=E°-(RT/nF)lnQ"], "text_length": 15, "prompt_id": 38}
+{"category": "sci", "length": "short", "prompt": "A university hallway displays \"t½=0.693/k\" on an educational poster.", "text": ["t½=0.693/k"], "text_length": 10, "prompt_id": 39}
+{"category": "sci", "length": "short", "prompt": "A theoretical physics paper presents \"k=Ae^(-Ea/RT)\" in complex notation.", "text": ["k=Ae^(-Ea/RT)"], "text_length": 13, "prompt_id": 40}
+{"category": "sci", "length": "short", "prompt": "A quantum mechanics textbook shows \"π=iMRT\" in elegant symbols.", "text": ["π=iMRT"], "text_length": 6, "prompt_id": 41}
+{"category": "sci", "length": "short", "prompt": "An advanced chemistry journal displays \"ΔG°=-RTlnK_eq\" in reaction format.", "text": ["ΔG°=-RTlnK_eq"], "text_length": 13, "prompt_id": 42}
+{"category": "sci", "length": "short", "prompt": "A mathematical proof features \"2Al+2NaOH+2H₂O→2NaAlO₂+3H₂↑\" in rigorous notation.", "text": ["2Al+2NaOH+2H₂O→2NaAlO₂+3H₂↑"], "text_length": 27, "prompt_id": 43}
+{"category": "sci", "length": "short", "prompt": "A thermodynamics lecture shows \"C₁₂H₂₂O₁₁+H₂O→C₆H₁₂O₆+C₆H₁₂O₆\" on a green chalkboard.", "text": ["C₁₂H₂₂O₁₁+H₂O→C₆H₁₂O₆+C₆H₁₂O₆"], "text_length": 29, "prompt_id": 44}

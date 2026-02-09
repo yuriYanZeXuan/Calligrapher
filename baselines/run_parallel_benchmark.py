@@ -397,6 +397,34 @@ def load_dataset(benchmark, base_eval_dir):
                 "sentence_list": [],
                 "text": [],
             })
+    elif benchmark == 'UnseenWords':
+        # UnseenWords benchmark - rare Chinese characters testing
+        # JSONL format: category, length, prompt, text, text_length, prompt_id
+        import glob
+        unseen_dir = os.path.join(base_eval_dir, 'UnseenWords')
+        jsonl_files = glob.glob(os.path.join(unseen_dir, '*.jsonl'))
+        
+        for jsonl_file in sorted(jsonl_files):
+            print(f"Loading {os.path.basename(jsonl_file)}...")
+            with open(jsonl_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    item = json.loads(line)
+                    prompt_id = item.get('prompt_id', len(data))
+                    text_list = item.get('text', [])
+                    data.append({
+                        'prompt': item['prompt'],
+                        'text': text_list,
+                        'prompt_id': prompt_id,
+                        'category': item.get('category', ''),
+                        'length': item.get('length', ''),
+                        'text_length': item.get('text_length', 0),
+                        'id': f"unseen_{prompt_id}",
+                        'carrier_list': [],
+                        'sentence_list': text_list if isinstance(text_list, list) else [text_list],
+                    })
     return data
 
 
@@ -515,7 +543,7 @@ def main():
     parser.add_argument("--model", type=str, required=True, choices=list(MODELS.keys()),
                        help="Model to run")
     parser.add_argument("--benchmark", type=str, required=True,
-                       choices=['CVTG-2K', 'LongText-Bench', 'OneIG-Bench', 'OneIG-Bench-ZH'], help="Benchmark dataset")
+                       choices=['CVTG-2K', 'LongText-Bench', 'OneIG-Bench', 'OneIG-Bench-ZH', 'UnseenWords'], help="Benchmark dataset")
     parser.add_argument("--model_path", type=str, default=None,
                        help="Custom model path (overrides default)")
     parser.add_argument("--debug", action='store_true',

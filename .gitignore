@@ -31,3 +31,7 @@ test.ipynb
 ./dataset_pipeline/LTB/
 dataset_pipeline/LTB/assets/
 eval/Web_rendered/
+*.bak
+dev/nanobanana_test_thought.txt
+docs/
+mathjax.tar.gz

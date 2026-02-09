@@ -543,22 +543,11 @@ class ZImageInference:
                 noise_pred_clean = -torch.stack([o.float() for o in model_out_clean], dim=0).squeeze(2)
                 noise_pred = mask_exp * noise_pred + (1 - mask_exp) * noise_pred_clean
             
-            # 方案 B: 噪声预测修正 — 在 noise_pred 上加引导而非替换 latent
-            if icfg.noise_guidance and config.use_glyph_injection:
-                if injection_data["latent_lists"]:
-                    ll = injection_data["latent_lists"][0]
-                    idx = min(step_idx, len(ll) - 1)
-                    text_latent = ll[idx]
-                    s = icfg.get_strength(step_idx, total_steps)
-                    correction = mask_exp * icfg.noise_guidance_scale * (text_latent - latent)
-                    noise_pred = noise_pred - correction  # 负号：引导去噪方向朝 template
-            
             latent = self.pipeline.scheduler.step(
                 noise_pred.to(torch.float32), t, latent, return_dict=False
             )[0]
             
-            # 传统 latent 替换注入（方案 B 启用时跳过）
-            if config.use_glyph_injection and not icfg.noise_guidance:
+            if config.use_glyph_injection:
                 latent = self.glyph_injector.inject_latent(
                     latent, injection_data, step_idx + 1,
                     config=icfg

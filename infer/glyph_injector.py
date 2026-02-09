@@ -18,58 +18,15 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
-
-def get_available_font(size: int = 100) -> ImageFont.FreeTypeFont:
-    """获取系统中可用的字体"""
-    possible_fonts = [
-        # macOS
-        "/Library/Fonts/Arial Unicode.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/HelveticaNeue.ttc",
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        # Linux
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        # Windows
-        "C:/Windows/Fonts/arial.ttf",
-        "C:/Windows/Fonts/simsun.ttc",
-    ]
-    for font_path in possible_fonts:
-        if os.path.exists(font_path):
-            try:
-                return ImageFont.truetype(font_path, size)
-            except Exception:
-                continue
-    # 如果都失败，使用默认字体
-    print("警告：使用默认字体")
-    return ImageFont.load_default()
-
-
-def calculate_font_size(text: str, bbox_width: int, bbox_height: int) -> int:
-    """计算能填满 bbox 的字体大小"""
-    # 初始估算：按高度计算
-    estimated_size = int(bbox_height * 0.8)
-    
-    # 创建测试字体
-    font = get_available_font(estimated_size)
-    
-    # 测试文字宽度
-    test_img = Image.new("RGB", (bbox_width * 2, bbox_height * 2), "white")
-    draw = ImageDraw.Draw(test_img)
-    
-    # 获取文字边界
-    text_bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = text_bbox[2] - text_bbox[0]
-    text_height = text_bbox[3] - text_bbox[1]
-    
-    # 按宽高比例调整
-    scale_w = bbox_width / max(text_width, 1)
-    scale_h = bbox_height / max(text_height, 1)
-    scale = min(scale_w, scale_h) * 0.9  # 留一点边距
-    
-    return max(int(estimated_size * scale), 12)
+from .formula_helper import (
+    is_latex,
+    plaintext_to_latex,
+    render_latex,
+    render_plaintext,
+    render_formula,
+    get_available_font,
+    calculate_font_size,
+)
 
 
 @dataclass
@@ -100,10 +57,6 @@ class InjectionConfig:
         freq_decompose: 启用后只注入高频（笔画结构），保留模型生成的低频（颜色/风格）
         freq_kernel_size: 高斯模糊核大小，用于分离高低频
     
-    方案 B - 噪声预测修正:
-        noise_guidance: 启用后不直接替换 latent，而是在 noise prediction 上加引导
-        noise_guidance_scale: 引导强度
-    
     方案 C - 递减注入强度:
         strength_schedule: 注入强度随时间步的衰减策略 ("constant"/"linear"/"cosine")
     
@@ -128,10 +81,6 @@ class InjectionConfig:
     # 方案 A: 频率分解注入
     freq_decompose: bool = False
     freq_kernel_size: int = 5
-    
-    # 方案 B: 噪声预测修正（与直接 latent 替换互斥）
-    noise_guidance: bool = False
-    noise_guidance_scale: float = 3.0
     
     # 方案 C: 递减注入强度调度
     strength_schedule: str = "constant"  # "constant" / "linear" / "cosine"
@@ -215,39 +164,18 @@ class GlyphInjector:
         width: int, 
         height: int,
         background_color: str = "black",
-        text_color: str = "white"
+        text_color: str = "white",
+        force_latex: bool = False,
     ) -> Image.Image:
         """
-        渲染文字模板图像
+        渲染文字模板图像，支持纯文本和 LaTeX 公式。
         
-        Args:
-            text: 文字内容
-            width: 图像宽度
-            height: 图像高度
-            background_color: 背景色
-            text_color: 文字色
-            
-        Returns:
-            渲染后的 PIL Image
+        自动检测 LaTeX 内容（\\frac, \\int, ^{}, 等），使用 matplotlib
+        渲染复杂数学公式。纯文本使用 PIL 字体渲染。
+        
+        详见 infer/formula_helper.py 中的 render_formula()。
         """
-        img = Image.new("RGB", (width, height), background_color)
-        draw = ImageDraw.Draw(img)
-        
-        # 计算合适的字体大小
-        font_size = calculate_font_size(text, width, height)
-        font = get_available_font(font_size)
-        
-        # 获取文字边界并居中
-        text_bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_height = text_bbox[3] - text_bbox[1]
-        
-        x = (width - text_width) // 2
-        y = (height - text_height) // 2
-        
-        draw.text((x, y), text, fill=text_color, font=font)
-        
-        return img
+        return render_formula(text, width, height, text_color, background_color, force_latex)
     
     def extract_text_mask(self, image: np.ndarray) -> np.ndarray:
         """
@@ -586,17 +514,5 @@ def create_glyph_injector(pipeline, device: str = "cuda", logger=None) -> GlyphI
 
 
 if __name__ == "__main__":
-    # 测试文字渲染
-    injector = GlyphInjector.__new__(GlyphInjector)
-    
-    text = "x = (-b ± √(b²-4ac)) / 2a"
-    img = GlyphInjector.render_text_template(injector, text, 512, 128)
-    img.save("./test_text_render.png")
-    print(f"文字渲染测试完成: /tmp/test_text_render.png")
-    
-    # 测试 mask 提取
-    img_array = np.array(img)
-    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    mask = GlyphInjector.extract_text_mask(injector, img_bgr)
-    cv2.imwrite("./test_text_mask.png", mask)
-    print(f"Mask 提取测试完成: /tmp/test_text_mask.png")
+    # 公式渲染测试请使用: python -m infer.formula_helper
+    print("请运行 python -m infer.formula_helper 进行公式渲染测试")

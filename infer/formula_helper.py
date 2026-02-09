@@ -2,7 +2,7 @@
 公式渲染辅助模块
 
 渲染优先级：
-1. MathJax (Node.js) — 完整 LaTeX 支持，包括 array/matrix/cases 等环境
+1. MathJax (Node.js) — 完整 LaTeX 支持，包括 array/matrix/cases 等环境，绝对不能渲染中文！
 2. matplotlib mathtext — 无需 Node.js，支持常用 LaTeX 子集
 3. PIL 纯文本 — 最后兜底
 
@@ -187,8 +187,8 @@ def render_mathjax(
     latex: str,
     width: int,
     height: int,
-    text_color: str = "white",
-    background_color: str = "black",
+    text_color: str = "black",
+    background_color: str = "white",
 ) -> _Opt[Image.Image]:
     """使用 MathJax (Node.js) 渲染 LaTeX → SVG → PIL Image。
 
@@ -231,7 +231,7 @@ def render_mathjax(
 
 
 def _convert_svg_to_png(svg_str: str, width: int, height: int, 
-                        text_color: str = "white", background_color: str = "black") -> _Opt[Image.Image]:
+                        text_color: str = "black", background_color: str = "white") -> _Opt[Image.Image]:
     """将 MathJax 生成的 SVG 转换为 PNG。
     
     MathJax 输出包裹在 <mjx-container> 中，需要提取内部 SVG 并添加样式。
@@ -327,8 +327,8 @@ def render_latex(
     latex: str,
     width: int,
     height: int,
-    text_color: str = "white",
-    background_color: str = "black",
+    text_color: str = "black",
+    background_color: str = "white",
 ) -> Image.Image:
     """使用 matplotlib 渲染 LaTeX 公式为 PIL Image。
 
@@ -471,8 +471,8 @@ def render_plaintext(
     text: str,
     width: int,
     height: int,
-    text_color: str = "white",
-    background_color: str = "black",
+    text_color: str = "black",
+    background_color: str = "white",
 ) -> Image.Image:
     """使用 PIL + 系统字体渲染纯文本。"""
     img = Image.new("RGB", (width, height), background_color)
@@ -499,8 +499,8 @@ def render_formula(
     text: str,
     width: int,
     height: int,
-    text_color: str = "white",
-    background_color: str = "black",
+    text_color: str = "black",
+    background_color: str = "white",
     force_latex: bool = False,
 ) -> Image.Image:
     """渲染公式/文本图像（自动检测渲染路径）。

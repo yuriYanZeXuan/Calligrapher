@@ -355,6 +355,10 @@ class GlyphInjector:
                 region_height
             )
             
+            # 安全保障：确保渲染结果尺寸精确匹配 region
+            if text_img.size != (region_width, region_height):
+                text_img = text_img.resize((region_width, region_height), Image.LANCZOS)
+
             # 提取 mask
             text_array = np.array(text_img)
             text_mask = self.extract_text_mask(text_array)
@@ -475,6 +479,10 @@ class GlyphInjector:
                 force_latex=force_latex,
                 font_weight=font_weight,
             )
+
+            # 安全保障：确保渲染结果尺寸精确匹配 region
+            if text_img.size != (region_width, region_height):
+                text_img = text_img.resize((region_width, region_height), Image.LANCZOS)
 
             # 提取 mask
             text_array = np.array(text_img)

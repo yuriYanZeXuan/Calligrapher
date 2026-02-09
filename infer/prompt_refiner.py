@@ -6,7 +6,12 @@ Prompt Refiner: 基于 VLM API 的 prompt 优化接口
 
 from typing import Optional
 
-from VLM_agent import VLMAgent
+if __package__ is None or __package__ == '':
+    # 直接运行脚本
+    from VLM_agent import VLMAgent
+else:
+    # 作为模块被导入
+    from .VLM_agent import VLMAgent
 
 
 # 模块级便捷函数使用的默认 agent

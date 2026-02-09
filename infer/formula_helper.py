@@ -548,6 +548,41 @@ def render_plaintext(
     return img
 
 
+# ============ 工具函数 ============
+
+
+def _composite_to_canvas(
+    img: Image.Image,
+    width: int,
+    height: int,
+    background_color: str = "white",
+) -> Image.Image:
+    """将任意尺寸的图像（可能含透明通道）居中合成到 (width, height) 的 RGB 画布上。
+
+    如果图像大于目标尺寸，先按比例缩小。
+    """
+    # 如果尺寸已匹配，快速返回
+    if img.size == (width, height) and img.mode == "RGB":
+        return img
+
+    # 按比例缩放使其不超过画布
+    iw, ih = img.size
+    scale = min(width / max(iw, 1), height / max(ih, 1), 1.0)
+    if scale < 1.0:
+        iw, ih = int(iw * scale), int(ih * scale)
+        img = img.resize((iw, ih), Image.LANCZOS)
+
+    canvas = Image.new("RGB", (width, height), background_color)
+    # 居中粘贴
+    x = (width - iw) // 2
+    y = (height - ih) // 2
+    if img.mode == "RGBA":
+        canvas.paste(img, (x, y), mask=img)
+    else:
+        canvas.paste(img.convert("RGB"), (x, y))
+    return canvas
+
+
 # ============ 统一入口 ============
 
 
@@ -584,6 +619,8 @@ def render_formula(
         # 优先尝试 MathJax（完整 LaTeX 支持）
         img = render_mathjax(text, width, height, text_color, background_color)
         if img is not None:
+            # MathJax 返回的图可能不是精确的 (width, height)，需要合成到目标画布
+            img = _composite_to_canvas(img, width, height, background_color)
             return img
         # fallback 到 matplotlib（子集支持，失败时降级纯文本）
         return render_latex(text, width, height, text_color, background_color,

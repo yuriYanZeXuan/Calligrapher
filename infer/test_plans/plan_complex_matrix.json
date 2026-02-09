@@ -1,0 +1,19 @@
+{
+  "image_analysis": {
+    "background_style": "green_chalkboard",
+    "dominant_colors": ["#2D4A22", "#1B3015"],
+    "text_style_hint": "chalk handwriting on green chalkboard"
+  },
+  "text_regions": [
+    {
+      "content": "$J = \\begin{bmatrix} \\frac{\\partial f_1}{\\partial x_1} & \\cdots & \\frac{\\partial f_1}{\\partial x_n} \\\\ \\vdots & \\ddots & \\vdots \\\\ \\frac{\\partial f_m}{\\partial x_1} & \\cdots & \\frac{\\partial f_m}{\\partial x_n} \\end{bmatrix}$",
+      "bbox": [0.05, 0.15, 0.95, 0.85],
+      "font_weight": "regular",
+      "font_size_ratio": 0.6,
+      "color": "#F0F0E0",
+      "background_color": "#2D4A22",
+      "is_latex": true,
+      "alignment": "center"
+    }
+  ]
+}

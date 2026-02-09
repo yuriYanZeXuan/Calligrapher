@@ -1,0 +1,19 @@
+{
+  "image_analysis": {
+    "background_style": "traditional_paper",
+    "dominant_colors": ["#F5E6CC", "#E8D5B5"],
+    "text_style_hint": "elegant Chinese calligraphy style"
+  },
+  "text_regions": [
+    {
+      "content": "你好世界",
+      "bbox": [0.2, 0.3, 0.8, 0.7],
+      "font_weight": "bold",
+      "font_size_ratio": 0.75,
+      "color": "#8B0000",
+      "background_color": "#F5E6CC",
+      "is_latex": false,
+      "alignment": "center"
+    }
+  ]
+}

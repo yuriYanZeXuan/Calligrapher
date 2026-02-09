@@ -47,26 +47,21 @@ class TextRegion:
 @dataclass
 class InjectionConfig:
     """注入强度配置
-    
+
     基础注入:
         mask_strength: 空间混合强度 (0-1)，控制文字 latent 在 mask 区域的混合权重
         timestep_ratio: 时间步注入比例 (0-1)，仅在前 X% 的去噪步骤中注入
-        num_local_samples: 局部重采样分支数 K，在 text region 用 K 个不同噪声去噪后取平均
-    
+
     方案 A - 频率分解注入:
         freq_decompose: 启用后只注入高频（笔画结构），保留模型生成的低频（颜色/风格）
         freq_kernel_size: 高斯模糊核大小，用于分离高低频
-    
+
     方案 C - 递减注入强度:
         strength_schedule: 注入强度随时间步的衰减策略 ("constant"/"linear"/"cosine")
-    
+
     方案 D - 反向注意力抑制:
         attn_suppress_scale: 非 glyph 区域对 text token 的注意力抑制倍率 (<1 抑制, 1 不抑制)
-    
-    方案 E - 双路 Prompt:
-        dual_prompt: 启用双路 prompt noise blending
-        dual_prompt_clean: 不含文字内容的场景描述 prompt（None 时自动去除引号内容）
-    
+
     Attention Enhancement:
         attn_enhance_scale: attention reweighting 倍率
         attn_enhance_timestep_ratio: 仅在前 X% 的去噪时间步中激活增强
@@ -76,22 +71,17 @@ class InjectionConfig:
     """
     mask_strength: float = 1.
     timestep_ratio: float = 1.
-    num_local_samples: int = 1
-    
+
     # 方案 A: 频率分解注入
     freq_decompose: bool = False
     freq_kernel_size: int = 5
-    
+
     # 方案 C: 递减注入强度调度
     strength_schedule: str = "constant"  # "constant" / "linear" / "cosine"
-    
+
     # 方案 D: 反向注意力抑制
     attn_suppress_scale: float = 1.0  # <1 抑制非 glyph 区域，如 0.1
-    
-    # 方案 E: 双路 Prompt
-    dual_prompt: bool = False
-    dual_prompt_clean: Optional[str] = None  # None = 自动去除引号内容
-    
+
     # Prompt-Latent Attention Enhancement
     attn_enhance_scale: float = 1.
     attn_enhance_timestep_ratio: float = 1.
@@ -159,23 +149,34 @@ class GlyphInjector:
         self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1) if hasattr(vae, 'config') else 8
         
     def render_text_template(
-        self, 
-        text: str, 
-        width: int, 
+        self,
+        text: str,
+        width: int,
         height: int,
         background_color: str = "black",
         text_color: str = "white",
         force_latex: bool = False,
+        font_weight: str = "regular",
+        font_path: Optional[str] = None,
     ) -> Image.Image:
-        """
-        渲染文字模板图像，支持纯文本和 LaTeX 公式。
-        
+        """渲染文字模板图像，支持纯文本和 LaTeX 公式。
+
         自动检测 LaTeX 内容（\\frac, \\int, ^{}, 等），使用 matplotlib
         渲染复杂数学公式。纯文本使用 PIL 字体渲染。
-        
-        详见 infer/formula_helper.py 中的 render_formula()。
+
+        Args:
+            text: 渲染文本内容
+            width, height: 输出图像尺寸
+            background_color: 背景颜色
+            text_color: 文字颜色
+            force_latex: 强制 LaTeX 模式
+            font_weight: 字体粗细 ("light"/"regular"/"bold")
+            font_path: 自定义字体路径（可选）
         """
-        return render_formula(text, width, height, text_color, background_color, force_latex)
+        return render_formula(
+            text, width, height, text_color, background_color,
+            force_latex, font_weight=font_weight, font_path=font_path,
+        )
     
     def extract_text_mask(self, image: np.ndarray) -> np.ndarray:
         """
@@ -415,6 +416,119 @@ class GlyphInjector:
         
         return injection_data
     
+    def prepare_injection_from_plan(
+        self,
+        typography_plan: dict,
+        image_size: Tuple[int, int],
+        noise: torch.Tensor,
+        timesteps: torch.Tensor,
+    ) -> dict:
+        """根据 VLM 排版规划渲染字形模版并准备注入数据。
+
+        遍历 plan["text_regions"] 中每个 region（由 VLM 自主规划），
+        读取其 bbox/color/font_weight/font_size_ratio/is_latex 等排版信息，
+        渲染字形模版后执行 mask 提取 + encode + inversion 流程。
+
+        Args:
+            typography_plan: VLM 返回的排版规划 JSON dict
+            image_size: 图像尺寸 (width, height)
+            noise: 初始噪声
+            timesteps: 时间步列表
+
+        Returns:
+            与 prepare_injection() 相同格式的注入数据 dict
+        """
+        width, height = image_size
+        full_mask = np.zeros((height, width), dtype=np.uint8)
+
+        injection_data = {
+            "masks": [],
+            "latent_lists": [],
+            "regions": [],
+        }
+
+        for idx, region_spec in enumerate(typography_plan.get("text_regions", [])):
+            content = region_spec["content"]
+            bbox = region_spec["bbox"]  # 归一化坐标 [x_min, y_min, x_max, y_max]
+
+            # 转换为像素坐标
+            x1 = int(bbox[0] * width)
+            y1 = int(bbox[1] * height)
+            x2 = int(bbox[2] * width)
+            y2 = int(bbox[3] * height)
+            region_width = max(x2 - x1, 1)
+            region_height = max(y2 - y1, 1)
+
+            # 读取排版参数
+            text_color = region_spec.get("color", "#FFFFFF")
+            bg_color = region_spec.get("background_color", "#000000")
+            font_weight = region_spec.get("font_weight", "regular")
+            force_latex = region_spec.get("is_latex", False)
+
+            # 渲染字形模版
+            text_img = self.render_text_template(
+                content,
+                region_width,
+                region_height,
+                background_color=bg_color,
+                text_color=text_color,
+                force_latex=force_latex,
+                font_weight=font_weight,
+            )
+
+            # 提取 mask
+            text_array = np.array(text_img)
+            text_mask = self.extract_text_mask(text_array)
+
+            # 将 mask 放入完整图像
+            full_mask[y1:y2, x1:x2] = text_mask
+
+            # 编码文字模板为 latent（嵌入完整图像坐标）
+            full_text_img = Image.new("RGB", (width, height), bg_color)
+            full_text_img.paste(text_img, (x1, y1))
+            text_latent = self.encode_image(full_text_img)
+
+            # 计算 inversion latents
+            latent_list = self.compute_inversion_latents(text_latent, noise, timesteps)
+
+            injection_data["latent_lists"].append(latent_list)
+            injection_data["regions"].append((x1, y1, x2, y2))
+
+            # 日志
+            if self.logger is not None:
+                caption = (
+                    f"[plan] text=\"{content}\"  bbox=({x1},{y1},{x2},{y2})  "
+                    f"size={region_width}x{region_height}\n"
+                    f"weight={font_weight}  color={text_color}  bg={bg_color}  "
+                    f"latex={force_latex}"
+                )
+                self.logger.save_image(
+                    text_img, f"glyph_plan_region_{idx}_text",
+                    caption=caption, subfolder="glyph",
+                )
+                self.logger.save_image(
+                    full_text_img, f"glyph_plan_region_{idx}_full",
+                    caption=caption, subfolder="glyph",
+                )
+                mask_pil = Image.fromarray(text_mask)
+                self.logger.save_image(
+                    mask_pil.convert("RGB"), f"glyph_plan_region_{idx}_mask",
+                    caption=caption, subfolder="glyph",
+                )
+
+        # mask 下采样到 latent 空间
+        latent_h = 2 * (height // (self.vae_scale_factor * 2))
+        latent_w = 2 * (width // (self.vae_scale_factor * 2))
+        mask_area = cv2.resize(full_mask, (latent_w, latent_h), interpolation=cv2.INTER_AREA)
+        mask_latent = (mask_area > 2).astype(np.float32)
+        mask_latent = torch.from_numpy(mask_latent).unsqueeze(0).unsqueeze(0).to(self.device)
+
+        injection_data["mask_latent"] = mask_latent
+        injection_data["full_mask"] = full_mask
+        injection_data["total_steps"] = len(timesteps)
+
+        return injection_data
+
     def inject_latent(
         self,
         current_latent: torch.Tensor,

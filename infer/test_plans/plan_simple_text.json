@@ -1,0 +1,19 @@
+{
+  "image_analysis": {
+    "background_style": "clean_white_paper",
+    "dominant_colors": ["#FFFFFF", "#F5F5F5"],
+    "text_style_hint": "clean printed sans-serif"
+  },
+  "text_regions": [
+    {
+      "content": "Hello World",
+      "bbox": [0.15, 0.35, 0.85, 0.65],
+      "font_weight": "bold",
+      "font_size_ratio": 0.8,
+      "color": "#333333",
+      "background_color": "#FFFFFF",
+      "is_latex": false,
+      "alignment": "center"
+    }
+  ]
+}

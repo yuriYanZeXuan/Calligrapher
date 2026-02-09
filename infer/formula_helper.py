@@ -329,6 +329,7 @@ def render_latex(
     height: int,
     text_color: str = "black",
     background_color: str = "white",
+    font_weight: str = "regular",
 ) -> Image.Image:
     """使用 matplotlib 渲染 LaTeX 公式为 PIL Image。
 
@@ -340,18 +341,19 @@ def render_latex(
         width, height: 输出图像尺寸
         text_color: 文字颜色
         background_color: 背景颜色
-
-    Returns:
-        渲染后的 PIL Image
+        font_weight: 字体粗细 ("light"/"regular"/"bold")
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # 确保被 $ 包裹
+    # 确保被 $ 包裹；bold 时用 \mathbf 或 \boldsymbol 包裹
     formula = latex.strip()
     if not formula.startswith("$"):
         formula = f"${formula}$"
+    if font_weight == "bold":
+        inner = formula.strip("$")
+        formula = rf"$\boldsymbol{{{inner}}}$"
 
     fg = text_color
     bg = background_color
@@ -407,7 +409,8 @@ def render_latex(
         plt.close(fig)
         print(f"[formula_helper] matplotlib 渲染失败，降级为纯文本: {e}")
         plain = latex.strip().strip("$")
-        return render_plaintext(plain, width, height, text_color, background_color)
+        return render_plaintext(plain, width, height, text_color, background_color,
+                                font_weight=font_weight)
     plt.close(fig)
     buf.seek(0)
     img = Image.open(buf).convert("RGB")
@@ -421,9 +424,27 @@ def render_latex(
 # ============ 纯文本字体渲染 ============
 
 
-def get_available_font(size: int = 100) -> ImageFont.FreeTypeFont:
-    """获取系统中可用的字体"""
-    possible_fonts = [
+_FONT_SEARCH_PATHS = {
+    # weight -> [路径列表]，优先级从上到下
+    "bold": [
+        # macOS
+        "/Library/Fonts/Arial Bold.ttf",
+        "/System/Library/Fonts/Helvetica Bold.ttc",
+        "/System/Library/Fonts/HelveticaNeue Bold.ttc",
+        # Linux
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    ],
+    "light": [
+        # macOS
+        "/System/Library/Fonts/HelveticaNeue Light.ttc",
+        "/System/Library/Fonts/Helvetica Light.ttc",
+        # Linux
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Light.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-ExtraLight.ttf",
+    ],
+    "regular": [
         # macOS
         "/Library/Fonts/Arial Unicode.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
@@ -437,11 +458,39 @@ def get_available_font(size: int = 100) -> ImageFont.FreeTypeFont:
         # Windows
         "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/simsun.ttc",
-    ]
-    for font_path in possible_fonts:
-        if os.path.exists(font_path):
+    ],
+}
+
+
+def get_available_font(
+    size: int = 100,
+    weight: str = "regular",
+    font_path: _Opt[str] = None,
+) -> ImageFont.FreeTypeFont:
+    """获取系统中可用的字体。
+
+    Args:
+        size: 字号
+        weight: 字体粗细 ("light"/"regular"/"bold")
+        font_path: 显式指定字体路径（优先级最高）
+    """
+    # 优先使用显式路径
+    if font_path and os.path.exists(font_path):
+        return ImageFont.truetype(font_path, size)
+
+    # 按 weight 查找
+    candidates = _FONT_SEARCH_PATHS.get(weight, [])
+    # 找不到指定 weight 时回退到 regular
+    if not candidates:
+        candidates = _FONT_SEARCH_PATHS["regular"]
+    # 再追加 regular 作为兜底
+    if weight != "regular":
+        candidates = candidates + _FONT_SEARCH_PATHS["regular"]
+
+    for fp in candidates:
+        if os.path.exists(fp):
             try:
-                return ImageFont.truetype(font_path, size)
+                return ImageFont.truetype(fp, size)
             except Exception:
                 continue
     print("警告：使用默认字体")
@@ -473,13 +522,20 @@ def render_plaintext(
     height: int,
     text_color: str = "black",
     background_color: str = "white",
+    font_weight: str = "regular",
+    font_path: _Opt[str] = None,
 ) -> Image.Image:
-    """使用 PIL + 系统字体渲染纯文本。"""
+    """使用 PIL + 系统字体渲染纯文本。
+
+    Args:
+        font_weight: 字体粗细 ("light"/"regular"/"bold")
+        font_path: 自定义字体路径（可选）
+    """
     img = Image.new("RGB", (width, height), background_color)
     draw = ImageDraw.Draw(img)
 
     font_size = calculate_font_size(text, width, height)
-    font = get_available_font(font_size)
+    font = get_available_font(font_size, weight=font_weight, font_path=font_path)
 
     text_bbox = draw.textbbox((0, 0), text, font=font)
     text_width = text_bbox[2] - text_bbox[0]
@@ -502,6 +558,8 @@ def render_formula(
     text_color: str = "black",
     background_color: str = "white",
     force_latex: bool = False,
+    font_weight: str = "regular",
+    font_path: _Opt[str] = None,
 ) -> Image.Image:
     """渲染公式/文本图像（自动检测渲染路径）。
 
@@ -509,6 +567,10 @@ def render_formula(
     1. MathJax (Node.js) — 完整 LaTeX 支持（array, matrix, cases 等）
     2. matplotlib mathtext — 无需 Node.js，支持常用 LaTeX 子集
     3. PIL 纯文本 — 最后兜底
+
+    Args:
+        font_weight: 字体粗细 ("light"/"regular"/"bold")
+        font_path: 自定义字体路径（仅纯文本路径生效）
     """
     use_latex = force_latex or is_latex(text)
 
@@ -524,9 +586,11 @@ def render_formula(
         if img is not None:
             return img
         # fallback 到 matplotlib（子集支持，失败时降级纯文本）
-        return render_latex(text, width, height, text_color, background_color)
+        return render_latex(text, width, height, text_color, background_color,
+                            font_weight=font_weight)
     else:
-        return render_plaintext(text, width, height, text_color, background_color)
+        return render_plaintext(text, width, height, text_color, background_color,
+                                font_weight=font_weight, font_path=font_path)
 
 
 # ============ 测试入口 ============

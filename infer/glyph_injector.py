@@ -74,7 +74,7 @@ class InjectionConfig:
 
     # 方案 A: 频率分解注入
     freq_decompose: bool = False
-    freq_kernel_size: int = 5
+    freq_kernel_size: int = 3
 
     # 方案 C: 递减注入强度调度
     strength_schedule: str = "constant"  # "constant" / "linear" / "cosine"
@@ -252,32 +252,44 @@ class GlyphInjector:
         mask: torch.Tensor,
         strength: float,
         kernel_size: int = 5,
-    ) -> torch.Tensor:
+        return_debug: bool = False,
+    ):
         """方案 A: 频率分解注入。
-        
+
         只注入 template 的高频分量（笔画边缘），保留 current 的低频分量（颜色/风格）。
+
+        Args:
+            return_debug: 为 True 时返回 (injected, debug_dict)，debug_dict 含 template_lf/hf, current_lf/hf, blended_hf 用于可视化。
         """
         import torch.nn.functional as F
-        
-        # 用 avg pool 近似高斯模糊，对 latent 的每个 channel 独立操作
+
         pad = kernel_size // 2
-        
+
         def blur(x):
-            # (1, C, H, W) → avg_pool with padding
             return F.avg_pool2d(
                 F.pad(x, [pad] * 4, mode="reflect"),
                 kernel_size, stride=1,
             )
-        
+
         template_lf = blur(template)
         template_hf = template - template_lf
-        
+
         current_lf = blur(current)
         current_hf = current - current_lf
-        
-        # mask 区域：低频用 current（保持风格），高频混入 template（引入笔画结构）
+
         blended_hf = current_hf * (1 - mask * strength) + template_hf * (mask * strength)
-        return current_lf + blended_hf
+        injected = current_lf + blended_hf
+
+        if return_debug:
+            debug = {
+                "template_lf": template_lf,
+                "template_hf": template_hf,
+                "current_lf": current_lf,
+                "current_hf": current_hf,
+                "blended_hf": blended_hf,
+            }
+            return injected, debug
+        return injected
     
     def compute_inversion_latents(
         self, 
@@ -605,9 +617,26 @@ class GlyphInjector:
         
         # 方案 A: 频率分解 — 只注入高频（笔画结构），保留模型的低频（风格/颜色）
         if config.freq_decompose:
-            injected = self._freq_decompose_inject(
-                current_latent, text_latent, mask, s, config.freq_kernel_size
-            )
+            need_freq_vis = (
+                self.logger is not None and step_idx == 0
+            )  # 仅第一步保存频率分解可视化
+            if need_freq_vis:
+                injected, freq_debug = self._freq_decompose_inject(
+                    current_latent, text_latent, mask, s, config.freq_kernel_size,
+                    return_debug=True,
+                )
+                for name, lat in freq_debug.items():
+                    img = self.decode_latent(lat)
+                    self.logger.save_image(
+                        img,
+                        f"freq_decompose_{name}",
+                        caption=f"kernel={config.freq_kernel_size} step={step_idx} strength={s:.3f}",
+                        subfolder="glyph",
+                    )
+            else:
+                injected = self._freq_decompose_inject(
+                    current_latent, text_latent, mask, s, config.freq_kernel_size,
+                )
         else:
             # 原始全频注入
             injected = current_latent * (1 - mask * s) + text_latent * mask * s

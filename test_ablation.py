@@ -28,7 +28,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from infer.glyph_injector import InjectionConfig
 
-
 # ============ 实验配置 ============
 
 # 可选 prompt 模板（通过 --formula 切换）

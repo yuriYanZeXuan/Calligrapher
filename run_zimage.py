@@ -57,8 +57,8 @@ def main():
     parser.add_argument("--strength-schedule", default="cosine",
                         choices=["constant", "linear", "cosine"],
                         help="注入强度衰减策略")
-    parser.add_argument("--mask-strength", type=float, default=0.8, help="mask 注入强度")
-    parser.add_argument("--timestep-ratio", type=float, default=0.8, help="注入时间步比例")
+    parser.add_argument("--mask-strength", type=float, default=1.0, help="mask 注入强度")
+    parser.add_argument("--timestep-ratio", type=float, default=0.9, help="注入时间步比例")
     parser.add_argument("--attn-enhance", type=float, default=2.0,
                         help="注意力增强倍率（1.0=不增强）")
     parser.add_argument("--attn-suppress", type=float, default=0.1,

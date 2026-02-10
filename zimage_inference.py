@@ -274,6 +274,11 @@ class ZImageInference:
         # 保存 typography_plan JSON
         self._save_typography_plan(typography_plan)
 
+        # === 重置 scheduler：Pass 1 和 Pass 2 使用独立的 scheduler 状态 ===
+        # FlowMatchEulerDiscreteScheduler 内部维护 _step_index，连续使用会导致越界
+        self.pipeline.scheduler.set_timesteps(config.num_inference_steps, device=self.primary_device)
+        timesteps = self.pipeline.scheduler.timesteps
+
         # === Pass 2: Clean 背景 + 字形注入 ===
         print("=== Pass 2: Clean 推理 + 字形注入 ===")
         clean_prompt = self.vlm_agent.generate_clean_prompt(prompt)

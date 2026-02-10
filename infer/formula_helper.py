@@ -189,11 +189,15 @@ def render_mathjax(
     height: int,
     text_color: str = "black",
     background_color: str = "white",
+    font_weight: str = "regular",
 ) -> _Opt[Image.Image]:
     """使用 MathJax (Node.js) 渲染 LaTeX → SVG → PIL Image。
 
     支持完整的 LaTeX 语法（array, matrix, cases 等环境）。
     需要 Node.js 和 cairosvg（或 Pillow SVG 支持）。
+
+    Args:
+        font_weight: 字体粗细 ("light"/"regular"/"bold")，bold 时自动使用 \boldsymbol
 
     Returns:
         PIL Image，如果 Node.js 不可用或渲染失败则返回 None。
@@ -203,6 +207,10 @@ def render_mathjax(
 
     # 去掉 $ 包裹（MathJax 自己处理）
     formula = latex.strip().strip("$")
+    
+    # bold 时自动包裹 \boldsymbol
+    if font_weight == "bold":
+        formula = rf"\boldsymbol{{{formula}}}"
 
     # 调用 Node.js 渲染 SVG
     try:
@@ -617,7 +625,7 @@ def render_formula(
 
     if use_latex:
         # 优先尝试 MathJax（完整 LaTeX 支持）
-        img = render_mathjax(text, width, height, text_color, background_color)
+        img = render_mathjax(text, width, height, text_color, background_color, font_weight)
         if img is not None:
             # MathJax 返回的图可能不是精确的 (width, height)，需要合成到目标画布
             img = _composite_to_canvas(img, width, height, background_color)

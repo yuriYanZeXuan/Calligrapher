@@ -10,7 +10,7 @@ Z-Image 推理启动脚本
 三阶段推理架构:
   Pass 1: 用完整 prompt 生成参考图 → VLM 自主规划排版
   Pass 2: 从相同噪声用 clean prompt + 字形注入生成文字图
-  Pass 3: SDEdit + soft mask 背景融合循环（VLM 评判停止条件）
+  Pass 3: FluxKlein img2img + soft mask 背景融合循环（VLM 评判停止条件）
 
 用法:
   python run_zimage.py                                  # 正式模式
@@ -19,7 +19,7 @@ Z-Image 推理启动脚本
   python run_zimage.py --tts --beam 8                   # 启用 TTS beam search
   python run_zimage.py --no-refiner --no-inject         # 纯生图（无注入无优化）
   python run_zimage.py --no-harmonize                   # 跳过 Pass 3 背景融合
-  python run_zimage.py --harmonize-sigma 0.2 --harmonize-iters 3  # 自定义融合参数
+  python run_zimage.py --klein-steps 30 --klein-iters 2 # 自定义 FluxKlein 参数
 """
 
 import os
@@ -61,7 +61,7 @@ def main():
     parser.add_argument("--freq-decompose", action="store_true", default=True,
                         help="频率分解注入（默认开启）")
     parser.add_argument("--no-freq-decompose", action="store_true", help="关闭频率分解注入")
-    parser.add_argument("--strength-schedule", default="cosine",
+    parser.add_argument("--strength-schedule", default="constant",
                         choices=["constant", "linear", "cosine"],
                         help="注入强度衰减策略")
     parser.add_argument("--mask-strength", type=float, default=1.0, help="mask 注入强度")
@@ -71,16 +71,32 @@ def main():
     parser.add_argument("--attn-suppress", type=float, default=0.1,
                         help="反向注意力抑制倍率（1.0=不抑制）")
 
-    # Pass 3: 背景融合
-    parser.add_argument("--no-harmonize", action="store_true", help="禁用 Pass 3 背景融合")
-    parser.add_argument("--harmonize-sigma", type=float, default=0.3,
-                        help="Pass 3 SDE 加噪强度 (0-1)")
-    parser.add_argument("--harmonize-iters", type=int, default=5,
-                        help="Pass 3 最大循环次数")
-    parser.add_argument("--harmonize-target", type=float, default=9.5,
-                        help="Pass 3 VLM 评分目标阈值 (0-10)")
-    parser.add_argument("--harmonize-radius", type=int, default=15,
-                        help="Pass 3 soft mask 距离变换半径 (像素)")
+    # Pass 3: FluxKlein img2img 背景融合
+    parser.add_argument("--no-harmonize", action="store_true",
+                        help="禁用 Pass 3 FluxKlein 背景融合")
+    parser.add_argument("--klein-model-path", type=str,
+                        default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein",
+                        help="FluxKlein 模型路径")
+    parser.add_argument("--klein-prompt", type=str,
+                        default=("The text on the surface is rewritten in beautiful style, "
+                                 "with natural texture, soft edges, and subtle imperfections. "
+                                 "The lettering harmonizes perfectly with the background aesthetic. "
+                                 "No other changes to the image."),
+                        help="FluxKlein 编辑 prompt")
+    parser.add_argument("--klein-steps", type=int, default=50,
+                        help="FluxKlein 推理步数")
+    parser.add_argument("--klein-guidance", type=float, default=4.0,
+                        help="FluxKlein guidance scale")
+    parser.add_argument("--klein-seed", type=int, default=None,
+                        help="FluxKlein 随机种子（默认跟随主 seed）")
+    parser.add_argument("--klein-iters", type=int, default=3,
+                        help="FluxKlein refine 最大循环次数")
+    parser.add_argument("--klein-target", type=float, default=9.5,
+                        help="FluxKlein VLM 评分目标阈值 (0-10)")
+    parser.add_argument("--klein-blur-radius", type=int, default=8,
+                        help="FluxKlein soft mask 高斯模糊半径 (像素)")
+    parser.add_argument("--klein-cpu-offload", action="store_true",
+                        help="FluxKlein 启用 CPU offload")
 
     # GPU
     parser.add_argument("--gpus", type=str, default=None, help="GPU 列表，如 0,1,2,3")
@@ -128,11 +144,17 @@ def main():
         injection_config=injection_config,
         use_tts=args.tts,
         beam_size=args.beam,
+        # Pass 3: FluxKlein img2img 背景融合
         use_harmonization=not args.no_harmonize,
-        harmonization_noise_ratio=args.harmonize_sigma,
-        harmonization_max_iters=args.harmonize_iters,
-        harmonization_target_score=args.harmonize_target,
-        harmonization_soft_mask_radius=args.harmonize_radius,
+        klein_model_path=args.klein_model_path,
+        klein_prompt=args.klein_prompt,
+        klein_steps=args.klein_steps,
+        klein_guidance_scale=args.klein_guidance,
+        klein_seed=args.klein_seed,
+        klein_max_iters=args.klein_iters,
+        klein_target_score=args.klein_target,
+        klein_blur_radius=args.klein_blur_radius,
+        klein_enable_cpu_offload=args.klein_cpu_offload,
     )
 
     # 创建推理实例

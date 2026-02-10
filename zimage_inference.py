@@ -9,7 +9,7 @@ Z-Image 推理主入口
 三阶段推理架构:
   Pass 1: 用完整 prompt 生成参考图 → VLM 自主规划排版
   Pass 2: 从相同噪声用 clean prompt + 字形注入生成文字图
-  Pass 3: SDEdit + soft mask 背景融合循环 → VLM 评判直到风格融合达标
+  Pass 3: FluxKlein img2img + soft mask 背景融合循环 → VLM 评判直到风格融合达标
 """
 
 import os
@@ -23,7 +23,6 @@ os.environ["TORCH_COMPILE_DISABLE"] = "1"
 os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = "1"
 
 import numpy as np
-import cv2
 import torch
 import torch.multiprocessing as mp
 from PIL import Image
@@ -67,12 +66,22 @@ class GenerationConfig:
     early_stop_step: int = 3
     keep_ratio: float = 0.25
 
-    # Pass 3: 背景融合（SDEdit + soft mask 循环优化）
-    use_harmonization: bool = True
-    harmonization_noise_ratio: float = 0.3    # SDE 前向噪声水平 (sigma)
-    harmonization_max_iters: int = 5          # 最大循环次数
-    harmonization_target_score: float = 9.5   # VLM 评分阈值 (0-10)
-    harmonization_soft_mask_radius: int = 15  # soft mask 距离变换半径 (像素)
+    # Pass 3: FluxKlein img2img refine（将粘贴的字体与背景风格融合）
+    use_harmonization: bool = True             # 启用 Pass 3 FluxKlein 背景融合
+    klein_model_path: str = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
+    klein_prompt: str = (
+        "The text on the surface is rewritten in beautiful style, "
+        "with natural texture, soft edges, and subtle imperfections. "
+        "The lettering harmonizes perfectly with the background aesthetic. "
+        "No other changes to the image."
+    )
+    klein_steps: int = 50                      # FluxKlein 推理步数
+    klein_guidance_scale: float = 4.0          # FluxKlein guidance scale
+    klein_seed: Optional[int] = None           # FluxKlein seed（None=跟随主 seed）
+    klein_max_iters: int = 3                   # FluxKlein refine 最大循环次数
+    klein_target_score: float = 9.5            # VLM 评分阈值
+    klein_blur_radius: int = 8                 # soft mask 高斯模糊半径
+    klein_enable_cpu_offload: bool = False      # FluxKlein CPU offload
 
 
 class ZImageInference:
@@ -106,6 +115,7 @@ class ZImageInference:
         self._vlm_agent = None
         self._glyph_injector = None
         self._tts = None
+        self._klein_generator = None
         self._output_counter = 0
 
     # ---- 延迟加载属性 ----
@@ -145,6 +155,24 @@ class ZImageInference:
                 logger=self.logger,
             )
         return self._tts
+
+    def get_klein_generator(self, config: "GenerationConfig"):
+        """延迟加载 FluxKlein 生成器（按需创建，避免浪费显存）。"""
+        if self._klein_generator is None:
+            # 动态导入，避免不使用时也依赖 FluxKlein
+            klein_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baselines", "fluxklein")
+            if klein_dir not in sys.path:
+                sys.path.insert(0, klein_dir)
+            from inference_fluxklein import FluxKleinGenerator
+
+            print(f"正在加载 FluxKlein 模型: {config.klein_model_path}")
+            self._klein_generator = FluxKleinGenerator(
+                model_path=config.klein_model_path,
+                device=self.primary_device,
+                enable_cpu_offload=config.klein_enable_cpu_offload,
+            )
+            print("FluxKlein 模型加载完成")
+        return self._klein_generator
 
     # ---- 主入口 ----
 
@@ -249,7 +277,7 @@ class ZImageInference:
         generator: Optional[torch.Generator] = None,
         text_regions_override: Optional[list[dict]] = None,
     ) -> Image.Image:
-        """三阶段推理：Pass 1 参考图 + VLM 规划 + Pass 2 clean 注入 + Pass 3 背景融合。"""
+        """三阶段推理：Pass 1 参考图 + VLM 规划 + Pass 2 clean 注入 + Pass 3 FluxKlein refine。"""
 
         # 准备共享噪声
         noise = self._prepare_noise(config, generator)
@@ -304,7 +332,7 @@ class ZImageInference:
             clean_prompt, noise, timesteps, injection_data, config,
         )
 
-        # === Pass 3: SDEdit + Soft Mask 背景融合 ===
+        # === Pass 3: FluxKlein img2img + Soft Mask 背景融合 ===
         text_content_str = None
         if text_contents:
             text_content_str = " ".join(text_contents)
@@ -314,8 +342,8 @@ class ZImageInference:
             )
 
         if config.use_harmonization:
-            print("=== Pass 3: 背景融合 ===")
-            image = self._run_pass3_harmonization(
+            print("=== Pass 3: FluxKlein img2img refine ===")
+            image = self._run_pass3_klein_refine(
                 image, injection_data, clean_prompt, config,
                 text_content_str=text_content_str,
             )
@@ -488,83 +516,31 @@ class ZImageInference:
             image = self.pipeline.vae.decode(latent, return_dict=False)[0]
         return self.pipeline.image_processor.postprocess(image, output_type="pil")[0]
 
-    def _encode_to_latent(self, image: Image.Image) -> torch.Tensor:
-        """PIL Image → VAE latent（与 GlyphInjector.encode_image 一致）。"""
-        return self.glyph_injector.encode_image(image)
-
-    # ---- Pass 3: SDEdit + Soft Mask 背景融合 ----
+    # ---- Pass 3: FluxKlein img2img + soft mask 背景融合 ----
 
     @staticmethod
-    def _compute_soft_mask(binary_mask: np.ndarray, radius: int = 15) -> np.ndarray:
-        """从二值化 mask 生成 soft mask（距离变换）。
-
-        内部完全保留 (1.0)，向边缘平滑衰减到 0.0。
+    def _compute_soft_mask(
+        binary_mask: np.ndarray, blur_radius: int = 8,
+    ) -> np.ndarray:
+        """从二值化 mask 生成高斯模糊 soft mask。
 
         Args:
             binary_mask: uint8 (H, W)，文字区域 255
-            radius: 衰减半径（像素）
+            blur_radius: 高斯模糊半径
 
         Returns:
-            float32 (H, W)，值域 [0, 1]
+            float32 (H, W)，值域 [0, 1]，1.0=文字区域
         """
-        dist = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 5)
-        return np.clip(dist / max(radius, 1), 0.0, 1.0).astype(np.float32)
+        from PIL import ImageFilter
 
-    def _partial_denoise(
-        self,
-        noisy_latent: torch.Tensor,
-        prompt_embeds: list,
-        noise_ratio: float,
-        config: GenerationConfig,
-    ) -> torch.Tensor:
-        """从指定噪声水平 (sigma=noise_ratio) 完全去噪。
+        mask_arr = binary_mask.astype(np.float32) / 255.0
+        if blur_radius > 0:
+            mask_pil = Image.fromarray((mask_arr * 255).astype(np.uint8))
+            mask_pil = mask_pil.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+            mask_arr = np.array(mask_pil).astype(np.float32) / 255.0
+        return mask_arr
 
-        只执行 scheduler timestep <= noise_ratio * 1000 的步骤。
-        """
-        dtype = self.pipeline.transformer.dtype
-        latent = noisy_latent.clone()
-
-        self.pipeline.scheduler.set_timesteps(
-            config.num_inference_steps, device=self.primary_device,
-        )
-        all_timesteps = self.pipeline.scheduler.timesteps
-
-        # 找到第一个 <= target_t 的 timestep 作为起始索引
-        target_t = noise_ratio * 1000
-        start_idx = None
-        for i, t in enumerate(all_timesteps):
-            if t.item() <= target_t + 1e-3:
-                start_idx = i
-                break
-        if start_idx is None:
-            return latent
-
-        # 手动设置 scheduler 的内部步索引，使其从 start_idx 开始
-        self.pipeline.scheduler._step_index = start_idx
-        partial_timesteps = all_timesteps[start_idx:]
-
-        for t in partial_timesteps:
-            timestep = t.expand(1)
-            timestep_norm = (1000 - timestep) / 1000
-
-            latent_input = latent.to(dtype).unsqueeze(2)
-            latent_list = list(latent_input.unbind(dim=0))
-
-            with torch.no_grad():
-                model_out = self.pipeline.transformer(
-                    latent_list, timestep_norm, prompt_embeds, return_dict=False,
-                )[0]
-            noise_pred = -torch.stack(
-                [o.float() for o in model_out], dim=0,
-            ).squeeze(2)
-
-            latent = self.pipeline.scheduler.step(
-                noise_pred.to(torch.float32), t, latent, return_dict=False,
-            )[0]
-
-        return latent
-
-    def _run_pass3_harmonization(
+    def _run_pass3_klein_refine(
         self,
         pass2_image: Image.Image,
         injection_data: dict,
@@ -572,16 +548,15 @@ class ZImageInference:
         config: GenerationConfig,
         text_content_str: Optional[str] = None,
     ) -> Image.Image:
-        """Pass 3: SDEdit + soft mask 背景融合循环。
+        """Pass 3: 使用 FluxKlein img2img 将粘贴字体与背景风格融合。
 
         每次迭代：
-          1. 当前图 → latent → SDE 加噪（小 sigma）
-          2. 解码到像素空间，用 soft mask 恢复背景
-          3. 编码回 latent → 完全去噪
-          4. VLM 评分；满足阈值或达到最大次数后停止
+          1. 将当前图像送入 FluxKlein 做 img2img 编辑
+          2. 用 soft mask 混合：文字区域用 FluxKlein 输出，背景保持原图
+          3. VLM 评分；满足阈值或达到最大次数后停止
 
         Args:
-            pass2_image: Pass 2 生成的图像
+            pass2_image: Pass 2 生成的图像（含粘贴的字体）
             injection_data: Pass 2 的注入数据（含 full_mask）
             clean_prompt: Pass 2 使用的 clean prompt
             config: 生成配置
@@ -590,25 +565,18 @@ class ZImageInference:
         Returns:
             融合后的最终图像
         """
-        sigma = config.harmonization_noise_ratio
-        radius = config.harmonization_soft_mask_radius
-        max_iters = config.harmonization_max_iters
-        target = config.harmonization_target_score
+        max_iters = config.klein_max_iters
+        target = config.klein_target_score
+        blur_radius = config.klein_blur_radius
+        klein_seed = config.klein_seed if config.klein_seed is not None else (config.seed or 42)
 
-        # 生成 soft mask
+        # 获取 FluxKlein 生成器
+        klein = self.get_klein_generator(config)
+
+        # 生成 soft mask（使用高斯模糊平滑边缘）
         binary_mask = injection_data["full_mask"]  # uint8 (H, W)
-        soft_mask = self._compute_soft_mask(binary_mask, radius)
-        soft_mask_3ch = soft_mask[:, :, np.newaxis]  # (H, W, 1) 用于像素空间混合
-
-        # 编码 clean prompt（复用 Pass 2 的 prompt）
-        prompt_embeds, _ = self.pipeline.encode_prompt(
-            prompt=clean_prompt, device=self.primary_device,
-            do_classifier_free_guidance=False,
-        )
-
-        current_image = pass2_image
-        best_image = pass2_image
-        best_score = 0.0
+        soft_mask = self._compute_soft_mask(binary_mask, blur_radius)
+        soft_mask_3ch = soft_mask[:, :, np.newaxis]  # (H, W, 1)
 
         # 保存 soft mask 可视化
         if self.logger is not None:
@@ -616,33 +584,62 @@ class ZImageInference:
             self.logger.save_image(
                 Image.fromarray(sm_vis).convert("RGB"),
                 "pass3_soft_mask",
-                caption=f"soft mask  radius={radius}  coverage={soft_mask.mean():.3f}",
+                caption=f"soft mask  blur_radius={blur_radius}  coverage={soft_mask.mean():.3f}",
                 subfolder="harmonize",
             )
 
+        current_image = pass2_image
+        best_image = pass2_image
+        best_score = 0.0
+
+        # 保存 Pass 2 原图作为背景参考（mask 外区域始终来自此图）
+        background_image = pass2_image
+
+        print(f"  FluxKlein refine prompt: {config.klein_prompt[:100]}...")
+        print(f"  FluxKlein 参数: steps={config.klein_steps}, guidance={config.klein_guidance_scale}, "
+              f"seed={klein_seed}, max_iters={max_iters}")
+
         for it in range(max_iters):
-            print(f"  Pass 3 [{it + 1}/{max_iters}]", end="")
+            print(f"  Pass 3 Klein [{it + 1}/{max_iters}]", end="")
 
-            # 1. 编码 → 加噪
-            latent_0 = self._encode_to_latent(current_image)
-            noise = torch.randn_like(latent_0)
-            noisy_latent = (1 - sigma) * latent_0 + sigma * noise
+            # 1. FluxKlein img2img 编辑
+            klein_output_path = None
+            if self.logger is not None:
+                klein_dir = self.logger.run_dir / "harmonize"
+                klein_dir.mkdir(parents=True, exist_ok=True)
+                klein_output_path = str(klein_dir / f"klein_raw_iter{it + 1}.png")
+            else:
+                klein_output_path = f"/tmp/klein_raw_iter{it + 1}.png"
 
-            # 2. 解码到像素空间 → soft mask 恢复背景
-            noisy_image = self._decode_latent(noisy_latent)
-            noisy_arr = np.array(noisy_image).astype(np.float32)
-            bg_arr = np.array(current_image).astype(np.float32)
-            blended_arr = soft_mask_3ch * noisy_arr + (1 - soft_mask_3ch) * bg_arr
-            blended_image = Image.fromarray(blended_arr.clip(0, 255).astype(np.uint8))
-
-            # 3. 编码回 latent → 完全去噪
-            blended_latent = self._encode_to_latent(blended_image)
-            result_latent = self._partial_denoise(
-                blended_latent, prompt_embeds, sigma, config,
+            edited = klein.generate(
+                prompt=config.klein_prompt,
+                image=current_image,
+                seed=klein_seed + it,  # 每次迭代用不同 seed
+                num_inference_steps=config.klein_steps,
+                guidance_scale=config.klein_guidance_scale,
+                output_path=klein_output_path,
             )
-            result_image = self._decode_latent(result_latent)
 
-            # 4. VLM 评分
+            # 2. Soft mask 混合：文字区域用 FluxKlein 编辑结果，背景保持 Pass 2 原图
+            #    确保尺寸匹配
+            if edited.size != background_image.size:
+                edited = edited.resize(background_image.size, Image.LANCZOS)
+
+            edit_arr = np.array(edited).astype(np.float32)
+            bg_arr = np.array(background_image).astype(np.float32)
+
+            # 如果 mask 尺寸不匹配，resize
+            mask_for_blend = soft_mask_3ch
+            if soft_mask.shape[0] != edited.height or soft_mask.shape[1] != edited.width:
+                mask_pil = Image.fromarray((soft_mask * 255).astype(np.uint8))
+                mask_pil = mask_pil.resize(edited.size, Image.LANCZOS)
+                mask_resized = np.array(mask_pil).astype(np.float32) / 255.0
+                mask_for_blend = mask_resized[:, :, np.newaxis]
+
+            blended_arr = mask_for_blend * edit_arr + (1 - mask_for_blend) * bg_arr
+            result_image = Image.fromarray(blended_arr.clip(0, 255).astype(np.uint8))
+
+            # 3. VLM 评分
             score = self.vlm_agent.score_image(
                 result_image, clean_prompt, text_content_str,
             )
@@ -656,7 +653,18 @@ class ZImageInference:
             if self.logger is not None:
                 self.logger.save_image(
                     result_image, f"pass3_iter{it + 1}",
-                    caption=f"iter={it + 1}  score={score:.2f}  sigma={sigma}",
+                    caption=f"iter={it + 1}  score={score:.2f}  "
+                            f"steps={config.klein_steps}  guidance={config.klein_guidance_scale}",
+                    subfolder="harmonize",
+                )
+                # 保存对比图：原图 | FluxKlein raw | masked blending
+                comparison = Image.new("RGB", (current_image.width * 3, current_image.height))
+                comparison.paste(current_image, (0, 0))
+                comparison.paste(edited.resize(current_image.size, Image.LANCZOS), (current_image.width, 0))
+                comparison.paste(result_image.resize(current_image.size, Image.LANCZOS), (current_image.width * 2, 0))
+                self.logger.save_image(
+                    comparison, f"pass3_comparison_iter{it + 1}",
+                    caption=f"input | Klein raw | masked blend  score={score:.2f}",
                     subfolder="harmonize",
                 )
 
@@ -664,6 +672,7 @@ class ZImageInference:
                 print(f"  Pass 3 达到目标分数 {score:.2f} >= {target}")
                 break
 
+            # 下一轮以混合后的结果作为输入
             current_image = result_image
 
         print(f"  Pass 3 完成，最佳分数 {best_score:.2f}/10")

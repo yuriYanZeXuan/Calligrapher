@@ -88,6 +88,10 @@ class InjectionConfig:
     attn_enhance_layers: Optional[list[int]] = None
     attn_enhance_text_to_image: bool = True
     attn_enhance_image_to_text: bool = True
+    
+    # Soft Mask: 使用高斯模糊平滑 mask 边缘
+    use_soft_mask: bool = False  # 是否启用 soft mask
+    soft_mask_kernel: int = 5    # 高斯模糊核大小
 
     def should_inject(self, step_idx: int, total_steps: int) -> bool:
         """判断当前步是否需要注入"""
@@ -553,12 +557,98 @@ class GlyphInjector:
         mask_area = cv2.resize(full_mask, (latent_w, latent_h), interpolation=cv2.INTER_AREA)
         mask_latent = (mask_area > 2).astype(np.float32)
         mask_latent = torch.from_numpy(mask_latent).unsqueeze(0).unsqueeze(0).to(self.device)
+        
+        # 生成 soft mask（高斯模糊）用于平滑边缘
+        mask_soft = self._create_soft_mask(full_mask, latent_w, latent_h, kernel_size=5)
+        
+        # 注意: 实际使用的 soft_mask_kernel 在 inject_latent 时从 config 读取
+        # 这里只生成基础版本用于可视化对比
+        
+        # 可视化对比 hard mask vs soft mask
+        if self.logger is not None:
+            self._visualize_masks(full_mask, mask_latent, mask_soft, latent_w, latent_h)
 
         injection_data["mask_latent"] = mask_latent
+        injection_data["mask_soft"] = mask_soft  # 软 mask
         injection_data["full_mask"] = full_mask
         injection_data["total_steps"] = len(timesteps)
 
         return injection_data
+    
+    def _create_soft_mask(self, full_mask: np.ndarray, latent_w: int, latent_h: int, kernel_size: int = 5) -> torch.Tensor:
+        """创建软 mask（高斯模糊平滑边缘）"""
+        # 下采样到 latent 空间
+        mask_resized = cv2.resize(full_mask, (latent_w, latent_h), interpolation=cv2.INTER_AREA)
+        
+        # 归一化到 [0, 1]
+        mask_normalized = mask_resized.astype(np.float32) / 255.0
+        
+        # 高斯模糊平滑边缘
+        if kernel_size > 1:
+            mask_soft = cv2.GaussianBlur(mask_normalized, (kernel_size, kernel_size), sigmaX=0)
+        else:
+            mask_soft = mask_normalized
+        
+        return torch.from_numpy(mask_soft).unsqueeze(0).unsqueeze(0).to(self.device)
+    
+    def _visualize_masks(self, full_mask: np.ndarray, mask_latent: torch.Tensor, mask_soft: torch.Tensor, latent_w: int, latent_h: int):
+        """可视化对比 hard mask 和 soft mask"""
+        import numpy as np
+        from PIL import Image
+        
+        # 转换为 numpy 并归一化到 0-255
+        hard_np = (mask_latent[0, 0].cpu().numpy() * 255).astype(np.uint8)
+        soft_np = (mask_soft[0, 0].cpu().numpy() * 255).astype(np.uint8)
+        
+        # 上采样到相同尺寸以便对比（使用 latent_w, latent_h 的 4 倍）
+        viz_size = (latent_w * 4, latent_h * 4)
+        hard_viz = cv2.resize(hard_np, viz_size, interpolation=cv2.INTER_NEAREST)
+        soft_viz = cv2.resize(soft_np, viz_size, interpolation=cv2.INTER_LINEAR)
+        
+        # 创建对比图
+        comparison = np.zeros((viz_size[1], viz_size[0] * 2 + 20), dtype=np.uint8)
+        comparison[:, :viz_size[0]] = hard_viz
+        comparison[:, viz_size[0]+20:] = soft_viz
+        
+        # 添加标签
+        comp_pil = Image.fromarray(comparison)
+        from PIL import ImageDraw, ImageFont
+        draw = ImageDraw.Draw(comp_pil)
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        except:
+            font = ImageFont.load_default()
+        draw.text((10, 10), "HARD MASK (Binary)", fill=255, font=font)
+        draw.text((viz_size[0] + 30, 10), "SOFT MASK (Gaussian)", fill=255, font=font)
+        
+        self.logger.save_image(
+            comp_pil.convert("RGB"),
+            "mask_comparison_hard_vs_soft",
+            caption=f"Left: Hard binary mask | Right: Soft Gaussian mask (kernel={5}) | Shape: {latent_w}x{latent_h}",
+            subfolder="glyph",
+        )
+        
+        # 单独保存 soft mask 热力图
+        soft_color = self._mask_to_heatmap(soft_np)
+        self.logger.save_image(
+            Image.fromarray(soft_color),
+            "mask_soft_heatmap",
+            caption=f"Soft mask heatmap (0-255) | Mean={soft_np.mean():.2f} | Coverage={(soft_np>0).sum()/soft_np.size:.2%}",
+            subfolder="glyph",
+        )
+    
+    def _mask_to_heatmap(self, mask: np.ndarray) -> np.ndarray:
+        """将 mask 转换为热力图颜色"""
+        # mask 范围 [0, 255]
+        norm = mask.astype(np.float32) / 255.0
+        
+        # Jet colormap: 蓝(0) → 青 → 绿 → 黄 → 红(1)
+        r = np.clip(1.5 - np.abs(4 * norm - 3), 0, 1)
+        g = np.clip(1.5 - np.abs(4 * norm - 2), 0, 1)
+        b = np.clip(1.5 - np.abs(4 * norm - 1), 0, 1)
+        
+        rgb = (np.stack([r, g, b], axis=-1) * 255).astype(np.uint8)
+        return rgb
 
     def inject_latent(
         self,
@@ -598,8 +688,13 @@ class GlyphInjector:
         idx = min(step_idx, len(latent_list) - 1)
         text_latent = latent_list[idx]
         
-        # 扩展 mask 到 latent 的 channel 维度
-        mask = injection_data["mask_latent"]
+        # 选择 mask: soft mask 或 hard mask
+        if config.use_soft_mask and "mask_soft" in injection_data:
+            mask = injection_data["mask_soft"]
+            mask_type = "soft"
+        else:
+            mask = injection_data["mask_latent"]
+            mask_type = "hard"
         
         # 扩展 mask 到 latent 的 channel 维度
         mask = mask.expand_as(current_latent)
@@ -608,8 +703,8 @@ class GlyphInjector:
             mask_pil = Image.fromarray(mask_np)
             self.logger.save_image(
                 mask_pil.convert("RGB"),
-                f"glyph_latent_mask",
-                caption=f"latent mask  shape={list(mask.shape)}  coverage={mask.float().mean():.4f}",
+                f"glyph_latent_mask_{mask_type}",
+                caption=f"latent mask ({mask_type})  shape={list(mask.shape)}  coverage={mask.float().mean():.4f}",
                 subfolder="glyph",
             )
         # 获取当前步的注入强度（方案 C: 递减调度）

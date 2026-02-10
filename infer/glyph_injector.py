@@ -74,7 +74,7 @@ class InjectionConfig:
 
     # 方案 A: 频率分解注入
     freq_decompose: bool = False
-    freq_kernel_size: int = 3
+    freq_kernel_size: int = 5
 
     # 方案 C: 递减注入强度调度
     strength_schedule: str = "constant"  # "constant" / "linear" / "cosine"

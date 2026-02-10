@@ -115,6 +115,28 @@ def find_quoted_token_indices(
     return sorted(set(result))
 
 
+def find_all_prompt_token_indices(
+    tokenizer, prompt: str, max_seq_length: int = 512
+) -> List[int]:
+    """返回 prompt 中所有 non-padding token 的索引列表。
+
+    当 prompt 中无引号文本可提取时，用作 attention enhancement 的 fallback，
+    将整个 prompt 序列都参与 glyph patch 的注意力增强。
+
+    Returns:
+        所有 non-padding token 的索引列表（0-based）。
+    """
+    messages = [{"role": "user", "content": prompt}]
+    processed = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True, enable_thinking=True,
+    )
+    encoding = tokenizer(
+        processed, padding="max_length", max_length=max_seq_length, truncation=True,
+    )
+    num_real = sum(encoding.attention_mask)
+    return list(range(num_real))
+
+
 def _find_subseq(seq: list, subseq: list) -> Optional[List[int]]:
     """在 seq 中查找 subseq 的首次出现，返回索引列表。"""
     n, m = len(seq), len(subseq)
@@ -604,6 +626,12 @@ class AttentionEnhancement:
             return None
 
         text_indices = find_quoted_token_indices(tokenizer, prompt, max_seq_length)
+        if not text_indices:
+            # Fallback: prompt 中无引号文本，使用整个 prompt 序列的所有 token
+            text_indices = find_all_prompt_token_indices(tokenizer, prompt, max_seq_length)
+            if logger:
+                logger.info("[AttnEnhancement] 无引号文本，fallback 到整个 prompt 序列")
+
         image_indices = compute_glyph_patch_indices(mask_latent, patch_size)
 
         if not text_indices or not image_indices:

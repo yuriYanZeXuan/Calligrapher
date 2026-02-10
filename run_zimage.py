@@ -3,9 +3,14 @@
 Z-Image 推理启动脚本
 
 支持三种模式:
-  1. 正式模式 (默认):  prompt + text_contents → VLM 自主规划布局 → 两阶段推理
+  1. 正式模式 (默认):  prompt + text_contents → VLM 自主规划布局 → 三阶段推理
   2. 调试旁路模式 (--debug-bypass):  手动指定 text_regions，跳过 VLM 规划
   3. JSON plan 测试 (--plan):  直接从 JSON 文件加载 typography_plan 进行渲染
+
+三阶段推理架构:
+  Pass 1: 用完整 prompt 生成参考图 → VLM 自主规划排版
+  Pass 2: 从相同噪声用 clean prompt + 字形注入生成文字图
+  Pass 3: SDEdit + soft mask 背景融合循环（VLM 评判停止条件）
 
 用法:
   python run_zimage.py                                  # 正式模式
@@ -13,6 +18,8 @@ Z-Image 推理启动脚本
   python run_zimage.py --plan infer/test_plans/plan_multi_region.json  # JSON plan 测试
   python run_zimage.py --tts --beam 8                   # 启用 TTS beam search
   python run_zimage.py --no-refiner --no-inject         # 纯生图（无注入无优化）
+  python run_zimage.py --no-harmonize                   # 跳过 Pass 3 背景融合
+  python run_zimage.py --harmonize-sigma 0.2 --harmonize-iters 3  # 自定义融合参数
 """
 
 import os
@@ -64,6 +71,17 @@ def main():
     parser.add_argument("--attn-suppress", type=float, default=0.1,
                         help="反向注意力抑制倍率（1.0=不抑制）")
 
+    # Pass 3: 背景融合
+    parser.add_argument("--no-harmonize", action="store_true", help="禁用 Pass 3 背景融合")
+    parser.add_argument("--harmonize-sigma", type=float, default=0.3,
+                        help="Pass 3 SDE 加噪强度 (0-1)")
+    parser.add_argument("--harmonize-iters", type=int, default=5,
+                        help="Pass 3 最大循环次数")
+    parser.add_argument("--harmonize-target", type=float, default=9.5,
+                        help="Pass 3 VLM 评分目标阈值 (0-10)")
+    parser.add_argument("--harmonize-radius", type=int, default=15,
+                        help="Pass 3 soft mask 距离变换半径 (像素)")
+
     # GPU
     parser.add_argument("--gpus", type=str, default=None, help="GPU 列表，如 0,1,2,3")
 
@@ -110,6 +128,11 @@ def main():
         injection_config=injection_config,
         use_tts=args.tts,
         beam_size=args.beam,
+        use_harmonization=not args.no_harmonize,
+        harmonization_noise_ratio=args.harmonize_sigma,
+        harmonization_max_iters=args.harmonize_iters,
+        harmonization_target_score=args.harmonize_target,
+        harmonization_soft_mask_radius=args.harmonize_radius,
     )
 
     # 创建推理实例

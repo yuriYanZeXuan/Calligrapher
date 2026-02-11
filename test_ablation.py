@@ -248,7 +248,7 @@ def run_case(inference, case_name: str, case_info: dict, output_dir: Path, seed:
         use_prompt_refiner=False,
         use_glyph_injection=True,
         injection_config=cfg,
-        use_tts=False,
+
         seed=seed,
         run_name=case_name,
     )

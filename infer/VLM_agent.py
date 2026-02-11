@@ -20,7 +20,7 @@ from typing import Optional
 
 from openai import OpenAI
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 # 加载环境变量
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -32,11 +32,16 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 PROMPT_TEMPLATES = {
     # ---- 核心：排版分析（Pass 1 参考图 → 排版规划 JSON）----
     "analyze_typography": (
-        "你是一个专业的图像排版分析专家。给你一张由图像生成模型产生的参考图和一组待渲染的文本/公式内容。\n"
+        "你是一个专业的图像排版分析专家。给你一张带有5×5网格和坐标标注的参考图和一组待渲染的文本/公式内容。\n"
         "请分析参考图中文字的自然渲染风格和整体场景，然后为每个待渲染的文本/公式内容规划最佳排版方案。\n\n"
+        "图像上的5×5网格帮助你精确定位：\n"
+        "- 网格将图像分为4×4的16个区域\n"
+        "- 网格线交点处标注了归一化坐标 (0.0,0.0) 到 (1.0,1.0)\n"
+        "- 你可以参照这些坐标来确定文本区域的位置\n\n"
         "你需要自主决定：\n"
         "1. 将提供的文本内容拆分到合适数量的 block 中，保证每个block只包含一行文本/公式内容\n"
         "2. 每个 block 在图像中的精确位置 (bbox，归一化坐标 [x_min, y_min, x_max, y_max]，范围 0-1)\n"
+        "   提示：可以参照网格坐标来确定，如(0.2,0.2)表示从左边20%、从上往20%的位置\n"
         "3. 每个 block 的字体粗细 (font_weight: light/regular/bold)\n"
         "4. 每个 block 的大小比例 (font_size_ratio: 0.1-1.0，相对于 block 高度)\n"
         "5. 每个 block 的文字颜色 (color: hex 格式如 #FFFFFF)\n"
@@ -44,7 +49,8 @@ PROMPT_TEMPLATES = {
         "7. 是否为 LaTeX 公式 (is_latex: true/false)\n"
         "8. 对齐方式 (alignment: left/center/right)\n\n"
         "规划原则：\n"
-        "- bbox 不能重叠，不能超出图像边界\n"
+        "- bbox 不能重叠，不能超出图像边界 (0-1 范围)\n"
+        "- 利用网格坐标精确定位，如 bbox [0.2, 0.3, 0.8, 0.5] 表示从(0.2,0.3)到(0.8,0.5)的区域\n"
         "- 文字颜色应与参考图的背景形成足够对比度\n"
         "- background_color 应选择与参考图中文字区域背景相近的颜色\n"
         "- 文字大小和位置应符合参考图中的自然布局风格\n"
@@ -162,6 +168,64 @@ def _encode_image_b64(image: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _get_grid_font() -> ImageFont.FreeTypeFont:
+    """获取用于网格坐标标注的字体。"""
+    font_path = Path(__file__).parent.parent / "assets" / "ChalkboardSE.ttc"
+    
+    if font_path.exists():
+        return ImageFont.truetype(str(font_path), 16)
+    return ImageFont.load_default()
+
+
+def _add_grid_overlay(image: Image.Image, grid_size: int = 5) -> Image.Image:
+    """在图像上添加5×5网格和坐标标注。
+
+    Args:
+        image: 输入图像
+        grid_size: 网格数量（默认5，即4×4区域）
+
+    Returns:
+        带网格和坐标标注的图像副本
+    """
+    img = image.copy()
+    draw = ImageDraw.Draw(img)
+    width, height = img.size
+
+    # 颜色配置
+    grid_color = (255, 0, 0)  # 红色网格线
+    text_color = (255, 0, 0)  # 红色文字
+
+    # 加载字体
+    font = _get_grid_font()
+
+    # 绘制竖线和横线，并在交点处标注坐标
+    for i in range(grid_size):
+        # 计算归一化坐标 (0.0 到 1.0)
+        t = i / (grid_size - 1)
+        x = int(t * width)
+        y = int(t * height)
+
+        # 绘制竖线
+        draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
+        # 绘制横线
+        draw.line([(0, y), (width, y)], fill=grid_color, width=1)
+
+        # 在交点处标注坐标
+        for j in range(grid_size):
+            s = j / (grid_size - 1)
+            coord_x = int(s * width)
+            coord_y = int(t * height)
+            coord_text = f"({s:.1f},{t:.1f})"
+
+            # 计算文字位置（稍微偏移避免遮挡网格点）
+            text_x = min(coord_x + 3, width - 50)
+            text_y = max(coord_y - 15, 0)
+
+            draw.text((text_x, text_y), coord_text, fill=text_color, font=font)
+
+    return img
+
+
 def _extract_json_from_response(text: str) -> dict:
     """从 VLM 响应中提取 JSON 对象。
 
@@ -270,7 +334,7 @@ class VLMAgent:
     ) -> dict:
         """分析 Pass 1 参考图，自主规划文本排版。
 
-        VLM 根据参考图的视觉布局，为每个待渲染的文本/公式内容
+        VLM 根据参考图（带网格坐标）的视觉布局，为每个待渲染的文本/公式内容
         自主决定 block 数量、位置 (bbox)、字体粗细、大小、颜色等。
 
         Args:
@@ -281,17 +345,20 @@ class VLMAgent:
         Returns:
             typography_plan 字典，包含 image_analysis 和 text_regions
         """
+        # 为图像添加5×5网格和坐标标注
+        image_with_grid = _add_grid_overlay(image, grid_size=5)
+
         contents_desc = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(text_contents))
         user_content = (
             f"原始 prompt: {prompt}\n\n"
             f"待渲染的文本/公式内容列表:\n{contents_desc}\n\n"
-            f"请分析附图（参考图）并为上述内容规划排版方案。"
+            f"图像上的红色网格线和坐标标注可以帮助你精确定位文本区域。"
         )
 
         raw = self.call_vlm(
             "analyze_typography",
             user_content,
-            images=[image],
+            images=[image_with_grid],  # 传入带网格的图像
             max_tokens=2048,
             temperature=0.3,
         )

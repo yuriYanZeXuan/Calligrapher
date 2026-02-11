@@ -4,7 +4,6 @@ Z-Image 推理主入口
 整合核心接口:
 - VLMAgent: 统一的 VLM 调用中心（排版分析、prompt 改写、评分）
 - GlyphInjector: 文字渲染和 latent 注入
-- TestTimeScaling: Beam search 策略的测试时缩放
 
 三阶段推理架构:
   Pass 1: 用完整 prompt 生成参考图 → VLM 自主规划排版
@@ -36,7 +35,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from train.zimage_ip.pipeline_z_image import ZImagePipeline
 from infer.VLM_agent import VLMAgent
 from infer.glyph_injector import GlyphInjector, TextRegion, InjectionConfig, create_glyph_injector
-from infer.test_time_scaling import TestTimeScaling, create_test_time_scaling
 from infer.mylogger import TTSLogger
 
 # 默认模型路径
@@ -59,12 +57,6 @@ class GenerationConfig:
     # Glyph Injection
     use_glyph_injection: bool = True
     injection_config: InjectionConfig = field(default_factory=InjectionConfig)
-
-    # Test Time Scaling
-    use_tts: bool = False
-    beam_size: int = 8
-    early_stop_step: int = 3
-    keep_ratio: float = 0.25
 
     # Pass 3: FluxKlein img2img 风格化
     use_harmonization: bool = True             # 启用 Pass 3 FluxKlein 风格化
@@ -104,7 +96,6 @@ class ZImageInference:
         self._pipeline = None
         self._vlm_agent = None
         self._glyph_injector = None
-        self._tts = None
         self._klein_generator = None
         self._output_counter = 0
 
@@ -134,17 +125,6 @@ class ZImageInference:
                 self.pipeline, device=self.primary_device, logger=self.logger,
             )
         return self._glyph_injector
-
-    @property
-    def tts(self) -> TestTimeScaling:
-        if self._tts is None:
-            self._tts = create_test_time_scaling(
-                self.pipeline,
-                vlm_agent=self.vlm_agent,
-                device=self.primary_device,
-                logger=self.logger,
-            )
-        return self._tts
 
     def get_klein_generator(self, config: "GenerationConfig"):
         """延迟加载 FluxKlein 生成器（按需创建，避免浪费显存）。"""
@@ -205,22 +185,7 @@ class ZImageInference:
             working_prompt = refined_prompts[0]
             print(f"优化后的 prompt: {working_prompt[:100]}...")
 
-        # 2. TTS 或普通生成
-        if config.use_tts:
-            image, score = self.tts.generate_with_beam_search(
-                prompt=working_prompt,
-                text_content=text_content_str,
-                height=config.height, width=config.width,
-                num_inference_steps=config.num_inference_steps,
-                beam_size=config.beam_size,
-                early_stop_step=config.early_stop_step,
-                keep_ratio=config.keep_ratio,
-                seed=config.seed,
-            )
-            print(f"TTS 最终得分: {score:.2f}")
-            return image
-
-        # 3. 普通生成（可能带 Glyph Injection 两阶段推理）
+        # 2. 普通生成（可能带 Glyph Injection 三阶段推理）
         generator = None
         if config.seed is not None:
             generator = torch.Generator(device=self.primary_device).manual_seed(config.seed)
@@ -670,8 +635,6 @@ class ParallelZImageInference:
             "seed": config.seed,
             "use_prompt_refiner": config.use_prompt_refiner,
             "use_glyph_injection": config.use_glyph_injection,
-            "use_tts": config.use_tts,
-            "beam_size": config.beam_size,
         }
 
         if text_contents_list is None:

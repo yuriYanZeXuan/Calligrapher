@@ -29,7 +29,6 @@ def test_basic_generation(inference, output_dir: Path):
         prompt=prompt,
         use_prompt_refiner=False,
         use_glyph_injection=False,
-        use_tts=False,
         seed=42
     )
     
@@ -64,7 +63,6 @@ def test_with_prompt_refiner(inference, output_dir: Path):
         text_regions=[{"bbox": [0.3, 0.2, 0.8, 0.5], "content": text_content}],
         use_prompt_refiner=True,
         use_glyph_injection=False,
-        use_tts=False,
         seed=42
     )
     
@@ -96,8 +94,7 @@ def test_with_glyph_injection(inference, output_dir: Path):
         text_regions=text_regions,
         use_prompt_refiner=False,
         use_glyph_injection=True,
-        injection_config=InjectionConfig(mask_strength=0., timestep_ratio=0.),
-        use_tts=False,
+        injection_config=InjectionConfig(mask_strength=0.),
         seed=42
     )
     
@@ -105,38 +102,6 @@ def test_with_glyph_injection(inference, output_dir: Path):
     image.save(output_path)
     print(f"保存到: {output_path}")
     return image
-
-
-def test_with_tts(inference, output_dir: Path):
-    """测试 Test Time Scaling"""
-    print("\n" + "="*60)
-    print("测试 4: 使用 Test Time Scaling (Beam Search)")
-    print("="*60)
-    
-    prompt = "爱因斯坦在黑板前写二次方程求根公式"
-    text_content = "x = (-b ± √(b²-4ac)) / 2a"
-    
-    def progress_callback(step, total, num_candidates):
-        print(f"  步骤 {step}/{total}, 候选数: {num_candidates}")
-    
-    # TTS 需要更多资源，使用较小的 beam size
-    image, score = inference.tts.generate_with_beam_search(
-        prompt=prompt,
-        text_content=text_content,
-        height=1024,
-        width=1024,
-        num_inference_steps=9,
-        beam_size=4,  # 减小 beam size 以节省资源
-        early_stop_step=3,
-        seed=42,
-        callback=progress_callback
-    )
-    
-    output_path = output_dir / "test_tts.png"
-    image.save(output_path)
-    print(f"最终得分: {score:.2f}")
-    print(f"保存到: {output_path}")
-    return image, score
 
 
 def test_full_pipeline(inference, output_dir: Path):
@@ -162,7 +127,6 @@ def test_full_pipeline(inference, output_dir: Path):
         use_prompt_refiner=True,
         use_glyph_injection=True,
         injection_config=InjectionConfig(mask_strength=0.6),
-        use_tts=False,
         seed=42
     )
     
@@ -277,7 +241,7 @@ def main():
     parser.add_argument(
         "--test",
         type=str,
-        choices=["all", "basic", "refiner", "injection", "tts", "full", "parallel", "render"],
+        choices=["all", "basic", "refiner", "injection", "full", "parallel", "render"],
         default="render",
         help="运行的测试类型"
     )
@@ -326,9 +290,6 @@ def main():
     
     if args.test in ["all", "injection"]:
         test_with_glyph_injection(inference, output_dir)
-    
-    if args.test in ["all", "tts"]:
-        test_with_tts(inference, output_dir)
     
     if args.test in ["all", "full"]:
         test_full_pipeline(inference, output_dir)

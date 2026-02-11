@@ -64,7 +64,7 @@ CASES = {
         "desc": "原始方案: 全频 latent 替换, 恒定 strength, 无注意力增强",
         "config": InjectionConfig(
             mask_strength=0.8,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
         ),
     },
 
@@ -73,7 +73,7 @@ CASES = {
         "desc": "方案A: 频率分解注入 — 只注入高频笔画结构，保留模型风格",
         "config": InjectionConfig(
             mask_strength=0.8,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             freq_decompose=True,
             freq_kernel_size=5,
         ),
@@ -83,7 +83,7 @@ CASES = {
         "desc": "方案C: cosine 递减注入强度 — 早期强注入，后期放手让模型融合风格",
         "config": InjectionConfig(
             mask_strength=1.0,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             strength_schedule="cosine",
         ),
     },
@@ -92,9 +92,9 @@ CASES = {
         "desc": "方案D: 反向注意力抑制 — 非 glyph 区域压制文字生成",
         "config": InjectionConfig(
             mask_strength=0.8,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             attn_enhance_scale=2.0,
-            attn_enhance_timestep_ratio=0.5,
+
             attn_suppress_scale=0.1,
         ),
     },
@@ -103,7 +103,7 @@ CASES = {
         "desc": "方案E: 双路 Prompt — glyph 区域用文字 prompt, 其余用无文字 prompt",
         "config": InjectionConfig(
             mask_strength=0.8,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             dual_prompt=True,
         ),
     },
@@ -113,7 +113,7 @@ CASES = {
         "desc": "方案A+C: 频率分解 + cosine 递减 — 结构引导逐步淡出",
         "config": InjectionConfig(
             mask_strength=1.0,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             freq_decompose=True,
             freq_kernel_size=5,
             strength_schedule="cosine",
@@ -124,10 +124,10 @@ CASES = {
         "desc": "方案C+D: cosine 递减 + 反向抑制 — 风格融合 + 去重复",
         "config": InjectionConfig(
             mask_strength=1.0,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             strength_schedule="cosine",
             attn_enhance_scale=2.0,
-            attn_enhance_timestep_ratio=0.5,
+
             attn_suppress_scale=0.1,
         ),
     },
@@ -136,12 +136,12 @@ CASES = {
         "desc": "方案A+C+D: 频率分解 + cosine 递减 + 反向抑制",
         "config": InjectionConfig(
             mask_strength=1.0,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             freq_decompose=True,
             freq_kernel_size=5,
             strength_schedule="cosine",
             attn_enhance_scale=2.0,
-            attn_enhance_timestep_ratio=0.5,
+
             attn_suppress_scale=0.1,
         ),
     },
@@ -150,11 +150,11 @@ CASES = {
         "desc": "方案A+D: 频率分解 + 反向抑制",
         "config": InjectionConfig(
             mask_strength=0.8,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             freq_decompose=True,
             freq_kernel_size=5,
             attn_enhance_scale=2.0,
-            attn_enhance_timestep_ratio=0.5,
+
             attn_suppress_scale=0.1,
         ),
     },
@@ -163,10 +163,10 @@ CASES = {
         "desc": "方案C+D+E: cosine递减 + 反向抑制 + 双路prompt",
         "config": InjectionConfig(
             mask_strength=1.0,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             strength_schedule="cosine",
             attn_enhance_scale=2.0,
-            attn_enhance_timestep_ratio=0.5,
+
             attn_suppress_scale=0.1,
             dual_prompt=True,
         ),
@@ -176,11 +176,11 @@ CASES = {
         "desc": "方案A+D+E: 频率分解 + 反向抑制 + 双路prompt",
         "config": InjectionConfig(
             mask_strength=0.8,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             freq_decompose=True,
             freq_kernel_size=5,
             attn_enhance_scale=2.0,
-            attn_enhance_timestep_ratio=0.5,
+
             attn_suppress_scale=0.1,
             dual_prompt=True,
         ),
@@ -190,12 +190,12 @@ CASES = {
         "desc": "方案A+C+D+E: 频率分解 + cosine递减 + 反向抑制 + 双路prompt",
         "config": InjectionConfig(
             mask_strength=1.0,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             freq_decompose=True,
             freq_kernel_size=5,
             strength_schedule="cosine",
             attn_enhance_scale=2.0,
-            attn_enhance_timestep_ratio=0.5,
+
             attn_suppress_scale=0.1,
             dual_prompt=True,
         ),
@@ -205,12 +205,12 @@ CASES = {
         "desc": "全方案: A+C+D+E (频率分解+递减+抑制+双路)",
         "config": InjectionConfig(
             mask_strength=1.0,
-            timestep_ratio=1.0,
+            timestep_ratio=(0.2, 0.9),
             freq_decompose=True,
             freq_kernel_size=5,
             strength_schedule="cosine",
             attn_enhance_scale=2.0,
-            attn_enhance_timestep_ratio=0.5,
+
             attn_suppress_scale=0.1,
             dual_prompt=True,
         ),

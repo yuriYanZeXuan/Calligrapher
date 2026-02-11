@@ -50,7 +50,7 @@ class InjectionConfig:
 
     基础注入:
         mask_strength: 空间混合强度 (0-1)，控制文字 latent 在 mask 区域的混合权重
-        timestep_ratio: 时间步注入比例 (0-1)，仅在前 X% 的去噪步骤中注入
+        timestep_ratio: 时间步注入范围 (t_start, t_end)，在该比例范围内的去噪步骤中注入/增强
         inject_last_only: 仅在最后一步注入（忽略 timestep_ratio，直接在去噪完成后粘贴字形）
 
     方案 A - 频率分解注入:
@@ -65,13 +65,12 @@ class InjectionConfig:
 
     Attention Enhancement:
         attn_enhance_scale: attention reweighting 倍率
-        attn_enhance_timestep_ratio: 仅在前 X% 的去噪时间步中激活增强
         attn_enhance_layers: 激活增强的 transformer layer 索引列表，None = 所有层
         attn_enhance_text_to_image: 增强 text→image 方向
         attn_enhance_image_to_text: 增强 image→text 方向
     """
     mask_strength: float = 1.
-    timestep_ratio: float = 1.
+    timestep_ratio: tuple[float, float] = (0.2, 0.9)  # (t_start, t_end) 注入/增强时间范围
     inject_last_only: bool = True  # 仅在最后一步注入（去噪完成后粘贴字形）
 
     # 方案 A: 频率分解注入
@@ -86,7 +85,6 @@ class InjectionConfig:
 
     # Prompt-Latent Attention Enhancement
     attn_enhance_scale: float = 1.
-    attn_enhance_timestep_ratio: float = 1.
     attn_enhance_layers: Optional[list[int]] = None
     attn_enhance_text_to_image: bool = True
     attn_enhance_image_to_text: bool = True
@@ -96,12 +94,13 @@ class InjectionConfig:
 
         step_idx 从 1 开始（后置注入：denoising_step + 1），total_steps = 总去噪步数。
         inject_last_only=True 时仅在最后一步（step_idx == total_steps）注入。
+        timestep_ratio=(t_start, t_end) 时，在 [t_start*total_steps, t_end*total_steps) 范围内注入。
         """
         if self.inject_last_only:
             return step_idx >= total_steps
-        if self.timestep_ratio >= 1.0:
-            return True
-        return step_idx < int(total_steps * self.timestep_ratio)
+        t_start, t_end = self.timestep_ratio
+        step_ratio = step_idx / total_steps
+        return t_start <= step_ratio < t_end
     
     def get_strength(self, step_idx: int, total_steps: int) -> float:
         """获取当前步的注入强度（方案 C）"""
@@ -332,114 +331,6 @@ class GlyphInjector:
             
         return latent_list
     
-    def prepare_injection(
-        self,
-        text_regions: list[TextRegion],
-        image_size: Tuple[int, int],
-        noise: torch.Tensor,
-        timesteps: torch.Tensor
-    ) -> dict:
-        """
-        准备文字注入所需的数据
-        
-        Args:
-            text_regions: 文字区域列表
-            image_size: 图像尺寸 (width, height)
-            noise: 初始噪声
-            timesteps: 时间步列表
-            
-        Returns:
-            包含 mask 和 latent 列表的字典
-        """
-        width, height = image_size
-        
-        # 创建完整图像的 mask
-        full_mask = np.zeros((height, width), dtype=np.uint8)
-        
-        injection_data = {
-            "masks": [],
-            "latent_lists": [],
-            "regions": []
-        }
-        
-        for region in text_regions:
-            # 获取像素坐标
-            x1, y1, x2, y2 = region.to_pixel_bbox(width, height)
-            region_width = x2 - x1
-            region_height = y2 - y1
-            
-            # 渲染文字模板
-            text_img = self.render_text_template(
-                region.content,
-                region_width,
-                region_height
-            )
-            
-            # 安全保障：确保渲染结果尺寸精确匹配 region
-            if text_img.size != (region_width, region_height):
-                text_img = text_img.resize((region_width, region_height), Image.LANCZOS)
-
-            # 提取 mask
-            text_array = np.array(text_img)
-            text_mask = self.extract_text_mask(text_array)
-            
-            # 将 mask 放入完整图像
-            full_mask[y1:y2, x1:x2] = text_mask
-            
-            # 编码文字模板为 latent
-            # 需要调整大小以匹配完整图像
-            full_text_img = Image.new("RGB", (width, height), "white")
-            full_text_img.paste(text_img, (x1, y1))
-            text_latent = self.encode_image(full_text_img)
-            
-            # 计算 inversion latents
-            latent_list = self.compute_inversion_latents(
-                text_latent, noise, timesteps
-            )
-            
-            injection_data["latent_lists"].append(latent_list)
-            injection_data["regions"].append((x1, y1, x2, y2))
-            
-            # 日志可视化：保存渲染的文字模板、mask 和全图
-            if self.logger is not None:
-                ts_str = ",".join(f"{t:.1f}" for t in timesteps[:5].tolist())
-                if len(timesteps) > 5:
-                    ts_str += f"...({len(timesteps)} steps)"
-                
-                caption = (
-                    f"text=\"{region.content}\"  "
-                    f"bbox=({x1},{y1},{x2},{y2})  "
-                    f"size={region_width}x{region_height}\n"
-                    f"timesteps=[{ts_str}]  "
-                    f"latent={list(text_latent.shape)}"
-                )
-                
-                region_idx = len(injection_data["regions"]) - 1
-                self.logger.save_image(text_img, f"glyph_region_{region_idx}_text",
-                                       caption=caption, subfolder="glyph")
-                self.logger.save_image(full_text_img, f"glyph_region_{region_idx}_full",
-                                       caption=caption, subfolder="glyph")
-                
-                # 保存 mask 为灰度图
-                mask_pil = Image.fromarray(text_mask)
-                self.logger.save_image(mask_pil.convert("RGB"), f"glyph_region_{region_idx}_mask",
-                                       caption=caption, subfolder="glyph")
-        
-        # 将 mask 下采样到 latent 空间
-        # INTER_AREA 对每个 latent 像素取源像素块均值，笔画不会因采样点偏移而丢失
-        # 再用阈值二值化：块内有 >1% 的笔画像素即视为需要注入
-        latent_h = 2 * (height // (self.vae_scale_factor * 2))
-        latent_w = 2 * (width // (self.vae_scale_factor * 2))
-        mask_area = cv2.resize(full_mask, (latent_w, latent_h), interpolation=cv2.INTER_AREA)
-        mask_latent = (mask_area > 2).astype(np.float32)  # 阈值 ~1% of 255
-        mask_latent = torch.from_numpy(mask_latent).unsqueeze(0).unsqueeze(0).to(self.device)
-        
-        injection_data["mask_latent"] = mask_latent
-        injection_data["full_mask"] = full_mask
-        injection_data["total_steps"] = len(timesteps)
-        
-        return injection_data
-    
     def prepare_injection_from_plan(
         self,
         typography_plan: dict,
@@ -473,86 +364,52 @@ class GlyphInjector:
         # 合成全图模版：所有 region 的文字画在同一张图上，编码一次 latent
         combined_template = Image.new("RGB", (width, height), default_bg)
 
-        injection_data = {
-            "latent_lists": [],
-            "regions": [],
-        }
-
-        for idx, region_spec in enumerate(typography_plan.get("text_regions", [])):
+        # 第一步：统一渲染所有文字到一张图
+        combined_template = Image.new("RGB", (width, height), default_bg)
+        
+        for region_spec in typography_plan.get("text_regions", []):
             content = region_spec["content"]
-            bbox = region_spec["bbox"]  # 归一化坐标 [x_min, y_min, x_max, y_max]
-
-            # 转换为像素坐标
+            bbox = region_spec["bbox"]
+            
             x1 = int(bbox[0] * width)
             y1 = int(bbox[1] * height)
             x2 = int(bbox[2] * width)
             y2 = int(bbox[3] * height)
             region_width = max(x2 - x1, 1)
             region_height = max(y2 - y1, 1)
-
-            # 读取排版参数
-            text_color = region_spec.get("color", "#FFFFFF")
-            bg_color = region_spec.get("background_color", default_bg)
-            font_weight = region_spec.get("font_weight", "regular")
-            force_latex = region_spec.get("is_latex", False)
-
-            # 渲染字形模版
+            
             text_img = self.render_text_template(
-                content,
-                region_width,
-                region_height,
-                background_color=bg_color,
-                text_color=text_color,
-                force_latex=force_latex,
-                font_weight=font_weight,
+                content, region_width, region_height,
+                background_color=region_spec.get("background_color", default_bg),
+                text_color=region_spec.get("color", "#FFFFFF"),
+                force_latex=region_spec.get("is_latex", False),
+                font_weight=region_spec.get("font_weight", "regular"),
             )
-
-            # 安全保障：确保渲染结果尺寸精确匹配 region
+            
             if text_img.size != (region_width, region_height):
                 text_img = text_img.resize((region_width, region_height), Image.LANCZOS)
-
-            # 提取 mask
-            text_array = np.array(text_img)
-            text_mask = self.extract_text_mask(text_array)
-
-            # 将 mask 放入完整图像
-            full_mask[y1:y2, x1:x2] = text_mask
-
-            # 将该 region 的渲染结果粘贴到合成模版上
+            
             combined_template.paste(text_img, (x1, y1))
-
-            injection_data["regions"].append((x1, y1, x2, y2))
-
-            # 日志：保存每个 region 的单独渲染
-            if self.logger is not None:
-                caption = (
-                    f"[plan] text=\"{content}\"  bbox=({x1},{y1},{x2},{y2})  "
-                    f"size={region_width}x{region_height}\n"
-                    f"weight={font_weight}  color={text_color}  bg={bg_color}  "
-                    f"latex={force_latex}"
-                )
-                self.logger.save_image(
-                    text_img, f"glyph_plan_region_{idx}_text",
-                    caption=caption, subfolder="glyph",
-                )
-                mask_pil = Image.fromarray(text_mask)
-                self.logger.save_image(
-                    mask_pil.convert("RGB"), f"glyph_plan_region_{idx}_mask",
-                    caption=caption, subfolder="glyph",
-                )
-
-        # 编码合成模版为 latent（所有 region 在一张图上），只编码/inversion 一次
+        
+        # 第二步：统一提取 mask
+        full_array = np.array(combined_template)
+        full_mask = self.extract_text_mask(full_array)
+        
+        # 第三步：统一编码为 latent 并计算 inversion
         combined_latent = self.encode_image(combined_template)
-        combined_latent_list = self.compute_inversion_latents(combined_latent, noise, timesteps)
-        injection_data["latent_lists"] = [combined_latent_list]
-
-        # 日志：保存合成模版全图
+        latent_list = self.compute_inversion_latents(combined_latent, noise, timesteps)
+        
+        # 第四步：统一记录日志
         if self.logger is not None:
-            n_regions = len(injection_data["regions"])
+            n_regions = len(typography_plan.get("text_regions", []))
             self.logger.save_image(
                 combined_template, "glyph_plan_combined_template",
                 caption=f"combined template: {n_regions} regions  size={width}x{height}",
                 subfolder="glyph",
+            )
+            self.logger.save_image(
+                Image.fromarray(full_mask).convert("RGB"), "glyph_plan_all_mask",
+                caption=f"combined mask: {n_regions} regions", subfolder="glyph",
             )
 
         # mask 下采样到 latent 空间
@@ -573,11 +430,12 @@ class GlyphInjector:
                 subfolder="glyph",
             )
 
-        injection_data["mask_latent"] = mask_latent
-        injection_data["full_mask"] = full_mask
-        injection_data["total_steps"] = len(timesteps)
-
-        return injection_data
+        return {
+            "latent_list": latent_list,
+            "mask_latent": mask_latent,
+            "full_mask": full_mask,
+            "total_steps": len(timesteps),
+        }
 
     def inject_latent(
         self,
@@ -607,11 +465,11 @@ class GlyphInjector:
         if not config.should_inject(step_idx, total_steps):
             return current_latent
         
-        # 合并所有区域的 latent（取第一个区域的，简化处理）
-        if not injection_data["latent_lists"]:
+        # 获取统一的 latent（所有文字区域共用一个 latent 序列）
+        latent_list = injection_data.get("latent_list")
+        if latent_list is None:
             return current_latent
         
-        latent_list = injection_data["latent_lists"][0]
         # latent_list 有 N+1 项：[sigma_0, sigma_1, ..., sigma_{N-1}, clean(sigma=0)]
         # step_idx 范围: 0 ~ N
         idx = min(step_idx, len(latent_list) - 1)

@@ -237,7 +237,9 @@ class _EnhancementState:
         if not self.text_indices or not self.image_indices:
             return False
         step_ratio = self.current_step / max(self.total_steps, 1)
-        if step_ratio >= self.config.attn_enhance_timestep_ratio:
+        # 使用 timestep_ratio (t_start, t_end) 判断是否在时间范围内
+        t_start, t_end = self.config.timestep_ratio
+        if not (t_start <= step_ratio < t_end):
             return False
         # layer 过滤：None = 所有层，list = 指定层
         layers = self.config.attn_enhance_layers
@@ -663,11 +665,12 @@ class AttentionEnhancement:
         )
 
         # ---- 日志：token 选择验证 ----
+        t_start, t_end = config.timestep_ratio
         info_msg = (
             f"[AttnEnhancement] 激活：text_tokens={len(text_indices)}, "
             f"glyph_patches={len(image_indices)}/{num_patches}, "
             f"scale={config.attn_enhance_scale:.1f}, "
-            f"timestep_ratio={config.attn_enhance_timestep_ratio:.0%}, "
+            f"timestep_ratio=({t_start:.0%}, {t_end:.0%}), "
             f"layers={config.attn_enhance_layers or 'all'}"
         )
         print(info_msg)

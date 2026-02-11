@@ -9,7 +9,7 @@ Z-Image 推理主入口
 三阶段推理架构:
   Pass 1: 用完整 prompt 生成参考图 → VLM 自主规划排版
   Pass 2: 从相同噪声用 clean prompt + 字形注入生成文字图
-  Pass 3: FluxKlein img2img + soft mask 背景融合循环 → VLM 评判直到风格融合达标
+  Pass 3: FluxKlein img2img + mask 背景融合循环 → VLM 评判直到风格融合达标
 """
 
 import os
@@ -70,17 +70,13 @@ class GenerationConfig:
     use_harmonization: bool = True             # 启用 Pass 3 FluxKlein 背景融合
     klein_model_path: str = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
     klein_prompt: str = (
-        "The text on the surface is rewritten in beautiful style, "
-        "with natural texture, soft edges, and subtle imperfections. "
-        "The lettering harmonizes perfectly with the background aesthetic. "
-        "No other changes to the image."
+        "Harmonizes texts perfectly with the background. No other changes to the image."
     )
-    klein_steps: int = 50                      # FluxKlein 推理步数
+    klein_steps: int = 10                      # FluxKlein 推理步数
     klein_guidance_scale: float = 4.0          # FluxKlein guidance scale
     klein_seed: Optional[int] = None           # FluxKlein seed（None=跟随主 seed）
     klein_max_iters: int = 3                   # FluxKlein refine 最大循环次数
     klein_target_score: float = 9.5            # VLM 评分阈值
-    klein_blur_radius: int = 8                 # soft mask 高斯模糊半径
     klein_enable_cpu_offload: bool = False      # FluxKlein CPU offload
 
 
@@ -516,29 +512,7 @@ class ZImageInference:
             image = self.pipeline.vae.decode(latent, return_dict=False)[0]
         return self.pipeline.image_processor.postprocess(image, output_type="pil")[0]
 
-    # ---- Pass 3: FluxKlein img2img + soft mask 背景融合 ----
-
-    @staticmethod
-    def _compute_soft_mask(
-        binary_mask: np.ndarray, blur_radius: int = 8,
-    ) -> np.ndarray:
-        """从二值化 mask 生成高斯模糊 soft mask。
-
-        Args:
-            binary_mask: uint8 (H, W)，文字区域 255
-            blur_radius: 高斯模糊半径
-
-        Returns:
-            float32 (H, W)，值域 [0, 1]，1.0=文字区域
-        """
-        from PIL import ImageFilter
-
-        mask_arr = binary_mask.astype(np.float32) / 255.0
-        if blur_radius > 0:
-            mask_pil = Image.fromarray((mask_arr * 255).astype(np.uint8))
-            mask_pil = mask_pil.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-            mask_arr = np.array(mask_pil).astype(np.float32) / 255.0
-        return mask_arr
+    # ---- Pass 3: FluxKlein img2img + mask 背景融合 ----
 
     def _run_pass3_klein_refine(
         self,
@@ -552,7 +526,7 @@ class ZImageInference:
 
         每次迭代：
           1. 将当前图像送入 FluxKlein 做 img2img 编辑
-          2. 用 soft mask 混合：文字区域用 FluxKlein 输出，背景保持原图
+          2. 用二值 mask 混合：文字区域用 FluxKlein 输出，背景保持原图
           3. VLM 评分；满足阈值或达到最大次数后停止
 
         Args:
@@ -567,24 +541,22 @@ class ZImageInference:
         """
         max_iters = config.klein_max_iters
         target = config.klein_target_score
-        blur_radius = config.klein_blur_radius
         klein_seed = config.klein_seed if config.klein_seed is not None else (config.seed or 42)
 
         # 获取 FluxKlein 生成器
         klein = self.get_klein_generator(config)
 
-        # 生成 soft mask（使用高斯模糊平滑边缘）
-        binary_mask = injection_data["full_mask"]  # uint8 (H, W)
-        soft_mask = self._compute_soft_mask(binary_mask, blur_radius)
-        soft_mask_3ch = soft_mask[:, :, np.newaxis]  # (H, W, 1)
+        # 二值 mask：文字区域 1.0，背景 0.0
+        binary_mask = injection_data["full_mask"]  # uint8 (H, W), 255=文字区域
+        mask = (binary_mask > 127).astype(np.float32)  # float32 (H, W), 1.0=文字区域
+        mask_3ch = mask[:, :, np.newaxis]  # (H, W, 1)
 
-        # 保存 soft mask 可视化
+        # 保存 mask 可视化
         if self.logger is not None:
-            sm_vis = (soft_mask * 255).astype(np.uint8)
             self.logger.save_image(
-                Image.fromarray(sm_vis).convert("RGB"),
-                "pass3_soft_mask",
-                caption=f"soft mask  blur_radius={blur_radius}  coverage={soft_mask.mean():.3f}",
+                Image.fromarray(binary_mask).convert("RGB"),
+                "pass3_mask",
+                caption=f"binary mask  coverage={mask.mean():.3f}",
                 subfolder="harmonize",
             )
 
@@ -620,20 +592,20 @@ class ZImageInference:
                 output_path=klein_output_path,
             )
 
-            # 2. Soft mask 混合：文字区域用 FluxKlein 编辑结果，背景保持 Pass 2 原图
-            #    确保尺寸匹配
+            # 2. 二值 mask 混合：文字区域用 FluxKlein 编辑结果，背景保持 Pass 2 原图
             if edited.size != background_image.size:
                 edited = edited.resize(background_image.size, Image.LANCZOS)
 
             edit_arr = np.array(edited).astype(np.float32)
             bg_arr = np.array(background_image).astype(np.float32)
 
-            # 如果 mask 尺寸不匹配，resize
-            mask_for_blend = soft_mask_3ch
-            if soft_mask.shape[0] != edited.height or soft_mask.shape[1] != edited.width:
-                mask_pil = Image.fromarray((soft_mask * 255).astype(np.uint8))
-                mask_pil = mask_pil.resize(edited.size, Image.LANCZOS)
-                mask_resized = np.array(mask_pil).astype(np.float32) / 255.0
+            # 如果 mask 尺寸不匹配，resize（最近邻保持二值性）
+            mask_for_blend = mask_3ch
+            if mask.shape[0] != edited.height or mask.shape[1] != edited.width:
+                mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
+                mask_pil = mask_pil.resize(edited.size, Image.NEAREST)
+                mask_resized = (np.array(mask_pil).astype(np.float32) / 255.0)
+                mask_resized = (mask_resized > 0.5).astype(np.float32)
                 mask_for_blend = mask_resized[:, :, np.newaxis]
 
             blended_arr = mask_for_blend * edit_arr + (1 - mask_for_blend) * bg_arr

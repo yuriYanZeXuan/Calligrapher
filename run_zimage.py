@@ -10,7 +10,7 @@ Z-Image 推理启动脚本
 三阶段推理架构:
   Pass 1: 用完整 prompt 生成参考图 → VLM 自主规划排版
   Pass 2: 从相同噪声用 clean prompt + 字形注入生成文字图
-  Pass 3: FluxKlein img2img + soft mask 背景融合循环（VLM 评判停止条件）
+  Pass 3: FluxKlein img2img + mask 背景融合循环（VLM 评判停止条件）
 
 用法:
   python run_zimage.py                                  # 正式模式
@@ -93,8 +93,6 @@ def main():
                         help="FluxKlein refine 最大循环次数")
     parser.add_argument("--klein-target", type=float, default=9.5,
                         help="FluxKlein VLM 评分目标阈值 (0-10)")
-    parser.add_argument("--klein-blur-radius", type=int, default=8,
-                        help="FluxKlein soft mask 高斯模糊半径 (像素)")
     parser.add_argument("--klein-cpu-offload", action="store_true",
                         help="FluxKlein 启用 CPU offload")
 
@@ -153,7 +151,6 @@ def main():
         klein_seed=args.klein_seed,
         klein_max_iters=args.klein_iters,
         klein_target_score=args.klein_target,
-        klein_blur_radius=args.klein_blur_radius,
         klein_enable_cpu_offload=args.klein_cpu_offload,
     )
 

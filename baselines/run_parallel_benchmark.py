@@ -400,7 +400,6 @@ def load_dataset(benchmark, base_eval_dir):
     elif benchmark == 'UnseenWords':
         # UnseenWords benchmark - rare Chinese characters testing
         # JSONL format: category, length, prompt, text, text_length, prompt_id
-        import glob
         unseen_dir = os.path.join(base_eval_dir, 'UnseenWords')
         jsonl_files = glob.glob(os.path.join(unseen_dir, '*.jsonl'))
         

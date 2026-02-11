@@ -9,7 +9,7 @@ Z-Image 推理主入口
 三阶段推理架构:
   Pass 1: 用完整 prompt 生成参考图 → VLM 自主规划排版
   Pass 2: 从相同噪声用 clean prompt + 字形注入生成文字图
-  Pass 3: FluxKlein img2img + mask 背景融合循环 → VLM 评判直到风格融合达标
+  Pass 3: FluxKlein img2img + 二值 mask → 将文字风格化为白色粉笔字效果
 """
 
 import os
@@ -66,18 +66,12 @@ class GenerationConfig:
     early_stop_step: int = 3
     keep_ratio: float = 0.25
 
-    # Pass 3: FluxKlein img2img refine（将粘贴的字体与背景风格融合）
-    use_harmonization: bool = True             # 启用 Pass 3 FluxKlein 背景融合
+    # Pass 3: FluxKlein img2img 风格化
+    use_harmonization: bool = True             # 启用 Pass 3 FluxKlein 风格化
     klein_model_path: str = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
-    klein_prompt: str = (
-        "Harmonizes texts perfectly with the background. No other changes to the image."
-    )
     klein_steps: int = 10                      # FluxKlein 推理步数
     klein_guidance_scale: float = 4.0          # FluxKlein guidance scale
-    klein_seed: Optional[int] = None           # FluxKlein seed（None=跟随主 seed）
-    klein_max_iters: int = 3                   # FluxKlein refine 最大循环次数
-    klein_target_score: float = 9.5            # VLM 评分阈值
-    klein_enable_cpu_offload: bool = False      # FluxKlein CPU offload
+    klein_seed: Optional[int] = None           # FluxKlein seed
 
 
 class ZImageInference:
@@ -328,20 +322,11 @@ class ZImageInference:
             clean_prompt, noise, timesteps, injection_data, config,
         )
 
-        # === Pass 3: FluxKlein img2img + Soft Mask 背景融合 ===
-        text_content_str = None
-        if text_contents:
-            text_content_str = " ".join(text_contents)
-        elif typography_plan.get("text_regions"):
-            text_content_str = " ".join(
-                r.get("content", "") for r in typography_plan["text_regions"]
-            )
-
+        # === Pass 3: FluxKlein img2img 风格化 ===
         if config.use_harmonization:
-            print("=== Pass 3: FluxKlein img2img refine ===")
+            print("=== Pass 3: FluxKlein img2img 风格化 ===")
             image = self._run_pass3_klein_refine(
-                image, injection_data, clean_prompt, config,
-                text_content_str=text_content_str,
+                image, injection_data, typography_plan, config,
             )
 
         return image
@@ -512,143 +497,80 @@ class ZImageInference:
             image = self.pipeline.vae.decode(latent, return_dict=False)[0]
         return self.pipeline.image_processor.postprocess(image, output_type="pil")[0]
 
-    # ---- Pass 3: FluxKlein img2img + mask 背景融合 ----
+    # ---- Pass 3: FluxKlein img2img 风格化 ----
 
     def _run_pass3_klein_refine(
         self,
         pass2_image: Image.Image,
         injection_data: dict,
-        clean_prompt: str,
+        typography_plan: dict,
         config: GenerationConfig,
-        text_content_str: Optional[str] = None,
     ) -> Image.Image:
-        """Pass 3: 使用 FluxKlein img2img 将粘贴字体与背景风格融合。
+        """Pass 3: 使用 FluxKlein img2img 根据背景动态选择文字风格。
 
-        每次迭代：
-          1. 将当前图像送入 FluxKlein 做 img2img 编辑
-          2. 用二值 mask 混合：文字区域用 FluxKlein 输出，背景保持原图
-          3. VLM 评分；满足阈值或达到最大次数后停止
+        流程：
+          1. VLM 根据背景场景生成风格化提示词（对比色+协调风格）
+          2. FluxKlein img2img 编辑文字区域
+          3. 二值 mask 混合：文字区域用编辑结果，背景保持原图
 
         Args:
-            pass2_image: Pass 2 生成的图像（含粘贴的字体）
-            injection_data: Pass 2 的注入数据（含 full_mask）
-            clean_prompt: Pass 2 使用的 clean prompt
+            pass2_image: Pass 2 生成的图像
+            injection_data: 注入数据（含 full_mask）
+            typography_plan: 排版规划（含 image_analysis）
             config: 生成配置
-            text_content_str: 文本内容（用于 VLM 评分）
 
         Returns:
-            融合后的最终图像
+            风格化后的图像
         """
-        max_iters = config.klein_max_iters
-        target = config.klein_target_score
+        # 使用 VLM 生成风格化提示词
+        image_analysis = typography_plan.get("image_analysis", {})
+        klein_prompt = self.vlm_agent.generate_klein_style_prompt(image_analysis)
+        print(f"  VLM 生成提示词: {klein_prompt[:80]}...")
+
+        # FluxKlein 生成
+        klein = self.get_klein_generator(config)
         klein_seed = config.klein_seed if config.klein_seed is not None else (config.seed or 42)
 
-        # 获取 FluxKlein 生成器
-        klein = self.get_klein_generator(config)
+        edited = klein.generate(
+            prompt=klein_prompt,
+            image=pass2_image,
+            seed=klein_seed,
+            num_inference_steps=config.klein_steps,
+            guidance_scale=config.klein_guidance_scale,
+        )
 
-        # 二值 mask：文字区域 1.0，背景 0.0
-        binary_mask = injection_data["full_mask"]  # uint8 (H, W), 255=文字区域
-        mask = (binary_mask > 127).astype(np.float32)  # float32 (H, W), 1.0=文字区域
-        mask_3ch = mask[:, :, np.newaxis]  # (H, W, 1)
+        # 二值 mask 混合
+        binary_mask = injection_data["full_mask"]
+        mask = (binary_mask > 127).astype(np.float32)
+        
+        if edited.size != pass2_image.size:
+            edited = edited.resize(pass2_image.size, Image.LANCZOS)
+        if mask.shape[:2] != (pass2_image.height, pass2_image.width):
+            mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
+            mask_pil = mask_pil.resize(pass2_image.size, Image.NEAREST)
+            mask = (np.array(mask_pil).astype(np.float32) / 255.0) > 0.5
 
-        # 保存 mask 可视化
+        mask_3ch = mask[:, :, np.newaxis]
+        edit_arr = np.array(edited).astype(np.float32)
+        bg_arr = np.array(pass2_image).astype(np.float32)
+        
+        result_arr = mask_3ch * edit_arr + (1 - mask_3ch) * bg_arr
+        result = Image.fromarray(result_arr.clip(0, 255).astype(np.uint8))
+
+        # 日志
         if self.logger is not None:
             self.logger.save_image(
-                Image.fromarray(binary_mask).convert("RGB"),
-                "pass3_mask",
-                caption=f"binary mask  coverage={mask.mean():.3f}",
-                subfolder="harmonize",
+                Image.fromarray(binary_mask).convert("RGB"), "pass3_mask",
+                caption=f"mask coverage={mask.mean():.2%}", subfolder="harmonize",
             )
+            comp = Image.new("RGB", (pass2_image.width * 3, pass2_image.height))
+            comp.paste(pass2_image, (0, 0))
+            comp.paste(edited, (pass2_image.width, 0))
+            comp.paste(result, (pass2_image.width * 2, 0))
+            self.logger.save_image(comp, "pass3_result", 
+                caption="Pass2 | Klein | Final", subfolder="harmonize")
 
-        current_image = pass2_image
-        best_image = pass2_image
-        best_score = 0.0
-
-        # 保存 Pass 2 原图作为背景参考（mask 外区域始终来自此图）
-        background_image = pass2_image
-
-        print(f"  FluxKlein refine prompt: {config.klein_prompt[:100]}...")
-        print(f"  FluxKlein 参数: steps={config.klein_steps}, guidance={config.klein_guidance_scale}, "
-              f"seed={klein_seed}, max_iters={max_iters}")
-
-        for it in range(max_iters):
-            print(f"  Pass 3 Klein [{it + 1}/{max_iters}]", end="")
-
-            # 1. FluxKlein img2img 编辑
-            klein_output_path = None
-            if self.logger is not None:
-                klein_dir = self.logger.run_dir / "harmonize"
-                klein_dir.mkdir(parents=True, exist_ok=True)
-                klein_output_path = str(klein_dir / f"klein_raw_iter{it + 1}.png")
-            else:
-                klein_output_path = f"/tmp/klein_raw_iter{it + 1}.png"
-
-            edited = klein.generate(
-                prompt=config.klein_prompt,
-                image=current_image,
-                seed=klein_seed + it,  # 每次迭代用不同 seed
-                num_inference_steps=config.klein_steps,
-                guidance_scale=config.klein_guidance_scale,
-                output_path=klein_output_path,
-            )
-
-            # 2. 二值 mask 混合：文字区域用 FluxKlein 编辑结果，背景保持 Pass 2 原图
-            if edited.size != background_image.size:
-                edited = edited.resize(background_image.size, Image.LANCZOS)
-
-            edit_arr = np.array(edited).astype(np.float32)
-            bg_arr = np.array(background_image).astype(np.float32)
-
-            # 如果 mask 尺寸不匹配，resize（最近邻保持二值性）
-            mask_for_blend = mask_3ch
-            if mask.shape[0] != edited.height or mask.shape[1] != edited.width:
-                mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
-                mask_pil = mask_pil.resize(edited.size, Image.NEAREST)
-                mask_resized = (np.array(mask_pil).astype(np.float32) / 255.0)
-                mask_resized = (mask_resized > 0.5).astype(np.float32)
-                mask_for_blend = mask_resized[:, :, np.newaxis]
-
-            blended_arr = mask_for_blend * edit_arr + (1 - mask_for_blend) * bg_arr
-            result_image = Image.fromarray(blended_arr.clip(0, 255).astype(np.uint8))
-
-            # 3. VLM 评分
-            score = self.vlm_agent.score_image(
-                result_image, clean_prompt, text_content_str,
-            )
-            print(f"  score={score:.2f}/10")
-
-            if score > best_score:
-                best_score = score
-                best_image = result_image
-
-            # 日志
-            if self.logger is not None:
-                self.logger.save_image(
-                    result_image, f"pass3_iter{it + 1}",
-                    caption=f"iter={it + 1}  score={score:.2f}  "
-                            f"steps={config.klein_steps}  guidance={config.klein_guidance_scale}",
-                    subfolder="harmonize",
-                )
-                # 保存对比图：原图 | FluxKlein raw | masked blending
-                comparison = Image.new("RGB", (current_image.width * 3, current_image.height))
-                comparison.paste(current_image, (0, 0))
-                comparison.paste(edited.resize(current_image.size, Image.LANCZOS), (current_image.width, 0))
-                comparison.paste(result_image.resize(current_image.size, Image.LANCZOS), (current_image.width * 2, 0))
-                self.logger.save_image(
-                    comparison, f"pass3_comparison_iter{it + 1}",
-                    caption=f"input | Klein raw | masked blend  score={score:.2f}",
-                    subfolder="harmonize",
-                )
-
-            if score >= target:
-                print(f"  Pass 3 达到目标分数 {score:.2f} >= {target}")
-                break
-
-            # 下一轮以混合后的结果作为输入
-            current_image = result_image
-
-        print(f"  Pass 3 完成，最佳分数 {best_score:.2f}/10")
-        return best_image
+        return result
 
     @staticmethod
     def _text_regions_to_plan(text_regions: list[dict]) -> dict:

@@ -86,6 +86,24 @@ PROMPT_TEMPLATES = {
         "只输出改写后的 prompt，不要添加任何解释。"
     ),
 
+    # ---- 生成 FluxKlein 风格化提示词（根据背景选择文字风格）----
+    "generate_klein_style_prompt": (
+        "你是一个专业的图像编辑提示词专家。根据提供的背景场景描述，生成一个图像编辑指令，"
+        "要求将文字区域重绘为与背景协调但形成对比的文字风格。\n\n"
+        "核心原则：\n"
+        "1. 文字颜色必须与背景形成高对比度（深色背景用浅色字，浅色背景用深色字）\n"
+        "2. 文字风格要与整体场景协调（例如：黑板用粉笔字、白板用马克笔、纸张用墨水/印刷体）\n"
+        "3. 文字要有自然的纹理和质感（不是完美的数字字体）\n"
+        "4. 只修改文字区域，背景保持原样\n\n"
+        "常见场景对应风格：\n"
+        "- 黑板/深色背景 → 白色粉笔字，有粉笔纹理和轻微飞白\n"
+        "- 白板/浅色背景 → 黑色马克笔，有手写痕迹\n"
+        "- 纸张/羊皮纸 → 深色墨水/印刷体，可能有晕染效果\n"
+        "- 金属/混凝土 → 喷漆/刻字效果\n\n"
+        "只输出生成的编辑指令（英文），不要添加任何解释。格式示例：\n"
+        "'Rewrite the text in white chalk style with natural texture on the blackboard. No other changes.'"
+    ),
+
     # ---- Prompt 优化（从 prompt_refiner.py 迁移）----
     "refine_prompt": (
         "你是一个专业的图像生成 prompt 优化专家。你的任务是将用户提供的简单描述"
@@ -291,6 +309,36 @@ class VLMAgent:
             temperature=0.3,
         )
         return raw.strip()
+
+    # ---- FluxKlein 风格化提示词生成 ----
+
+    def generate_klein_style_prompt(self, image_analysis: dict) -> str:
+        """根据背景场景生成 FluxKlein 风格化提示词。
+        
+        Args:
+            image_analysis: VLM 排版分析返回的 image_analysis 字段
+            
+        Returns:
+            FluxKlein 编辑提示词（英文）
+        """
+        bg_style = image_analysis.get("background_style", "")
+        dominant_colors = image_analysis.get("dominant_colors", [])
+        text_hint = image_analysis.get("text_style_hint", "")
+        
+        user_content = (
+            f"背景风格: {bg_style}\n"
+            f"主导颜色: {', '.join(dominant_colors)}\n"
+            f"文字风格提示: {text_hint}\n\n"
+            "请根据以上场景信息，生成一个图像编辑指令，要求将文字重绘为与背景协调但形成对比的风格。"
+        )
+        
+        raw = self.call_vlm(
+            "generate_klein_style_prompt",
+            user_content,
+            max_tokens=256,
+            temperature=0.4,
+        )
+        return raw.strip().strip('"\'')  # 去除可能的引号
 
     # ---- Prompt 优化 ----
 

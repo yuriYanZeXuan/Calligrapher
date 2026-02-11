@@ -10,7 +10,7 @@ Z-Image 推理启动脚本
 三阶段推理架构:
   Pass 1: 用完整 prompt 生成参考图 → VLM 自主规划排版
   Pass 2: 从相同噪声用 clean prompt + 字形注入生成文字图
-  Pass 3: FluxKlein img2img + mask 背景融合循环（VLM 评判停止条件）
+  Pass 3: FluxKlein img2img + 二值 mask → 将文字风格化为白色粉笔字效果
 
 用法:
   python run_zimage.py                                  # 正式模式
@@ -18,7 +18,7 @@ Z-Image 推理启动脚本
   python run_zimage.py --plan infer/test_plans/plan_multi_region.json  # JSON plan 测试
   python run_zimage.py --tts --beam 8                   # 启用 TTS beam search
   python run_zimage.py --no-refiner --no-inject         # 纯生图（无注入无优化）
-  python run_zimage.py --no-harmonize                   # 跳过 Pass 3 背景融合
+  python run_zimage.py --no-harmonize                   # 跳过 Pass 3 粉笔字风格化
   python run_zimage.py --klein-steps 30 --klein-iters 2 # 自定义 FluxKlein 参数
 """
 
@@ -36,8 +36,8 @@ def main():
     parser = argparse.ArgumentParser(description="Z-Image 两阶段推理")
 
     # 基础参数
-    parser.add_argument("--prompt", default="爱因斯坦站在黑板前，黑板上写着著名的质能方程")
-    parser.add_argument("--text", nargs="+", default=["E = mc^2"],
+    parser.add_argument("--prompt", default="A university hallway displays \"Γ(z)=∫₀^∞ t^(z-1)e^(-t)dt\" on an educational poster.")
+    parser.add_argument("--text", nargs="+", default=["Γ(z)=∫₀^∞ t^(z-1)e^(-t)dt"],
                         help="待渲染的文本/公式列表（正式模式使用）")
     parser.add_argument("--output", default="output.png")
     parser.add_argument("--seed", type=int, default=42)
@@ -66,35 +66,27 @@ def main():
                         help="注入强度衰减策略")
     parser.add_argument("--mask-strength", type=float, default=1.0, help="mask 注入强度")
     parser.add_argument("--timestep-ratio", type=float, default=0.9, help="注入时间步比例")
+    parser.add_argument("--inject-last-only", action="store_true", default=True,
+                        help="仅在最后一步注入字形（默认开启）")
+    parser.add_argument("--no-inject-last-only", action="store_true",
+                        help="关闭仅最后一步注入，恢复按 timestep-ratio 注入")
     parser.add_argument("--attn-enhance", type=float, default=2.0,
                         help="注意力增强倍率（1.0=不增强）")
     parser.add_argument("--attn-suppress", type=float, default=0.1,
                         help="反向注意力抑制倍率（1.0=不抑制）")
 
-    # Pass 3: FluxKlein img2img 背景融合
+    # Pass 3: FluxKlein 动态风格化
     parser.add_argument("--no-harmonize", action="store_true",
-                        help="禁用 Pass 3 FluxKlein 背景融合")
+                        help="禁用 Pass 3 FluxKlein 风格化")
     parser.add_argument("--klein-model-path", type=str,
                         default="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein",
                         help="FluxKlein 模型路径")
-    parser.add_argument("--klein-prompt", type=str,
-                        default=("The text on the surface is rewritten in beautiful style, "
-                                 "with natural texture, soft edges, and subtle imperfections. "
-                                 "The lettering harmonizes perfectly with the background aesthetic. "
-                                 "No other changes to the image."),
-                        help="FluxKlein 编辑 prompt")
-    parser.add_argument("--klein-steps", type=int, default=50,
+    parser.add_argument("--klein-steps", type=int, default=10,
                         help="FluxKlein 推理步数")
     parser.add_argument("--klein-guidance", type=float, default=4.0,
                         help="FluxKlein guidance scale")
     parser.add_argument("--klein-seed", type=int, default=None,
-                        help="FluxKlein 随机种子（默认跟随主 seed）")
-    parser.add_argument("--klein-iters", type=int, default=3,
-                        help="FluxKlein refine 最大循环次数")
-    parser.add_argument("--klein-target", type=float, default=9.5,
-                        help="FluxKlein VLM 评分目标阈值 (0-10)")
-    parser.add_argument("--klein-cpu-offload", action="store_true",
-                        help="FluxKlein 启用 CPU offload")
+                        help="FluxKlein 随机种子")
 
     # GPU
     parser.add_argument("--gpus", type=str, default=None, help="GPU 列表，如 0,1,2,3")
@@ -112,9 +104,11 @@ def main():
     from infer.glyph_injector import InjectionConfig
 
     freq_on = args.freq_decompose and not args.no_freq_decompose
+    inject_last = args.inject_last_only and not args.no_inject_last_only
     injection_config = InjectionConfig(
         mask_strength=args.mask_strength,
         timestep_ratio=args.timestep_ratio,
+        inject_last_only=inject_last,
         freq_decompose=freq_on,
         freq_kernel_size=5,
         strength_schedule=args.strength_schedule,
@@ -125,9 +119,9 @@ def main():
         attn_enhance_image_to_text=True,
     )
 
-    print(f"注入配置: freq_decompose={freq_on}, schedule={args.strength_schedule}, "
-          f"mask_strength={args.mask_strength}, attn_enhance={args.attn_enhance}, "
-          f"attn_suppress={args.attn_suppress}")
+    print(f"注入配置: inject_last_only={inject_last}, freq_decompose={freq_on}, "
+          f"schedule={args.strength_schedule}, mask_strength={args.mask_strength}, "
+          f"attn_enhance={args.attn_enhance}, attn_suppress={args.attn_suppress}")
 
     # 构建生成配置
     from zimage_inference import ZImageInference, GenerationConfig
@@ -142,16 +136,12 @@ def main():
         injection_config=injection_config,
         use_tts=args.tts,
         beam_size=args.beam,
-        # Pass 3: FluxKlein img2img 背景融合
+        # Pass 3: FluxKlein 动态风格化
         use_harmonization=not args.no_harmonize,
         klein_model_path=args.klein_model_path,
-        klein_prompt=args.klein_prompt,
         klein_steps=args.klein_steps,
         klein_guidance_scale=args.klein_guidance,
         klein_seed=args.klein_seed,
-        klein_max_iters=args.klein_iters,
-        klein_target_score=args.klein_target,
-        klein_enable_cpu_offload=args.klein_cpu_offload,
     )
 
     # 创建推理实例

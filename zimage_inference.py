@@ -159,7 +159,6 @@ class ZImageInference:
             self._klein_generator = FluxKleinGenerator(
                 model_path=config.klein_model_path,
                 device=self.primary_device,
-                enable_cpu_offload=config.klein_enable_cpu_offload,
             )
             print("FluxKlein 模型加载完成")
         return self._klein_generator

@@ -36,8 +36,8 @@ def main():
     parser = argparse.ArgumentParser(description="Z-Image 两阶段推理")
 
     # 基础参数
-    parser.add_argument("--prompt", default="A university hallway displays \"Γ(z)=∫₀^∞ t^(z-1)e^(-t)dt\" on an educational poster.")
-    parser.add_argument("--text", nargs="+", default=["Γ(z)=∫₀^∞ t^(z-1)e^(-t)dt"],
+    parser.add_argument("--prompt", default="A white board displays \"$\\Gamma(z)=\\int_0^{\\infty} t^{z-1}e^{-t}dt$\" on an educational poster.")
+    parser.add_argument("--text", nargs="+", default=["$\\Gamma(z)=\\int_0^{\\infty} t^{z-1}e^{-t}dt$"],
                         help="待渲染的文本/公式列表（正式模式使用）")
     parser.add_argument("--output", default="output.png")
     parser.add_argument("--seed", type=int, default=42)

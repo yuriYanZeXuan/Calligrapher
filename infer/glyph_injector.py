@@ -216,11 +216,11 @@ class GlyphInjector:
             black_ratio = np.sum(binary == 255) / binary.size
             text_mask = binary if black_ratio < 0.5 else cv2.bitwise_not(binary)
         
-        # 形态学操作去噪
-        kernel1 = np.ones((3, 3), np.uint8)
-        kernel2 = np.ones((2, 2), np.uint8)
-        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_CLOSE, kernel1)
-        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_OPEN, kernel2)
+        # 轻微形态学操作去噪（使用更小的核，避免细笔画丢失）
+        kernel = np.ones((2, 2), np.uint8)
+        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_CLOSE, kernel)
+        # 移除 OPEN 操作，因为它会消除细笔画（如 LaTeX 公式中的积分号、分数线等）
+        # text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_OPEN, kernel)
         
         return text_mask
     

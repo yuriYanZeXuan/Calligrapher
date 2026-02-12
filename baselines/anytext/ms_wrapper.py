@@ -13,17 +13,20 @@ import cv2
 import einops
 import time
 from PIL import ImageFont
+from openai import OpenAI
+from dotenv import load_dotenv
 from cldm.model import create_model, load_state_dict
 from cldm.ddim_hacked import DDIMSampler
 from t3_dataset import draw_glyph, draw_glyph2, draw_font_hint
 from cldm.recognizer import crop_image
 from util import check_channels, resize_image
 from safetensors import safe_open
-from modelscope.pipelines import pipeline
-from modelscope.utils.constant import Tasks
 from modelscope.models.base import TorchModel
 from lora_util import get_diffusers_unet, convert_unet_state_dict_to_sd
 from bert_tokenizer import BasicTokenizer
+
+# 加载 .env 文件中的环境变量
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 checker = BasicTokenizer()
 PLACE_HOLDER = '*'
 max_chars = 20
@@ -37,8 +40,12 @@ class AnyText2Model(TorchModel):
         self.lora_paths = []
         self.lora_ratios = []
         self.use_fp16 = kwargs.get('use_fp16', True)
-        self.use_translator = kwargs.get('use_translator', True)
         self.unet = get_diffusers_unet()
+        # 初始化 OpenAI 客户端用于翻译
+        self.trans_client = OpenAI(
+            api_key=os.getenv("QST_API_KEY"),
+            base_url=os.getenv("QST_BASE_URL")
+        )
         self.init_model(**kwargs)
 
     '''
@@ -218,11 +225,6 @@ class AnyText2Model(TorchModel):
         print('Original weights loaded!')
 
     def init_model(self, **kwargs):
-        if self.use_translator:
-            self.trans_pipe = pipeline(task=Tasks.translation, model=os.path.join(self.model_dir, 'nlp_csanmt_translation_zh2en'))
-            print(self.trans_pipe(input='初始化翻译器')['translation'])
-        else:
-            self.trans_pipe = None
         font_path = kwargs.get('font_path', 'font/Arial_Unicode.ttf')
         self.font = ImageFont.truetype(font_path, size=60)
         cfg_path = kwargs.get('cfg_path', 'models_yaml/anytext2_sd15.yaml')
@@ -247,10 +249,10 @@ class AnyText2Model(TorchModel):
             for s in strs:
                 prompt = prompt.replace(f'"{s}"', f'{PLACE_HOLDER}', 1)
         if self.is_chinese(prompt):
-            if self.trans_pipe is None:
-                return None, None
             old_prompt = prompt
-            prompt = self.trans_pipe(input=prompt + ' .')['translation'][:-1]
+            prompt = self._translate_with_api(prompt + ' .')
+            if prompt is None:
+                return None, None
             prompt = prompt.replace(f'{PLACE_HOLDER}', f' {PLACE_HOLDER} ')
             print(f'Translate: {old_prompt} --> {prompt}')
         return prompt, strs

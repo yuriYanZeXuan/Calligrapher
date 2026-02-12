@@ -292,21 +292,55 @@ class TextFluxInpaintWrapper:
     
     def generate(self, prompt: str, text_list: list, background_img: Image.Image,
                  mask_img: Image.Image, output_path: str, seed=42):
-        """Inpaint text onto background using mask."""
+        """Inpaint text onto background using mask with TextFlux-specific prompt format."""
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-        # TextFlux uses first text as prompt
-        text_prompt = text_list[0] if text_list else prompt
+        # TextFlux uses first text as the word to render
+        text_content = text_list[0] if text_list else prompt
         
-        self.generator.generate(
+        # Resize images to 32-multiple (required by TextFlux/FluxFill)
+        width, height = background_img.size
+        new_width = (width // 32) * 32
+        new_height = (height // 32) * 32
+        
+        if (width, height) != (new_width, new_height):
+            background_img = background_img.resize((new_width, new_height), Image.LANCZOS)
+            mask_img = mask_img.resize((new_width, new_height), Image.LANCZOS)
+        
+        # TextFlux-specific prompt format with IMAGE1 and IMAGE2 markers
+        words_str = f"'{text_content}'"
+        prompt_1 = (
+            "The pair of images highlights some white words on a black background, as well as their style on a real-world scene image. "
+            "[IMAGE1] is a template image rendering the text, with the words; "
+            "[IMAGE2] shows the text content naturally and correspondingly integrated into the image."
+        )
+        prompt_2 = (
+            "The pair of images highlights some white words on a black background, as well as their style on a real-world scene image. "
+            f"[IMAGE1] is a template image rendering the text, with the words {words_str}; "
+            f"[IMAGE2] shows the text content {words_str} naturally and correspondingly integrated into the image."
+        )
+        
+        print(f"TextFlux prompt_1: {prompt_1[:60]}...")
+        print(f"TextFlux prompt_2: {prompt_2[:80]}...")
+        
+        # Run TextFlux inference directly with pipe to use correct prompt format
+        import torch
+        generator = torch.Generator(device="cuda").manual_seed(seed)
+        
+        result = self.generator.pipe(
+            height=new_height,
+            width=new_width,
             image=background_img,
             mask_image=mask_img,
-            prompt=text_prompt,
-            seed=seed,
             num_inference_steps=50,
-            guidance_scale=7.5,
-            output_path=output_path
-        )
+            generator=generator,
+            guidance_scale=30.0,  # TextFlux requires high guidance scale
+            prompt=prompt_1,
+            prompt_2=prompt_2,
+        ).images[0]
+        
+        result.save(output_path)
+        print(f"TextFlux result saved to {output_path}")
         return os.path.exists(output_path)
 
 
@@ -397,7 +431,9 @@ Examples:
             )
             
             # Save layout info
-            layout_path = output_dir / "layouts" / f"{item_id}_layout.json"
+            layout_dir = output_dir / "layouts"
+            layout_dir.mkdir(parents=True, exist_ok=True)
+            layout_path = layout_dir / f"{item_id}_layout.json"
             with open(layout_path, 'w') as f:
                 json.dump({
                     'prompt': prompt,
@@ -407,7 +443,9 @@ Examples:
                 }, f, indent=2)
             
             # Save reference image
-            ref_path = output_dir / "images" / f"{item_id}_reference.png"
+            images_dir = output_dir / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            ref_path = images_dir / f"{item_id}_reference.png"
             ref_img.save(ref_path)
             
             # Step 2: Create mask from bboxes (text regions to be edited)
@@ -419,7 +457,9 @@ Examples:
             if args.dilate_mask > 0:
                 mask_img = dilate_mask(mask_img, kernel_size=args.dilate_mask)
             
-            mask_path = output_dir / "masks" / f"{item_id}_mask.png"
+            masks_dir = output_dir / "masks"
+            masks_dir.mkdir(parents=True, exist_ok=True)
+            mask_path = masks_dir / f"{item_id}_mask.png"
             mask_img.save(mask_path)
             
             # Step 3: Inpaint on reference image

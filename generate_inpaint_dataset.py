@@ -39,7 +39,7 @@ sys.path.extend([
 
 # Model paths configuration
 MODEL_PATHS = {
-    'anytext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/AnyText',
+    'anytext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/anytext2',
     'textflux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
     'zimage': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
 }
@@ -284,6 +284,8 @@ class TextFluxInpaintWrapper:
         from inference_textflux import TextFluxGenerator
         self.generator = TextFluxGenerator(
             pipeline_path=self.model_path,
+            transformer_path=os.path.join(self.model_path, "transformer"),
+            lora_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/textflux-lora-beta",
             device="cuda"
         )
         print("TextFlux initialized.")
@@ -338,8 +340,6 @@ Examples:
                        help="Limit number of samples (for testing)")
     parser.add_argument("--skip_pass1", action='store_true',
                        help="Skip Pass1 generation, use existing data")
-    parser.add_argument("--use_reference_as_bg", action='store_true', default=True,
-                       help="Use Pass1 reference image as background (faster)")
     parser.add_argument("--expand_mask_ratio", type=float, default=0.05,
                        help="Expand mask bbox by this ratio")
     parser.add_argument("--dilate_mask", type=int, default=5,
@@ -353,7 +353,6 @@ Examples:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "images").mkdir(exist_ok=True)
     (output_dir / "masks").mkdir(exist_ok=True)
-    (output_dir / "backgrounds").mkdir(exist_ok=True)
     (output_dir / "layouts").mkdir(exist_ok=True)
     
     # Load dataset
@@ -377,7 +376,14 @@ Examples:
     
     # Process each sample
     print(f"\n=== Generating {len(dataset)} Samples ===")
+    results_path = output_dir / "results.json"
     results = []
+    
+    # Load existing results if any
+    if results_path.exists():
+        with open(results_path, 'r') as f:
+            results = json.load(f)
+        print(f"Loaded {len(results)} existing results from {results_path}")
     
     for item in tqdm(dataset, desc="Processing"):
         item_id = item['id']
@@ -401,10 +407,10 @@ Examples:
                 }, f, indent=2)
             
             # Save reference image
-            ref_path = output_dir / "backgrounds" / f"{item_id}_reference.png"
+            ref_path = output_dir / "images" / f"{item_id}_reference.png"
             ref_img.save(ref_path)
             
-            # Step 2: Create mask from bboxes
+            # Step 2: Create mask from bboxes (text regions to be edited)
             text_regions = typography_plan.get('text_regions', [])
             mask_img = create_mask_from_bboxes(
                 (1024, 1024), text_regions, expand_ratio=args.expand_mask_ratio
@@ -416,48 +422,37 @@ Examples:
             mask_path = output_dir / "masks" / f"{item_id}_mask.png"
             mask_img.save(mask_path)
             
-            # Step 3: Get background image
-            if args.use_reference_as_bg:
-                # Use reference as background (with text, but we'll mask it)
-                background_img = ref_img
-            else:
-                # Generate clean background
-                background_img = pass1_gen.generate_background(clean_prompt)
-            
-            bg_path = output_dir / "backgrounds" / f"{item_id}_background.png"
-            background_img.save(bg_path)
-            
-            # Step 4: Inpaint
+            # Step 3: Inpaint on reference image
             result_path = output_dir / "images" / f"result_{item_id}.png"
             success = inpaint_model.generate(
                 prompt=prompt,
                 text_list=text_list,
-                background_img=background_img,
+                background_img=ref_img,
                 mask_img=mask_img,
                 output_path=str(result_path),
                 seed=args.seed
             )
             
             if success:
-                results.append({
+                result_item = {
                     'id': item_id,
                     'prompt': prompt,
                     'text': text_list,
                     'output': str(result_path),
                     'layout': str(layout_path),
                     'mask': str(mask_path),
-                })
+                }
+                results.append(result_item)
+                
+                # Immediately append to JSON file
+                with open(results_path, 'w') as f:
+                    json.dump(results, f, indent=2)
             
         except Exception as e:
             print(f"\nError processing {item_id}: {e}")
             import traceback
             traceback.print_exc()
             continue
-    
-    # Save results JSON
-    results_path = output_dir / "results.json"
-    with open(results_path, 'w') as f:
-        json.dump(results, f, indent=2)
     
     print(f"\n=== Done ===")
     print(f"Generated {len(results)}/{len(dataset)} samples")

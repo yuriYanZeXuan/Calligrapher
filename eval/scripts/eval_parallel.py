@@ -104,13 +104,19 @@ def load_oneig_benchmark(benchmark_path: str) -> List[Dict]:
         json_files = glob.glob(os.path.join(benchmark_path, '*.json'))
     
     for json_file in json_files:
+        # Determine language from filename
+        lang_prefix = 'zh' if 'ZH' in os.path.basename(json_file) else 'en'
+        
         with open(json_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
         for item in data:
             prompt = item.get('prompt_en') or item.get('prompt_cn') or item.get('prompt', '')
+            sample_id = str(item.get('id', ''))
+            # Match id format with run_parallel_benchmark.py: f"oneig_{lang_prefix}_{sample_id}"
+            full_id = f"oneig_{lang_prefix}_{sample_id}"
             samples.append({
-                'id': item.get('id', ''),
+                'id': full_id,
                 'prompt': prompt,
                 'text': extract_text_from_prompt(prompt),
                 'category': item.get('category', ''),
@@ -152,6 +158,38 @@ def load_cvtg_benchmark(benchmark_path: str) -> List[Dict]:
     return samples
 
 
+def load_unseenwords_benchmark(benchmark_path: str) -> List[Dict]:
+    """Load UnseenWords benchmark data from jsonl files."""
+    import glob
+    samples = []
+    
+    if os.path.isfile(benchmark_path):
+        jsonl_files = [benchmark_path]
+    else:
+        jsonl_files = glob.glob(os.path.join(benchmark_path, '*.jsonl'))
+    
+    for jsonl_file in sorted(jsonl_files):
+        file_prefix = os.path.splitext(os.path.basename(jsonl_file))[0]
+        with open(jsonl_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                item = json.loads(line)
+                prompt_id = item.get('prompt_id', len(samples))
+                sample_id = f"{file_prefix}_{prompt_id}"
+                samples.append({
+                    'id': sample_id,
+                    'prompt': item.get('prompt', ''),
+                    'text': item.get('text', []),
+                    'category': item.get('category', ''),
+                    'length': item.get('length', ''),
+                    'text_length': item.get('text_length', 0)
+                })
+    
+    return samples
+
+
 def load_benchmark(benchmark_path: str, benchmark_type: str) -> List[Dict]:
     """Load benchmark data based on type."""
     if benchmark_type == 'longtext':
@@ -160,6 +198,8 @@ def load_benchmark(benchmark_path: str, benchmark_type: str) -> List[Dict]:
         return load_oneig_benchmark(benchmark_path)
     elif benchmark_type == 'cvtg':
         return load_cvtg_benchmark(benchmark_path)
+    elif benchmark_type == 'unseenwords':
+        return load_unseenwords_benchmark(benchmark_path)
     else:
         with open(benchmark_path, 'r', encoding='utf-8') as f:
             data = json.load(f)

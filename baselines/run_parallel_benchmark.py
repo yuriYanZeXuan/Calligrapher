@@ -66,7 +66,7 @@ class AnyTextWrapper(ModelWrapper):
         
         path = self.model_path or MODEL_PATHS['anytext']
         path = path if os.path.exists(path) else "models"
-        self.inpainter = AnyTextInpainter(model_dir=path, use_fp16=True, device=device)
+        self.inpainter = AnyTextInpainter(model_dir=path, use_fp16=True)
 
     def generate(self, prompt, output_path, **kwargs):
         text_list = kwargs.get('text') or kwargs.get('sentence_list') or []
@@ -405,6 +405,9 @@ def load_dataset(benchmark, base_eval_dir):
         
         for jsonl_file in sorted(jsonl_files):
             print(f"Loading {os.path.basename(jsonl_file)}...")
+            # Extract file prefix (e.g., "unseen_en" from "unseen_en.jsonl")
+            file_basename = os.path.basename(jsonl_file)
+            file_prefix = os.path.splitext(file_basename)[0]
             with open(jsonl_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
@@ -420,7 +423,7 @@ def load_dataset(benchmark, base_eval_dir):
                         'category': item.get('category', ''),
                         'length': item.get('length', ''),
                         'text_length': item.get('text_length', 0),
-                        'id': f"unseen_{prompt_id}",
+                        'id': f"{file_prefix}_{prompt_id}",
                         'carrier_list': [],
                         'sentence_list': text_list if isinstance(text_list, list) else [text_list],
                     })

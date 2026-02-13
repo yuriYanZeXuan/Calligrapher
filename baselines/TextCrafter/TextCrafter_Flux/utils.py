@@ -124,6 +124,9 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
 class AttentionReweight(AttentionControlEdit):
 
     def replace_cross_attention(self, attn_base):
+        # Ensure equalizer is on the same device as attn_base (for multi-GPU support)
+        if self.equalizer.device != attn_base.device:
+            self.equalizer = self.equalizer.to(attn_base.device)
         attn_replace = attn_base[:, :, :, :] * self.equalizer[:, None, None, :]
         return attn_replace
 
@@ -137,7 +140,8 @@ class AttentionReweight(AttentionControlEdit):
         ):
         super(AttentionReweight, self).__init__(prompt, num_steps, cross_replace_steps)
         equalizer = get_equalizer(prompt, tokenizer=tokenizer)
-        self.equalizer = equalizer.to("cuda")
+        # Store as cpu tensor first, will be moved to correct device in replace_cross_attention
+        self.equalizer = equalizer
         self.prev_controller = controller
 
 

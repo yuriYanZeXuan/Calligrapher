@@ -28,6 +28,7 @@ class GenerationEvaluator(BaseEvaluator):
     - OneIG-Bench: Category-based text rendering prompts
     - CVTG-2K: CVTG and CVTG-Style with different area sizes
     - LongText-Bench: Long text generation
+    - UnseenWords: Rare/unseen character rendering
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -101,6 +102,8 @@ class GenerationEvaluator(BaseEvaluator):
             return self._load_cvtg_benchmark(benchmark_path)
         elif self.benchmark_type == 'longtext':
             return self._load_longtext_benchmark(benchmark_path)
+        elif self.benchmark_type == 'unseen':
+            return self._load_unseen_benchmark(benchmark_path)
         else:
             # Generic JSON loading
             return self._load_generic_benchmark(benchmark_path)
@@ -216,6 +219,44 @@ class GenerationEvaluator(BaseEvaluator):
         self.logger.info(f"Loaded {len(samples)} samples from LongText-Bench")
         return samples
     
+    def _load_unseen_benchmark(self, benchmark_path: Path) -> List[Dict]:
+        """Load UnseenWords benchmark format.
+        
+        Directory of JSONL files, each line: {category, length, prompt, text, text_length, prompt_id}
+        Sample id follows run_parallel_benchmark convention: {file_prefix}_{prompt_id}
+        Generated images named: result_{file_prefix}_{prompt_id}.png
+        """
+        samples = []
+        
+        if benchmark_path.is_file():
+            jsonl_files = [benchmark_path]
+        else:
+            jsonl_files = sorted(benchmark_path.glob('*.jsonl'))
+        
+        for jsonl_file in jsonl_files:
+            file_prefix = jsonl_file.stem  # e.g. "unseen_en"
+            
+            with open(jsonl_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    item = json.loads(line)
+                    prompt_id = item.get('prompt_id', len(samples))
+                    text_list = item.get('text', [])
+                    samples.append({
+                        'id': f"{file_prefix}_{prompt_id}",
+                        'prompt': item.get('prompt', ''),
+                        'text': text_list,
+                        'text_length': item.get('text_length', 0),
+                        'category': item.get('category', ''),
+                        'length': item.get('length', ''),
+                        'source': file_prefix,
+                    })
+        
+        self.logger.info(f"Loaded {len(samples)} samples from UnseenWords ({len(jsonl_files)} files)")
+        return samples
+    
     def _load_generic_benchmark(self, benchmark_path: Path) -> List[Dict]:
         """Load generic JSON benchmark format."""
         samples = []
@@ -258,6 +299,12 @@ class GenerationEvaluator(BaseEvaluator):
             exact_path = generated_dir / f"{sample_id}{ext}"
             if exact_path.exists():
                 return str(exact_path)
+        
+        # Try result_{id}.ext (run_parallel_benchmark convention)
+        for ext in ['.png', '.jpg', '.jpeg']:
+            result_path = generated_dir / f"result_{sample_id}{ext}"
+            if result_path.exists():
+                return str(result_path)
         
         # Try pattern matching
         for pattern in [
@@ -305,7 +352,10 @@ class GenerationEvaluator(BaseEvaluator):
             'prompt': prompt,
             'image_path': image_path,
             'category': sample.get('category', ''),
-            'benchmark_type': sample.get('benchmark_type', self.benchmark_type)
+            'benchmark_type': sample.get('benchmark_type', self.benchmark_type),
+            'length': sample.get('length', ''),
+            'text_length': sample.get('text_length', 0),
+            'source': sample.get('source', ''),
         }
         
         # Compute metrics
@@ -350,17 +400,45 @@ class GenerationEvaluator(BaseEvaluator):
         """
         df = super().evaluate_batch(benchmark_data, generated_dir)
         
-        # Add category-wise summary if categories exist
-        if 'category' in df.columns and len(df) > 0:
-            self.logger.info("\n=== Category-wise Summary ===")
-            numeric_cols = df.select_dtypes(include=['number']).columns
-            for category in df['category'].unique():
-                if pd.isna(category):
-                    continue
-                cat_df = df[df['category'] == category]
-                self.logger.info(f"\nCategory: {category} ({len(cat_df)} samples)")
-                for col in numeric_cols:
-                    mean_val = cat_df[col].mean()
-                    self.logger.info(f"  {col}: {mean_val:.4f}")
+        if len(df) == 0:
+            return df
+        
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        
+        # Category-wise summary
+        if 'category' in df.columns:
+            non_empty = df[df['category'].notna() & (df['category'] != '')]
+            if len(non_empty) > 0:
+                self.logger.info("\n=== Category-wise Summary ===")
+                for category in sorted(non_empty['category'].unique()):
+                    cat_df = non_empty[non_empty['category'] == category]
+                    self.logger.info(f"\nCategory: {category} ({len(cat_df)} samples)")
+                    for col in numeric_cols:
+                        mean_val = cat_df[col].mean()
+                        self.logger.info(f"  {col}: {mean_val:.4f}")
+        
+        # Source-wise summary (useful for UnseenWords with multiple JSONL files)
+        if 'source' in df.columns:
+            non_empty = df[df['source'].notna() & (df['source'] != '')]
+            if len(non_empty) > 0:
+                self.logger.info("\n=== Source-wise Summary ===")
+                for source in sorted(non_empty['source'].unique()):
+                    src_df = non_empty[non_empty['source'] == source]
+                    self.logger.info(f"\nSource: {source} ({len(src_df)} samples)")
+                    for col in numeric_cols:
+                        mean_val = src_df[col].mean()
+                        self.logger.info(f"  {col}: {mean_val:.4f}")
+        
+        # Length-wise summary (useful for benchmarks with length categories)
+        if 'length' in df.columns:
+            non_empty = df[df['length'].notna() & (df['length'] != '')]
+            if len(non_empty) > 0:
+                self.logger.info("\n=== Length-wise Summary ===")
+                for length in sorted(non_empty['length'].unique()):
+                    len_df = non_empty[non_empty['length'] == length]
+                    self.logger.info(f"\nLength: {length} ({len(len_df)} samples)")
+                    for col in numeric_cols:
+                        mean_val = len_df[col].mean()
+                        self.logger.info(f"  {col}: {mean_val:.4f}")
         
         return df

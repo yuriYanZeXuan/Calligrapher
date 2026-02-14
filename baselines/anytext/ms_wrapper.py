@@ -225,7 +225,9 @@ class AnyText2Model(TorchModel):
         print('Original weights loaded!')
 
     def init_model(self, **kwargs):
-        font_path = kwargs.get('font_path', 'font/Arial_Unicode.ttf')
+        print(kwargs)
+        # font_path = kwargs.get('font_path', 'font/Arial_Unicode.ttf')
+        font_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/anytext/font/Arial_Unicode.ttf"
         self.font = ImageFont.truetype(font_path, size=60)
         cfg_path = kwargs.get('cfg_path', 'models_yaml/anytext2_sd15.yaml')
         self.ckpt_path = kwargs.get('model_path', os.path.join(self.model_dir, 'anytext_v2.0.ckpt'))

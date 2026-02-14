@@ -212,11 +212,19 @@ def find_result_image(results_dir: str, sample_id: str) -> Optional[str]:
     """Find result image for a sample. Returns None if not found."""
     results_dir = Path(results_dir)
     
+    # Exact match: {id}.ext
     for ext in ['.png', '.jpg', '.jpeg']:
         path = results_dir / f"{sample_id}{ext}"
         if path.exists():
             return str(path)
     
+    # run_parallel_benchmark convention: result_{id}.ext
+    for ext in ['.png', '.jpg', '.jpeg']:
+        path = results_dir / f"result_{sample_id}{ext}"
+        if path.exists():
+            return str(path)
+    
+    # Pattern matching fallback
     for pattern in [f"result_*_{sample_id}_*.png", f"result_{sample_id}_*.png", f"*{sample_id}*.png"]:
         matches = list(results_dir.glob(pattern))
         if matches:
@@ -620,7 +628,7 @@ def main():
     parser.add_argument('--benchmark', type=str, required=True,
                        help='Path to benchmark file')
     parser.add_argument('--benchmark_type', type=str, default='longtext',
-                       choices=['longtext', 'oneig', 'cvtg', 'generic'],
+                       choices=['longtext', 'oneig', 'cvtg', 'unseenwords', 'generic'],
                        help='Benchmark type')
     parser.add_argument('--output', type=str, required=True,
                        help='Output JSONL file path')

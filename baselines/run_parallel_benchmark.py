@@ -35,7 +35,7 @@ sys.path.extend([
 
 # Model paths configuration
 MODEL_PATHS = {
-    'anytext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/AnyText',
+    'anytext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/anytext2',
     'qwenedit': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/QwenEdit2509',
     'fluxfill': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
     'fluxdev': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX.1-dev',

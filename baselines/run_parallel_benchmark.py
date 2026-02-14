@@ -30,6 +30,7 @@ sys.path.extend([
     os.path.join(BASE_DIR, 'z_image'),
     os.path.join(BASE_DIR, 'qwenimage'),
     os.path.join(BASE_DIR, 'nanobanana'),
+    os.path.join(BASE_DIR, 'FluxText'),
 ])
 
 # Model paths configuration
@@ -44,6 +45,7 @@ MODEL_PATHS = {
     'glm_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/glm_image',
     'z_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
     'qwenimage': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen-image-2512',
+    'fluxtext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/fluxtext_lora.safetensors',
 }
 
 # --- Model Wrappers ---
@@ -303,6 +305,22 @@ class NanoBananaWrapper(ModelWrapper):
             image_size="1K"
         )
 
+class FluxTextModelWrapper(ModelWrapper):
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from inference_fluxtext import FluxTextGenerator
+        self.generator = FluxTextGenerator(
+            model_path=self.model_path or MODEL_PATHS['fluxtext'],
+            device=device
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        self.generator.generate(
+            prompt=prompt,
+            output_path=output_path,
+            seed=42
+        )
+
 # Model registry
 MODELS = {
     'textflux': TextFluxWrapper,
@@ -315,7 +333,8 @@ MODELS = {
     'glm_image': GlmImageWrapper,
     'z_image': ZImageWrapper,
     'qwenimage': QwenImageWrapper,
-    'nanobanana': NanoBananaWrapper
+    'nanobanana': NanoBananaWrapper,
+    'fluxtext': FluxTextModelWrapper,
 }
 
 # --- Data Loading ---

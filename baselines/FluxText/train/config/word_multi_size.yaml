@@ -1,0 +1,67 @@
+flux_path: "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill"
+dtype: "bfloat16"
+model_type: flux_fill
+
+model:
+  union_cond_attn: true
+  add_cond_attn: false
+  latent_lora: false
+  attn_mask: false
+  use_byt5_mask: false
+  mask_para:
+    base_ratio: 0.6
+
+train:
+  accumulate_grad_batches: 4
+  dataloader_workers: 5
+  save_interval: 1000
+  sample_interval: 2000
+  max_steps: -1
+  gradient_checkpointing: true
+  save_path: "runs_word_fill_multi_size"
+
+  condition_type: "word_fill"
+  dataset:
+    type: "word"
+    glyph_scale: 1
+    drop_text_prob: 0.1
+    drop_image_prob: 0.1
+    random_select: true
+    #condition_size: 512
+    #random_select: true
+  
+  bucket_config:
+    512px: 
+      1: [1.0, 8]  # 12
+    768px:
+      1: [1.0, 4]   # 6
+    1024px:
+      1: [1.0, 2]   # 2
+
+  wandb:
+    project: "FLUXText"
+
+  reuse_lora_path: reuse.safetensors
+  lora_config:
+    r: 256
+    lora_alpha: 256
+    init_lora_weights: "gaussian"
+    target_modules: "(.*x_embedder|.*(?<!single_)transformer_blocks\\.[0-9]+\\.norm1\\.linear|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_k|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_q|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_v|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_out\\.0|.*(?<!single_)transformer_blocks\\.[0-9]+\\.ff\\.net\\.2|.*single_transformer_blocks\\.[0-9]+\\.norm\\.linear|.*single_transformer_blocks\\.[0-9]+\\.proj_mlp|.*single_transformer_blocks\\.[0-9]+\\.proj_out|.*single_transformer_blocks\\.[0-9]+\\.attn.to_k|.*single_transformer_blocks\\.[0-9]+\\.attn.to_q|.*single_transformer_blocks\\.[0-9]+\\.attn.to_v|.*single_transformer_blocks\\.[0-9]+\\.attn.to_out)"
+
+  optimizer:
+    type: "Prodigy"
+    params:
+      lr: 1
+      use_bias_correction: true
+      safeguard_warmup: true
+      weight_decay: 0.01
+
+  odm_loss:
+    modelpath: "epoch_100.pt"
+    w_loss_f: 1
+    w_loss_1: 20
+    w_loss_2: 20
+    w_loss_3: 20
+    w_loss_4: 20
+
+

@@ -3,3 +3,4 @@
 # python baselines/run_benchmark.py --model fluxfill --benchmark CVTG-2K
 # python baselines/run_benchmark.py --model textcrafter_flux --benchmark LongText-Bench
 python baselines/run_parallel_benchmark.py --model qwenimage --benchmark LongText-Bench
+python baselines/run_parallel_benchmark.py --model nanobanana --benchmark UnseenWords --gpus 1 --resume --skip-eval

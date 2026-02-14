@@ -165,7 +165,7 @@ class EmbeddingManager(nn.Module):
                 args = edict()
                 args.rec_image_shape = "3, 48, 320"
                 args.rec_batch_num = 6
-                args.rec_char_dict_path = './ocr_recog/ppocr_keys_v1.txt'
+                args.rec_char_dict_path = '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/anytext/ocr_recog/ppocr_keys_v1.txt'
                 args.use_fp16 = False
                 self.style_encoder = TextRecognizer(args, self.font_predictor)
                 for param in self.font_predictor.parameters():

@@ -71,18 +71,91 @@ class AnyTextWrapper(ModelWrapper):
         self.inpainter = AnyTextInpainter(model_dir=path, use_fp16=True)
 
     def generate(self, prompt, output_path, **kwargs):
-        text_list = kwargs.get('text') or kwargs.get('sentence_list') or []
-        text_prompt = " ".join([f'"{t}"' for t in text_list]) if isinstance(text_list, list) else f'"{text_list}"'
+        # Get text list from kwargs - compatible with UnseenWords format
+        # UnseenWords format: 'text': ['word1', 'word2'] or 'text': 'word'
+        text = kwargs.get('text', [])
+        
+        # Normalize to list format
+        if isinstance(text, list) and len(text) > 0:
+            text_list = text
+        elif isinstance(text, str) and text.strip():
+            text_list = [text]
+        else:
+            text_list = [" "]  # Default empty text
+        
+        width = kwargs.get('width', 512)
+        height = kwargs.get('height', 512)
+        
+        # Format text prompt for AnyText: "text1" "text2" ...
+        text_prompt = " ".join([f'"{t}"' for t in text_list])
         
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Generate position images for multi-line text support
+        # AnyText needs position masks that match the number of text lines
+        if len(text_list) > 1:
+            draw_pos = self._create_position_masks(len(text_list), width, height)
+        else:
+            draw_pos = None  # Single text uses default zero mask
+        
         results = self.inpainter.generate(
-            img_prompt=prompt, text_prompt=text_prompt, draw_pos=None,
-            seed=42, img_count=1, output_dir=os.path.dirname(output_path)
+            img_prompt=prompt, text_prompt=text_prompt, draw_pos=draw_pos,
+            width=width, height=height, seed=42, img_count=1,
+            output_dir=os.path.dirname(output_path)
         )
         
         if results:
             img = results[0] if isinstance(results[0], Image.Image) else Image.fromarray(results[0])
             img.save(output_path)
+    
+    def _create_position_masks(self, n_lines, width, height, layout='vertical'):
+        """Create position masks for multi-line text generation.
+        
+        Args:
+            n_lines: Number of text lines
+            width: Image width
+            height: Image height
+            layout: 'vertical' (default) or 'horizontal'
+        
+        Returns:
+            numpy array of shape (height, width, 1) with separated position regions
+        """
+        import cv2
+        import numpy as np
+        
+        pos_img = np.zeros((height, width), dtype=np.uint8)
+        
+        if layout == 'vertical':
+            # Distribute text lines vertically with some spacing
+            margin = height // 10
+            available_height = height - 2 * margin
+            line_height = available_height // (n_lines + 1)
+            line_width = int(width * 0.8)
+            x_start = (width - line_width) // 2
+            
+            for i in range(n_lines):
+                y_center = margin + (i + 1) * line_height
+                y_start = y_center - line_height // 3
+                y_end = y_center + line_height // 3
+                # Draw filled rectangle for each text position
+                cv2.rectangle(pos_img, (x_start, y_start), (x_start + line_width, y_end), 255, -1)
+        else:
+            # Horizontal layout
+            margin = width // 10
+            available_width = width - 2 * margin
+            line_width = available_width // (n_lines + 1)
+            line_height = int(height * 0.2)
+            y_start = (height - line_height) // 2
+            
+            for i in range(n_lines):
+                x_center = margin + (i + 1) * line_width
+                x_start = x_center - line_width // 3
+                x_end = x_center + line_width // 3
+                cv2.rectangle(pos_img, (x_start, y_start), (x_end, y_start + line_height), 255, -1)
+        
+        # Convert to 3-channel format expected by AnyText (white pos on black bg)
+        pos_img = pos_img[..., None]
+        return pos_img
 
 class QwenEditWrapper(ModelWrapper):
     def __init__(self, device="cuda", model_path=None):

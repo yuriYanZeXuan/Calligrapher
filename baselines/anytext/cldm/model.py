@@ -22,7 +22,8 @@ def load_state_dict(ckpt_path, location='cpu'):
 
 
 def create_model(config_path, cond_stage_path=None, use_fp16=False):
-    config = OmegaConf.load(config_path)
+    # config = OmegaConf.load(confi
+    config=OmegaConf.load("/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/anytext/models_yaml/anytext2_sd15.yaml")
     if cond_stage_path:
         config.model.params.cond_stage_config.params.version = cond_stage_path  # use pre-downloaded ckpts, in case blocked
     if use_fp16:

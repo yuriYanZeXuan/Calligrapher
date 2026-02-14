@@ -3,7 +3,7 @@
 # --- Configuration ---
 
 # Path to the FluxText LoRA safetensors checkpoint.
-MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/fluxtext_lora.safetensors"
+MODEL_PATH="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX-Text/model_multisize/pytorch_lora_weights.safetensors"
 
 # Path to the YAML config file.
 CONFIG_PATH="train/config/word_512_size.yaml"

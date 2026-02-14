@@ -42,6 +42,7 @@ MODEL_PATHS = {
     'anytext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/anytext2',
     'textflux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
     'zimage': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
+    'fluxfill': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
 }
 
 
@@ -344,6 +345,50 @@ class TextFluxInpaintWrapper:
         return os.path.exists(output_path)
 
 
+class FluxFillInpaintWrapper:
+    """Wrapper for FluxFill inpainting."""
+    
+    def __init__(self, model_path=None):
+        self.model_path = model_path or MODEL_PATHS['fluxfill']
+        print(f"Initializing FluxFill from {self.model_path}...")
+        
+        # Import here to avoid loading if not used
+        from inference_fluxfill import FluxFillGenerator
+        self.generator = FluxFillGenerator(
+            model_path=self.model_path,
+            device="cuda"
+        )
+        print("FluxFill initialized.")
+    
+    def generate(self, prompt: str, text_list: list, background_img: Image.Image,
+                 mask_img: Image.Image, output_path: str, seed=42):
+        """Inpaint text onto background using mask with FluxFill."""
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Resize images to 32-multiple (required by FluxFill)
+        width, height = background_img.size
+        new_width = (width // 32) * 32
+        new_height = (height // 32) * 32
+        
+        if (width, height) != (new_width, new_height):
+            background_img = background_img.resize((new_width, new_height), Image.LANCZOS)
+            mask_img = mask_img.resize((new_width, new_height), Image.LANCZOS)
+        
+        # FluxFill uses the full prompt directly
+        result = self.generator.generate(
+            prompt=prompt,
+            image=background_img,
+            mask_image=mask_img,
+            seed=seed,
+            num_inference_steps=50,
+            guidance_scale=7.5,
+            output_path=output_path
+        )
+        
+        print(f"FluxFill result saved to {output_path}")
+        return os.path.exists(output_path)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate inpainting dataset using Calligrapher Pass1 layout",
@@ -364,8 +409,9 @@ Examples:
       --data_dir /path/to/custom/UnseenWords
         """
     )
-    parser.add_argument("--model", type=str, required=True, choices=['anytext', 'textflux'],
-                       help="Inpainting model to use")
+    parser.add_argument("--model", type=str, default=None,
+                       choices=['none', 'anytext', 'textflux', 'fluxfill'],
+                       help="Inpainting model to use. 'none'=only generate masks, 'anytext'/'textflux'/'fluxfill'=inpainting with existing masks")
     parser.add_argument("--output_dir", type=str, required=True,
                        help="Output directory for results")
     parser.add_argument("--data_dir", type=str, default=None,
@@ -380,37 +426,78 @@ Examples:
                        help="Dilate mask kernel size (0=disabled)")
     parser.add_argument("--seed", type=int, default=42,
                        help="Random seed for generation")
+    parser.add_argument("--mask_info", type=str, default=None,
+                       help="Path to mask info JSON (required when model is not 'none')")
     args = parser.parse_args()
     
     # Setup output directories
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "images").mkdir(exist_ok=True)
-    (output_dir / "masks").mkdir(exist_ok=True)
-    (output_dir / "layouts").mkdir(exist_ok=True)
     
-    # Load dataset
-    data_dir = Path(args.data_dir) if args.data_dir else None
-    dataset = load_unseenwords_dataset(data_dir)
+    # Determine working mode and paths
+    if args.model is None or args.model == 'none':
+        # Mask generation mode: generate masks and save info
+        mode = 'mask_gen'
+        masks_dir = output_dir / "masks"
+        layouts_dir = output_dir / "layouts"
+        images_dir = output_dir / "images"
+        results_path = output_dir / "mask_info.json"
+    else:
+        # Inpainting mode: use existing masks to generate inpainting results
+        mode = 'inpainting'
+        if args.mask_info is None:
+            # Try to find mask_info.json in output_dir or parent directory
+            potential_path = output_dir / "mask_info.json"
+            if potential_path.exists():
+                args.mask_info = str(potential_path)
+            else:
+                raise ValueError(f"--mask_info is required when model is '{args.model}'")
+        model_output_dir = output_dir / args.model
+        model_output_dir.mkdir(parents=True, exist_ok=True)
+        masks_dir = output_dir / "masks"  # Read masks from original location
+        layouts_dir = model_output_dir / "layouts"
+        images_dir = model_output_dir / "images"
+        results_path = model_output_dir / "results.json"
     
-    if args.limit:
-        dataset = dataset[:args.limit]
-        print(f"Limited to {args.limit} samples")
+    masks_dir.mkdir(exist_ok=True)
+    layouts_dir.mkdir(exist_ok=True)
+    images_dir.mkdir(exist_ok=True)
+    
+    # Load dataset or mask info
+    if mode == 'mask_gen':
+        data_dir = Path(args.data_dir) if args.data_dir else None
+        dataset = load_unseenwords_dataset(data_dir)
+        
+        if args.limit:
+            dataset = dataset[:args.limit]
+            print(f"Limited to {args.limit} samples")
+    else:
+        # Inpainting mode: load from mask_info.json
+        print(f"\n=== Loading mask info from {args.mask_info} ===")
+        with open(args.mask_info, 'r') as f:
+            mask_info_list = json.load(f)
+        
+        if args.limit:
+            mask_info_list = mask_info_list[:args.limit]
+            print(f"Limited to {args.limit} samples")
+        dataset = mask_info_list
     
     # Initialize models
     print("\n=== Initializing Models ===")
     pass1_gen = Pass1LayoutGenerator()
     
-    if args.model == 'anytext':
-        inpaint_model = AnyTextInpaintWrapper()
-    elif args.model == 'textflux':
-        inpaint_model = TextFluxInpaintWrapper()
-    else:
-        raise ValueError(f"Unknown model: {args.model}")
+    if mode == 'inpainting':
+        if args.model == 'anytext':
+            inpaint_model = AnyTextInpaintWrapper()
+        elif args.model == 'textflux':
+            inpaint_model = TextFluxInpaintWrapper()
+        elif args.model == 'fluxfill':
+            inpaint_model = FluxFillInpaintWrapper()
+        else:
+            raise ValueError(f"Unknown model: {args.model}")
     
     # Process each sample
     print(f"\n=== Generating {len(dataset)} Samples ===")
-    results_path = output_dir / "results.json"
     results = []
     
     # Load existing results if any
@@ -419,88 +506,138 @@ Examples:
             results = json.load(f)
         print(f"Loaded {len(results)} existing results from {results_path}")
     
+    # Track processed IDs to avoid duplicates
+    processed_ids = {r['id'] for r in results}
+    
     for item in tqdm(dataset, desc="Processing"):
-        item_id = item['id']
-        prompt = item['prompt']
-        text_list = item['text']
-        
         try:
-            # Step 1: Pass1 + VLM Layout
-            ref_img, typography_plan, clean_prompt = pass1_gen.generate_layout(
-                prompt, text_list, seed=args.seed
-            )
-            
-            # Save layout info
-            layout_dir = output_dir / "layouts"
-            layout_dir.mkdir(parents=True, exist_ok=True)
-            layout_path = layout_dir / f"{item_id}_layout.json"
-            with open(layout_path, 'w') as f:
-                json.dump({
-                    'prompt': prompt,
-                    'clean_prompt': clean_prompt,
-                    'text': text_list,
-                    'typography_plan': typography_plan,
-                }, f, indent=2)
-            
-            # Save reference image
-            images_dir = output_dir / "images"
-            images_dir.mkdir(parents=True, exist_ok=True)
-            ref_path = images_dir / f"{item_id}_reference.png"
-            ref_img.save(ref_path)
-            
-            # Step 2: Create mask from bboxes (text regions to be edited)
-            text_regions = typography_plan.get('text_regions', [])
-            mask_img = create_mask_from_bboxes(
-                (1024, 1024), text_regions, expand_ratio=args.expand_mask_ratio
-            )
-            
-            if args.dilate_mask > 0:
-                mask_img = dilate_mask(mask_img, kernel_size=args.dilate_mask)
-            
-            masks_dir = output_dir / "masks"
-            masks_dir.mkdir(parents=True, exist_ok=True)
-            mask_path = masks_dir / f"{item_id}_mask.png"
-            mask_img.save(mask_path)
-            
-            # Step 3: Inpaint on reference image
-            result_path = output_dir / "images" / f"result_{item_id}.png"
-            success = inpaint_model.generate(
-                prompt=prompt,
-                text_list=text_list,
-                background_img=ref_img,
-                mask_img=mask_img,
-                output_path=str(result_path),
-                seed=args.seed
-            )
-            
-            if success:
+            if mode == 'mask_gen':
+                # Mask generation mode
+                item_id = item['id']
+                prompt = item['prompt']
+                text_list = item['text']
+                
+                if item_id in processed_ids:
+                    continue
+                
+                # Step 1: Pass1 + VLM Layout
+                ref_img, typography_plan, clean_prompt = pass1_gen.generate_layout(
+                    prompt, text_list, seed=args.seed
+                )
+                
+                # Save layout info
+                layout_path = layouts_dir / f"{item_id}_layout.json"
+                with open(layout_path, 'w') as f:
+                    json.dump({
+                        'prompt': prompt,
+                        'clean_prompt': clean_prompt,
+                        'text': text_list,
+                        'typography_plan': typography_plan,
+                    }, f, indent=2)
+                
+                # Save reference image
+                ref_path = images_dir / f"{item_id}_reference.png"
+                ref_img.save(ref_path)
+                
+                # Step 2: Create mask from bboxes (text regions to be edited)
+                text_regions = typography_plan.get('text_regions', [])
+                mask_img = create_mask_from_bboxes(
+                    (1024, 1024), text_regions, expand_ratio=args.expand_mask_ratio
+                )
+                
+                if args.dilate_mask > 0:
+                    mask_img = dilate_mask(mask_img, kernel_size=args.dilate_mask)
+                
+                mask_path = masks_dir / f"{item_id}_mask.png"
+                mask_img.save(mask_path)
+                
+                # Record mask info with source info
                 result_item = {
                     'id': item_id,
                     'prompt': prompt,
                     'text': text_list,
-                    'output': str(result_path),
-                    'layout': str(layout_path),
                     'mask': str(mask_path),
+                    'layout': str(layout_path),
+                    'reference': str(ref_path),
+                    'category': item.get('category', ''),
+                    'length': item.get('length', ''),
+                    'text_length': item.get('text_length', 0),
+                    'prompt_id': item.get('prompt_id', 0),
+                    'source_jsonl': item_id.rsplit('_', 1)[0] if '_' in item_id else '',
                 }
                 results.append(result_item)
+                processed_ids.add(item_id)
                 
                 # Immediately append to JSON file
                 with open(results_path, 'w') as f:
                     json.dump(results, f, indent=2)
+                    
+            else:
+                # Inpainting mode: use existing mask info
+                item_id = item['id']
+                prompt = item['prompt']
+                text_list = item['text']
+                mask_path = item['mask']
+                
+                if item_id in processed_ids:
+                    continue
+                
+                # Load existing mask and reference image
+                mask_img = Image.open(mask_path).convert('L')
+                ref_img = Image.open(item['reference']).convert('RGB')
+                
+                # Step: Inpaint on reference image
+                result_path = images_dir / f"result_{item_id}.png"
+                success = inpaint_model.generate(
+                    prompt=prompt,
+                    text_list=text_list,
+                    background_img=ref_img,
+                    mask_img=mask_img,
+                    output_path=str(result_path),
+                    seed=args.seed
+                )
+                
+                if success:
+                    # Copy layout info to model output dir
+                    layout_path = layouts_dir / f"{item_id}_layout.json"
+                    import shutil
+                    shutil.copy(item['layout'], layout_path)
+                    
+                    result_item = {
+                        'id': item_id,
+                        'prompt': prompt,
+                        'text': text_list,
+                        'output': str(result_path),
+                        'layout': str(layout_path),
+                        'mask': mask_path,
+                        'reference': item['reference'],
+                        'category': item.get('category', ''),
+                        'length': item.get('length', ''),
+                        'source_jsonl': item.get('source_jsonl', ''),
+                    }
+                    results.append(result_item)
+                    processed_ids.add(item_id)
+                    
+                    # Immediately append to JSON file
+                    with open(results_path, 'w') as f:
+                        json.dump(results, f, indent=2)
             
         except Exception as e:
-            print(f"\nError processing {item_id}: {e}")
+            print(f"\nError processing {item.get('id', 'unknown')}: {e}")
             import traceback
             traceback.print_exc()
             continue
     
     print(f"\n=== Done ===")
     print(f"Generated {len(results)}/{len(dataset)} samples")
-    print(f"Results saved to {output_dir}")
-    
-    # Print evaluation command
-    print(f"\nTo evaluate:")
-    print(f"  python -m eval.eval_ocr --input_dir {output_dir}/images")
+    if mode == 'inpainting':
+        print(f"Results saved to {output_dir / args.model}")
+        print(f"\nTo evaluate:")
+        print(f"  python -m eval.eval_ocr --input_dir {output_dir / args.model / 'images'}")
+    else:
+        print(f"Results saved to {output_dir}")
+        print(f"\nTo run inpainting with generated masks:")
+        print(f"  python generate_inpaint_dataset.py --model anytext --output_dir {output_dir} --mask_info {results_path}")
 
 
 if __name__ == "__main__":

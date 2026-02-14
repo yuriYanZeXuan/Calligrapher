@@ -98,14 +98,17 @@ class AnyTextInpainter:
 
         h, w = source_img.shape[:2]
         
-        # In edit mode, pos_imgs are created by combining the inverted source and the mask
-        pos_imgs = 255 - source_img
-        # Ensure mask is single channel
+        # Use mask directly as position indicator for text placement.
+        # The old approach (255 - source_img + mask) causes false positive positions
+        # when the source image has dark/black pixels, leading to excessive masking
+        # and black blocks in the output.
         if mask_img.ndim == 3:
             mask_img = mask_img[..., 0]
-        edit_mask = cv2.resize(mask_img, (w, h))[..., None]
-        pos_imgs = pos_imgs.astype(np.float32) + edit_mask.astype(np.float32)
-        pos_imgs = pos_imgs.clip(0, 255).astype(np.uint8)
+        edit_mask = cv2.resize(mask_img, (w, h))
+        # Binarize mask: white (255) where text should go, black (0) elsewhere
+        _, bin_mask = cv2.threshold(edit_mask, 127, 255, cv2.THRESH_BINARY)
+        # Make 3-channel for compatibility with ms_wrapper processing
+        pos_imgs = np.stack([bin_mask, bin_mask, bin_mask], axis=-1).astype(np.uint8)
 
         params = {
             "image_count": img_count,

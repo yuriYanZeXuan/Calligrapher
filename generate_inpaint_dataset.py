@@ -35,6 +35,7 @@ sys.path.extend([
     str(BASELINES_DIR),
     str(BASELINES_DIR / "anytext"),
     str(BASELINES_DIR / "textflux"),
+    str(BASELINES_DIR / "FluxText"),
 ])
 
 # Model paths configuration
@@ -43,6 +44,7 @@ MODEL_PATHS = {
     'textflux': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
     'zimage': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
     'fluxfill': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux_fill',
+    'fluxtext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/FLUX-Text/model_multisize/pytorch_lora_weights.safetensors',
 }
 
 
@@ -389,6 +391,55 @@ class FluxFillInpaintWrapper:
         return os.path.exists(output_path)
 
 
+class FluxTextInpaintWrapper:
+    """Wrapper for FluxText mask-guided inpainting.
+
+    Uses FluxText's condition injection LoRA to render specific text
+    content within mask regions on a source image.
+    """
+
+    def __init__(self, model_path=None):
+        self.model_path = model_path or MODEL_PATHS['fluxtext']
+        print(f"Initializing FluxText from {self.model_path}...")
+
+        from inference_fluxtext import FluxTextGenerator
+        self.generator = FluxTextGenerator(
+            model_path=self.model_path,
+            device="cuda",
+        )
+        print("FluxText initialized.")
+
+    def generate(self, prompt: str, text_list: list, background_img: Image.Image,
+                 mask_img: Image.Image, output_path: str, seed=42):
+        """Inpaint text onto background using mask with FluxText.
+
+        FluxText renders glyph text within the mask contours, using its
+        condition injection LoRA for high-quality text generation.
+        """
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        # Build prompt that includes the text content
+        text_str = " ".join([f'"{t}"' for t in text_list])
+        full_prompt = f'{prompt}, that reads {text_str}'
+
+        # Ensure mask is L-mode
+        mask_l = mask_img.convert("L")
+
+        result = self.generator.generate(
+            prompt=full_prompt,
+            text=text_list,
+            image=background_img,
+            mask_image=mask_l,
+            output_path=output_path,
+            seed=seed,
+            num_inference_steps=28,
+            guidance_scale=3.5,
+        )
+
+        print(f"FluxText result saved to {output_path}")
+        return os.path.exists(output_path)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate inpainting dataset using Calligrapher Pass1 layout",
@@ -410,8 +461,8 @@ Examples:
         """
     )
     parser.add_argument("--model", type=str, default=None,
-                       choices=['none', 'anytext', 'textflux', 'fluxfill'],
-                       help="Inpainting model to use. 'none'=only generate masks, 'anytext'/'textflux'/'fluxfill'=inpainting with existing masks")
+                       choices=['none', 'anytext', 'textflux', 'fluxfill', 'fluxtext'],
+                       help="Inpainting model to use. 'none'=only generate masks, 'anytext'/'textflux'/'fluxfill'/'fluxtext'=inpainting with existing masks")
     parser.add_argument("--output_dir", type=str, required=True,
                        help="Output directory for results")
     parser.add_argument("--data_dir", type=str, default=None,
@@ -493,6 +544,8 @@ Examples:
             inpaint_model = TextFluxInpaintWrapper()
         elif args.model == 'fluxfill':
             inpaint_model = FluxFillInpaintWrapper()
+        elif args.model == 'fluxtext':
+            inpaint_model = FluxTextInpaintWrapper()
         else:
             raise ValueError(f"Unknown model: {args.model}")
     

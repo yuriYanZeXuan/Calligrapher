@@ -182,6 +182,51 @@ def _make_full_mask_and_glyph(text, font, width, height):
     return mask, glyphs
 
 
+def _make_glyph_from_mask(font, mask_np, text_list, width, height):
+    """Create glyph(s) from mask contours and text list.
+
+    For mask-guided inpainting: finds contours in the mask, matches them
+    with the text_list items, and renders each glyph within its contour.
+
+    Args:
+        font: PIL ImageFont for rendering.
+        mask_np: grayscale mask array (H, W), uint8, 255=text region.
+        text_list: list of text strings to render.
+        width, height: canvas dimensions.
+
+    Returns:
+        combined_glyph: np.ndarray (H, W, 1), float64, 1.0=text, 0.0=bg.
+    """
+    mask_uint8 = mask_np.astype(np.uint8)
+    contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        return np.zeros((height, width, 1), dtype=np.float64)
+
+    # Sort contours by position (top-down, then left-right)
+    def _contour_sort_key(c):
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            return (0, 0)
+        cy = M["m01"] / M["m00"]
+        cx = M["m10"] / M["m00"]
+        return (cy // 50, cx // 50)
+
+    contours = sorted(contours, key=_contour_sort_key)
+
+    # Render glyph for each text-contour pair
+    combined_glyph = np.zeros((height, width, 1), dtype=np.float64)
+
+    for i, text in enumerate(text_list):
+        if not text.strip():
+            continue
+        contour = contours[min(i, len(contours) - 1)]
+        glyph = _draw_glyph(font, text, contour, scale=1, width=width, height=height)
+        combined_glyph = np.maximum(combined_glyph, glyph)
+
+    return combined_glyph
+
+
 # ---------------------------------------------------------------------------
 # Main generator class
 # ---------------------------------------------------------------------------
@@ -243,10 +288,11 @@ class FluxTextGenerator:
         self,
         prompt: str,
         output_path: str,
-        text: str = None,
+        text=None,
         image: Image.Image = None,
         mask: np.ndarray = None,
         glyph: np.ndarray = None,
+        mask_image: Image.Image = None,
         seed: int = 42,
         num_inference_steps: int = 28,
         guidance_scale: float = 3.5,
@@ -261,15 +307,20 @@ class FluxTextGenerator:
             Text prompt describing the desired image.
         output_path : str
             Where to save the result.
-        text : str, optional
-            The literal text to render. If *None*, attempt to parse from
-            ``prompt`` (looks for quoted substrings). If still empty, a
-            full white mask with no glyph condition is used.
+        text : str or list[str], optional
+            The literal text to render. A list is accepted for multi-region
+            inpainting (one string per mask region). If *None*, attempt to
+            parse from ``prompt`` (looks for quoted substrings).
         image : PIL.Image, optional
-            Background image. Defaults to a white image of *width* x *height*.
+            Background / source image. Defaults to a white canvas.
         mask / glyph : np.ndarray, optional
-            Pre‑computed mask and glyph arrays. If not supplied they are
+            Pre-computed mask and glyph arrays. If not supplied they are
             generated automatically from *text*.
+        mask_image : PIL.Image, optional
+            Mask image for inpainting mode (L-mode, 255=text region).
+            When provided together with *text*, glyphs are automatically
+            rendered inside the mask contours. *image* should be the
+            background/source image.
         """
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
@@ -287,26 +338,50 @@ class FluxTextGenerator:
 
         # Resolve text -------------------------------------------------------
         if text is None:
-            # try to extract from prompt (quoted strings)
             import re
             matches = re.findall(r'["\'](.+?)["\']', prompt)
             text = " ".join(matches) if matches else ""
 
+        # Normalise to a list for multi-region support
+        if isinstance(text, list):
+            text_list = [t for t in text if t.strip()]
+            text_combined = " ".join(text_list)
+        else:
+            text_list = [text] if text.strip() else []
+            text_combined = text
+
         # Build condition images ---------------------------------------------
         if mask is not None and glyph is not None:
+            # Case 1: pre-computed numpy mask and glyph
             hint_img = Image.fromarray(mask).resize((tgt_w, tgt_h)).convert("RGB")
             glyph_img = Image.fromarray(
                 ((1 - glyph) * 255).astype(np.uint8).squeeze()
             ).resize((tgt_w, tgt_h)).convert("RGB")
-        elif text.strip():
+
+        elif mask_image is not None and text_combined.strip():
+            # Case 2: mask-guided inpainting – render glyph from mask contours
+            mask_resized = mask_image.resize((tgt_w, tgt_h)).convert("L")
+            mask_np = np.array(mask_resized)
+
+            raw_glyph = _make_glyph_from_mask(
+                self.font, mask_np, text_list, tgt_w, tgt_h
+            )
+
+            hint_img = Image.fromarray(mask_np).convert("RGB")
+            glyph_img_arr = ((1 - raw_glyph) * 255).astype(np.uint8).squeeze()
+            glyph_img = Image.fromarray(glyph_img_arr).convert("RGB")
+
+        elif text_combined.strip():
+            # Case 3: full-canvas generation (no external mask)
             raw_mask, raw_glyph = _make_full_mask_and_glyph(
-                text, self.font, tgt_w, tgt_h
+                text_combined, self.font, tgt_w, tgt_h
             )
             hint_img = Image.fromarray(raw_mask).resize((tgt_w, tgt_h)).convert("RGB")
             glyph_img_arr = ((1 - raw_glyph) * 255).astype(np.uint8).squeeze()
             glyph_img = Image.fromarray(glyph_img_arr).resize((tgt_w, tgt_h)).convert("RGB")
+
         else:
-            # No text → full white mask, white glyph (no text condition)
+            # Case 4: no text → full white mask, white glyph
             hint_img = Image.new("RGB", (tgt_w, tgt_h), "white")
             glyph_img = Image.new("RGB", (tgt_w, tgt_h), "white")
 
@@ -350,7 +425,27 @@ class FluxTextGenerator:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="FluxText Inference Script")
+    parser = argparse.ArgumentParser(
+        description="FluxText Inference Script",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Text generation (full-canvas, no mask):
+  python inference_fluxtext.py \\
+      --model_path /path/to/lora.safetensors \\
+      --prompt 'a logo that reads "HELLO"' \\
+      --output_path output/gen.png
+
+  # Mask-guided inpainting:
+  python inference_fluxtext.py \\
+      --model_path /path/to/lora.safetensors \\
+      --prompt 'a sign that reads "HELLO"' \\
+      --text "HELLO" \\
+      --image_path /path/to/source.png \\
+      --mask_path /path/to/mask.png \\
+      --output_path output/inpaint.png
+        """,
+    )
     parser.add_argument("--model_path", type=str, required=True,
                         help="Path to the FluxText LoRA safetensors checkpoint.")
     parser.add_argument("--config_path", type=str, default=None,
@@ -358,9 +453,11 @@ def main():
     parser.add_argument("--prompt", type=str, required=True,
                         help="Text prompt describing the desired image.")
     parser.add_argument("--text", type=str, default=None,
-                        help="Literal text to render (if not embedded in prompt).")
+                        help="Literal text to render (overrides parsing from prompt).")
     parser.add_argument("--image_path", type=str, default=None,
-                        help="Optional background image path.")
+                        help="Background / source image path (required for inpainting).")
+    parser.add_argument("--mask_path", type=str, default=None,
+                        help="Mask image path for inpainting (L-mode, white=text region).")
     parser.add_argument("--output_path", type=str, default="output/fluxtext_result.png",
                         help="Path to save the generated image.")
     parser.add_argument("--seed", type=int, default=42)
@@ -385,11 +482,16 @@ def main():
     if args.image_path:
         image = Image.open(args.image_path).convert("RGB")
 
+    mask_image = None
+    if args.mask_path:
+        mask_image = Image.open(args.mask_path).convert("L")
+
     generator.generate(
         prompt=args.prompt,
         output_path=args.output_path,
         text=args.text,
         image=image,
+        mask_image=mask_image,
         seed=args.seed,
         num_inference_steps=args.steps,
         guidance_scale=args.guidance_scale,

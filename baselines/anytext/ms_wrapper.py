@@ -259,6 +259,25 @@ class AnyText2Model(TorchModel):
             print(f'Translate: {old_prompt} --> {prompt}')
         return prompt, strs
 
+    def _translate_with_api(self, prompt):
+        """使用 DirectLLM（OpenAI 兼容接口）将中文 prompt 翻译成英文，保留 * 占位符不变。"""
+        try:
+            completion = self.trans_client.chat.completions.create(
+                model="qwen3-vl-235b-a22b-instruct",
+                messages=[
+                    {"role": "system", "content": "You are a translator. Translate the following Chinese text to English. Keep any * (asterisk) characters unchanged, do not translate or remove them. Reply with only the English translation, no explanation."},
+                    {"role": "user", "content": prompt}
+                ],
+                stream=False,
+                max_tokens=512,
+                temperature=0.3,
+            )
+            content = completion.choices[0].message.content
+            return content.strip() if content else None
+        except Exception as e:
+            print(f"Translation API error: {e}")
+            return None
+
     def is_chinese(self, text):
         text = checker._clean_text(text)
         for char in text:

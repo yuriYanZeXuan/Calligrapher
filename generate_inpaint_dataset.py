@@ -36,6 +36,7 @@ sys.path.extend([
     str(BASELINES_DIR / "anytext"),
     str(BASELINES_DIR / "textflux"),
     str(BASELINES_DIR / "FluxText"),
+    str(BASELINES_DIR / "fluxfill"),
 ])
 
 # Model paths configuration

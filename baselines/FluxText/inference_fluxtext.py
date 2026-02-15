@@ -95,7 +95,7 @@ def _draw_glyph(font, text, polygon, scale=1, width=512, height=512,
     enlarge_polygon = polygon * scale
     rect = cv2.minAreaRect(enlarge_polygon)
     box = cv2.boxPoints(rect)
-    box = np.int8(box)
+    box = np.int32(box)
     w, h = rect[1]
     angle = rect[2]
     if angle < -45:

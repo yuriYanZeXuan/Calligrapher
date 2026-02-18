@@ -46,6 +46,7 @@ MODEL_PATHS = {
     'z_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
     'qwenimage': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen-image-2512',
     'fluxtext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/fluxtext_lora.safetensors',
+    'ours': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
 }
 
 # --- Model Wrappers ---
@@ -394,6 +395,58 @@ class FluxTextModelWrapper(ModelWrapper):
             seed=42
         )
 
+class OursWrapper(ModelWrapper):
+    """Wrapper for our full pipeline (ZImageInference with 3-pass architecture).
+
+    Ablation flags:
+        no_inject:    disable glyph injection (Pass 2 becomes plain generation)
+        no_harmonize: disable FluxKlein refine (use Pass 2 result as final)
+        no_refiner:   disable prompt refiner (use raw prompt directly)
+    """
+
+    KLEIN_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
+
+    def __init__(self, device="cuda", model_path=None,
+                 no_inject=False, no_harmonize=False, no_refiner=False):
+        super().__init__(device, model_path)
+        self.no_inject = no_inject
+        self.no_harmonize = no_harmonize
+        self.no_refiner = no_refiner
+
+        from zimage_inference import ZImageInference, GenerationConfig
+        from infer.glyph_injector import InjectionConfig
+
+        self._GenerationConfig = GenerationConfig
+        self._InjectionConfig = InjectionConfig
+        self.inference = ZImageInference(
+            model_path=self.model_path or MODEL_PATHS['ours'],
+            device=device,
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        text = kwargs.get('text', [])
+        if isinstance(text, str):
+            text = [text] if text.strip() else []
+
+        injection_config = self._InjectionConfig()
+        config = self._GenerationConfig(
+            seed=42,
+            use_prompt_refiner=not self.no_refiner,
+            use_glyph_injection=not self.no_inject,
+            injection_config=injection_config,
+            use_harmonization=not self.no_harmonize,
+            klein_model_path=self.KLEIN_MODEL_PATH,
+        )
+
+        image = self.inference.generate(
+            prompt=prompt,
+            text_contents=text if text else None,
+            config=config,
+        )
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        image.save(output_path)
+
 # Model registry
 MODELS = {
     'textflux': TextFluxWrapper,
@@ -408,6 +461,7 @@ MODELS = {
     'qwenimage': QwenImageWrapper,
     'nanobanana': NanoBananaWrapper,
     'fluxtext': FluxTextModelWrapper,
+    'ours': OursWrapper,
 }
 
 # --- Data Loading ---
@@ -560,7 +614,14 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
         return
 
     # Initialize model
-    model = MODELS[args.model](device=device, model_path=args.model_path)
+    model_kwargs = {}
+    if args.model == 'ours':
+        model_kwargs = {
+            'no_inject': args.no_inject,
+            'no_harmonize': args.no_harmonize,
+            'no_refiner': args.no_refiner,
+        }
+    model = MODELS[args.model](device=device, model_path=args.model_path, **model_kwargs)
 
     # Generate
     
@@ -650,6 +711,13 @@ def main():
                        help="Number of GPUs to use")
     parser.add_argument("--output_dir",type=str,default=None,
                        help="Output directory")
+    # Ablation flags for 'ours' model
+    parser.add_argument("--no-inject", action='store_true',
+                       help="[ours] Disable glyph injection (Pass 2 becomes plain generation)")
+    parser.add_argument("--no-harmonize", action='store_true',
+                       help="[ours] Disable FluxKlein refine, use Pass 2 result as final")
+    parser.add_argument("--no-refiner", action='store_true',
+                       help="[ours] Disable prompt refiner, use raw prompt directly")
     args = parser.parse_args()
     
     # Setup

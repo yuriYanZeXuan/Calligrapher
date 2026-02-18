@@ -32,40 +32,39 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 PROMPT_TEMPLATES = {
     # ---- 核心：排版分析（Pass 1 参考图 → 排版规划 JSON）----
     "analyze_typography": (
-        "你是一个专业的图像排版分析专家。给你一张带有5×5网格和坐标标注的参考图和一组待渲染的文本/公式内容。\n"
-        "请分析参考图中文字的自然渲染风格和整体场景，然后为每个待渲染的文本/公式内容规划最佳排版方案。\n\n"
-        "图像上的5×5网格帮助你精确定位：\n"
-        "- 网格将图像分为4×4的16个区域\n"
-        "- 网格线交点处标注了归一化坐标 (0.0,0.0) 到 (1.0,1.0)\n"
-        "- 你可以参照这些坐标来确定文本区域的位置\n\n"
-        "你需要自主决定：\n"
-        "1. 将提供的文本内容拆分到合适数量的 block 中，保证每个block只包含一行文本/公式内容\n"
-        "2. 每个 block 在图像中的精确位置 (bbox，归一化坐标 [x_min, y_min, x_max, y_max]，范围 0-1)\n"
-        "   提示：可以参照网格坐标来确定，如(0.2,0.2)表示从左边20%、从上往20%的位置\n"
-        "3. 每个 block 的字体粗细 (font_weight: light/regular/bold)\n"
-        "4. 每个 block 的大小比例 (font_size_ratio: 0.1-1.0，相对于 block 高度)\n"
-        "5. 每个 block 的文字颜色 (color: hex 格式如 #FFFFFF)\n"
-        "6. 每个 block 的背景颜色 (background_color: hex 格式，用于渲染字形模版)\n"
-        "7. 是否为 LaTeX 公式 (is_latex: true/false)\n"
-        "8. 对齐方式 (alignment: left/center/right)\n\n"
-        "规划原则：\n"
-        "- bbox 不能重叠，不能超出图像边界 (0-1 范围)\n"
-        "- 利用网格坐标精确定位，如 bbox [0.2, 0.3, 0.8, 0.5] 表示从(0.2,0.3)到(0.8,0.5)的区域\n"
-        "- 文字颜色应与参考图的背景形成足够对比度\n"
-        "- background_color 应选择与参考图中文字区域背景相近的颜色\n"
-        "- 文字大小和位置应符合参考图中的自然布局风格\n"
-        "- 公式内容保持完整，不要拆分单个公式\n\n"
-        "请严格输出以下 JSON 格式，不要输出任何其他内容：\n"
+        "You are an expert in image typography analysis. Given a reference image with a 5×5 grid and coordinate annotations, "
+        "analyze the natural text rendering style and overall scene. Then plan the best typography layout for each text/formula item.\n\n"
+        "CRITICAL: The reference image shows text that is FLAT and FACING the screen directly (frontal view, no perspective distortion). "
+        "You must plan bboxes that are also flat and frontal - bboxes should have parallel top and bottom edges (approximately equal y_min and y_max across the width). "
+        "NO angled, slanted, or perspective-distorted text regions.\n\n"
+        "The 5×5 grid helps with precise positioning (normalized coordinates 0.0-1.0).\n\n"
+        "For each text block, determine:\n"
+        "- content: the text to render (one line per block)\n"
+        "- bbox: [x_min, y_min, x_max, y_max] in 0-1 range. MUST be flat/horizontal with y_min ≈ constant across width (frontal view, no perspective tilting)\n"
+        "- font_weight: light/regular/bold\n"
+        "- font_size_ratio: 0.1-1.0 relative to bbox height\n"
+        "- color: hex color matching the original text color in the reference image\n"
+        "- background_color: hex color matching the region background\n"
+        "- is_latex: true/false\n"
+        "- alignment: left/center/right\n\n"
+        "Rules:\n"
+        "- bboxes must not overlap or exceed image bounds\n"
+        "- bboxes must be FLAT and FACING the screen (y_min approximately equal for left and right sides, same for y_max)\n"
+        "- color must match the original text color in the reference image\n"
+        "- background_color must match the region background\n"
+        "- keep formulas intact\n"
+        "- match the reference image's natural layout style\n\n"
+        "Output strictly in this JSON format:\n"
         "```json\n"
         '{{\n'
         '  "image_analysis": {{\n'
-        '    "background_style": "描述背景风格",\n'
+        '    "background_style": "description",\n'
         '    "dominant_colors": ["#hex1", "#hex2"],\n'
-        '    "text_style_hint": "描述参考图中文字的视觉风格"\n'
+        '    "text_style_hint": "description"\n'
         '  }},\n'
         '  "text_regions": [\n'
         '    {{\n'
-        '      "content": "文本内容",\n'
+        '      "content": "text",\n'
         '      "bbox": [x_min, y_min, x_max, y_max],\n'
         '      "font_weight": "regular",\n'
         '      "font_size_ratio": 0.7,\n'
@@ -79,81 +78,51 @@ PROMPT_TEMPLATES = {
         "```"
     ),
 
-    # ---- 生成 clean prompt（去除文字/公式描述）----
+    # ---- Generate clean prompt (remove text/formula descriptions) ----
     "generate_clean_prompt": (
-        "你是一个图像生成 prompt 改写专家。你的任务是将用户提供的 prompt 改写为一个"
-        "明确不包含任何文字、公式、数学符号、字母、数字渲染的版本。\n\n"
-        "改写原则：\n"
-        "1. 保留原始场景、风格、构图、色彩等视觉描述\n"
-        "2. 删除所有关于文字内容的描述（如 'with text \"Hello\"'、'写着XXX'等）\n"
-        "3. 在适当位置添加强调：不渲染任何文字、字母、数字或公式\n"
-        "4. 可以用 'blank area'、'empty space'、'clean surface' 等替代原有文字区域的描述\n"
-        "5. 保持 prompt 长度适中\n\n"
-        "只输出改写后的 prompt，不要添加任何解释。"
+        "Rewrite the user's prompt to explicitly exclude any text, formulas, math symbols, letters, or numbers. "
+        "Keep the original scene, style, composition, and colors. Replace text regions with 'blank area', 'empty space', or 'clean surface'. "
+        "Output only the rewritten prompt, no explanations."
     ),
 
-    # ---- 生成 FluxKlein 风格化提示词（根据背景选择文字风格）----
+    # ---- Generate style prompt for FluxKlein (text style matching background) ----
     "generate_klein_style_prompt": (
-        "你是一个专业的图像编辑提示词专家。根据提供的背景场景描述，生成一个图像编辑指令，"
-        "要求将文字区域重绘为与背景协调但形成对比的文字风格。\n\n"
-        "核心原则：\n"
-        "1. 文字颜色必须与背景形成高对比度（深色背景用浅色字，浅色背景用深色字）\n"
-        "2. 文字风格要与整体场景协调（例如：黑板用粉笔字、白板用马克笔、纸张用墨水/印刷体）\n"
-        "3. 文字要有自然的纹理和质感（不是完美的数字字体）\n"
-        "4. 只修改文字区域，背景保持原样\n\n"
-        "常见场景对应风格：\n"
-        "- 黑板/深色背景 → 白色粉笔字，有粉笔纹理和轻微飞白\n"
-        "- 白板/浅色背景 → 黑色马克笔，有手写痕迹\n"
-        "- 纸张/羊皮纸 → 深色墨水/印刷体，可能有晕染效果\n"
-        "- 金属/混凝土 → 喷漆/刻字效果\n\n"
-        "只输出生成的编辑指令（英文），不要添加任何解释。格式示例：\n"
+        "Generate an image editing instruction to redraw text regions with a style that contrasts yet harmonizes with the background.\n\n"
+        "Principles:\n"
+        "- High contrast: light text on dark backgrounds, dark text on light backgrounds\n"
+        "- Style matches the scene (chalk on blackboard, marker on whiteboard, ink on paper, spray on concrete)\n"
+        "- Natural texture, not perfect digital fonts\n\n"
+        "Output only the editing instruction in English, no explanations. Example: "
         "'Rewrite the text in white chalk style with natural texture on the blackboard. No other changes.'"
     ),
 
-    # ---- Prompt 优化（从 prompt_refiner.py 迁移）----
+    # ---- Prompt refinement ----
     "refine_prompt": (
-        "你是一个专业的图像生成 prompt 优化专家。你的任务是将用户提供的简单描述"
-        "优化为详细、具体的图像生成 prompt。\n\n"
-        "优化原则：\n"
-        "1. 保持原始意图不变\n"
-        "2. 添加视觉细节（光线、色彩、构图、风格等）\n"
-        "3. 如果涉及文字内容，明确描述文字的位置、大小、字体风格\n"
-        "4. 使用清晰、具体的描述词汇\n"
-        "5. 保持 prompt 长度适中（50-150 词）\n\n"
-        "只输出优化后的 prompt，不要添加任何解释。"
+        "Optimize the user's simple description into a detailed image generation prompt (50-150 words). "
+        "Preserve the original intent while adding visual details (lighting, colors, composition, style). "
+        "Output only the optimized prompt, no explanations."
     ),
 
     "refine_prompt_with_text": (
-        "你是一个专业的图像生成 prompt 优化专家。你的任务是将用户提供的简单描述"
-        "优化为详细、具体的图像生成 prompt。\n\n"
-        "用户的描述中包含需要在图像中显示的文字内容。\n\n"
-        "优化原则：\n"
-        "1. 保持原始意图不变\n"
-        "2. 添加视觉细节（光线、色彩、构图、风格等）\n"
-        "3. 明确描述文字应该出现的位置和视觉效果\n"
-        "4. 描述文字的风格（手写、印刷、粉笔字等）\n"
-        "5. 使用清晰、具体的描述词汇\n"
-        "6. 保持 prompt 长度适中（50-150 词）\n\n"
-        "只输出优化后的 prompt，不要添加任何解释。"
+        "Optimize the user's simple description into a detailed image generation prompt (50-150 words). "
+        "The description includes text to be displayed in the image. Preserve intent, add visual details, "
+        "and specify text position, appearance, and style (handwritten, printed, chalk, etc.). "
+        "Output only the optimized prompt, no explanations."
     ),
 
-    # ---- 图像评分（从 test_time_scaling.py 迁移）----
+    # ---- Image scoring ----
     "score_image": (
-        "你是一个图像质量评估专家。请根据以下标准对图像进行评分：\n"
-        "1. 图像整体质量（清晰度、色彩、构图）：0-3分\n"
-        "2. 与 prompt 描述的符合程度：0-4分\n"
-        "3. 如果有文字内容要求，文字的准确性和可读性：0-3分\n\n"
-        "请只输出一个 0-10 之间的数字分数，不要有任何其他内容。"
+        "Rate this image 0-10 based on:\n"
+        "- Overall quality (clarity, color, composition): 0-3\n"
+        "- Alignment with prompt: 0-4\n"
+        "- Text accuracy and readability (if applicable): 0-3\n\n"
+        "Output only the numeric score, nothing else."
     ),
 
-    # ---- 图像排名（从 test_time_scaling.py 迁移）----
+    # ---- Image ranking ----
     "rank_images": (
-        "你是一个图像质量评估专家。请综合以下标准对这 {n} 张图片从最好到最差排序：\n"
-        "1. 图像整体质量（清晰度、色彩、构图）\n"
-        "2. 与 prompt 描述的符合程度\n"
-        "3. 如果有文字内容要求，文字的准确性和可读性\n\n"
-        "请只输出排名结果，格式为图片编号从最好到最差用逗号分隔，例如: 3,1,4,2\n"
-        "不要有任何其他内容。"
+        "Rank these {n} images from best to worst based on: overall quality, prompt alignment, and text accuracy (if applicable).\n\n"
+        "Output only the ranking as comma-separated indices (e.g., 3,1,4,2), nothing else."
     ),
 }
 
@@ -170,7 +139,7 @@ def _encode_image_b64(image: Image.Image) -> str:
 
 def _get_grid_font() -> ImageFont.FreeTypeFont:
     """获取用于网格坐标标注的字体。"""
-    font_path = Path(__file__).parent.parent / "assets" / "ChalkboardSE.ttc"
+    font_path = Path(__file__).parent.parent / "assets" / "Arial-Unicode-Bold.ttf"
     
     if font_path.exists():
         return ImageFont.truetype(str(font_path), 16)

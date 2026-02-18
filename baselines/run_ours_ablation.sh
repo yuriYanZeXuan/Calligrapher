@@ -9,7 +9,6 @@
 #   ours_no_refiner  : w/o prompt refiner   (--no-refiner)
 # ============================================================
 
-set -e
 
 BENCHMARK=UnseenWords
 GPUS=8

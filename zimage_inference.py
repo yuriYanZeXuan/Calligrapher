@@ -33,7 +33,7 @@ torch._dynamo.config.disable = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from train.zimage_ip.pipeline_z_image import ZImagePipeline
-from infer.VLM_agent import VLMAgent
+from infer.VLM_agent import VLMAgent, _add_grid_overlay
 from infer.glyph_injector import GlyphInjector, TextRegion, InjectionConfig, create_glyph_injector
 from infer.mylogger import TTSLogger
 
@@ -259,6 +259,16 @@ class ZImageInference:
 
             # === VLM 自主规划排版 ===
             print("=== VLM 排版规划 ===")
+            
+            # 生成并保存带网格的参考图（用于 debug）
+            reference_with_grid = _add_grid_overlay(reference_image, grid_size=5)
+            if self.logger is not None:
+                self.logger.save_image(
+                    reference_with_grid, "pass1_with_grid",
+                    caption=f"[Grid] {prompt[:150]}",
+                    subfolder="two_pass",
+                )
+            
             typography_plan = self.vlm_agent.analyze_typography(
                 reference_image, prompt, text_contents,
             )

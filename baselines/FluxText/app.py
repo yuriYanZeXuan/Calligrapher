@@ -201,11 +201,11 @@ def mode_select_change_func(mode_select):
 def image_upload_func(image):
     return gr.update(value=image)
 
-single_examples = [
-    ["lepto college of education, the written materials on the picture: LESOTHO , COLLEGE OF , RE BONA LESELI LESEL , EDUCATION .", Image.open("assets/hint_imgs.jpg"), Image.open("assets/hint_imgs_word.png"), Image.open("assets/hint.png"), 42],
-    ["keda group logo, that reads KDG , 科达股份 , 证券代码：600986 , 数字营销领军集团 .", Image.open("assets/hint_imgs1.jpg"), Image.open("assets/hint_imgs_word1.png"), Image.open("assets/hint1.png"), 42],
-    ["chinese calligraphy font with the word 'love' written in it, that reads 精神食粮 .", Image.open("assets/hint_imgs2.jpg"), Image.open("assets/hint_imgs_word2.png"), Image.open("assets/hint2.png"), 42],
-]
+# single_examples = [
+#     ["lepto college of education, the written materials on the picture: LESOTHO , COLLEGE OF , RE BONA LESELI LESEL , EDUCATION .", Image.open("assets/hint_imgs.jpg"), Image.open("assets/hint_imgs_word.png"), Image.open("assets/hint.png"), 42],
+#     ["keda group logo, that reads KDG , 科达股份 , 证券代码：600986 , 数字营销领军集团 .", Image.open("assets/hint_imgs1.jpg"), Image.open("assets/hint_imgs_word1.png"), Image.open("assets/hint1.png"), 42],
+#     ["chinese calligraphy font with the word 'love' written in it, that reads 精神食粮 .", Image.open("assets/hint_imgs2.jpg"), Image.open("assets/hint_imgs_word2.png"), Image.open("assets/hint2.png"), 42],
+# ]
 # Create the Gradio Blocks interface
 with gr.Blocks() as demo:
     gr.Markdown("# Image Generation with FLUX-Text")
@@ -236,14 +236,14 @@ with gr.Blocks() as demo:
             single_output_image = gr.Image(label="Generated Image")
 
     # Add examples for Single Condition Generation
-    gr.Examples(
-        examples=single_examples,
-        inputs=[prompt, img, glyph_img, mask_img, seed],
-        outputs=single_output_image,
-        fn=generate_image_func,
-        cache_examples=False,  # 缓存示例结果以加快加载速度
-        label="Examples"
-    )
+    # gr.Examples(
+    #     examples=single_examples,
+    #     inputs=[prompt, img, glyph_img, mask_img, seed],
+    #     outputs=single_output_image,
+    #     fn=generate_image_func,
+    #     cache_examples=False,  # 缓存示例结果以加快加载速度
+    #     label="Examples"
+    # )
 
     # Link the buttons to the functions
     img.upload(

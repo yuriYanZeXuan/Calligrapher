@@ -536,7 +536,6 @@ Examples:
     
     # Initialize models
     print("\n=== Initializing Models ===")
-    pass1_gen = Pass1LayoutGenerator()
     
     if mode == 'inpainting':
         if args.model == 'anytext':
@@ -549,7 +548,8 @@ Examples:
             inpaint_model = FluxTextInpaintWrapper()
         else:
             raise ValueError(f"Unknown model: {args.model}")
-    
+    else:
+        pass1_gen = Pass1LayoutGenerator()
     # Process each sample
     print(f"\n=== Generating {len(dataset)} Samples ===")
     results = []

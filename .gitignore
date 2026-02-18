@@ -36,3 +36,4 @@ dev/nanobanana_test_thought.txt
 docs/
 mathjax.tar.gz
 .agents
+manuscript/*

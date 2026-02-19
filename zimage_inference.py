@@ -58,12 +58,20 @@ class GenerationConfig:
     use_glyph_injection: bool = True
     injection_config: InjectionConfig = field(default_factory=InjectionConfig)
 
-    # Pass 3: FluxKlein img2img 风格化
-    use_harmonization: bool = True             # 启用 Pass 3 FluxKlein 风格化
+    # Pass 3: 风格化 harmonizer
+    use_harmonization: bool = True             # 启用 Pass 3 风格化
+    harmonizer_type: str = "klein"             # "klein" | "qwenedit"
+
+    # FluxKlein 参数
     klein_model_path: str = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
-    klein_steps: int = 10                      # FluxKlein 推理步数
-    klein_guidance_scale: float = 4.0          # FluxKlein guidance scale
-    klein_seed: Optional[int] = None           # FluxKlein seed
+    klein_steps: int = 10
+    klein_guidance_scale: float = 4.0
+    klein_seed: Optional[int] = None
+
+    # QwenEdit 参数
+    qwenedit_model_path: str = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen_edit_2511"
+    qwenedit_steps: int = 50
+    qwenedit_seed: Optional[int] = None
 
 
 class ZImageInference:
@@ -97,6 +105,7 @@ class ZImageInference:
         self._vlm_agent = None
         self._glyph_injector = None
         self._klein_generator = None
+        self._qwenedit_generator = None
         self._output_counter = 0
 
     # ---- 延迟加载属性 ----
@@ -129,7 +138,6 @@ class ZImageInference:
     def get_klein_generator(self, config: "GenerationConfig"):
         """延迟加载 FluxKlein 生成器（按需创建，避免浪费显存）。"""
         if self._klein_generator is None:
-            # 动态导入，避免不使用时也依赖 FluxKlein
             klein_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baselines", "fluxklein")
             if klein_dir not in sys.path:
                 sys.path.insert(0, klein_dir)
@@ -142,6 +150,22 @@ class ZImageInference:
             )
             print("FluxKlein 模型加载完成")
         return self._klein_generator
+
+    def get_qwenedit_generator(self, config: "GenerationConfig"):
+        """延迟加载 QwenEdit 生成器。"""
+        if self._qwenedit_generator is None:
+            qwenedit_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baselines", "qwenedit")
+            if qwenedit_dir not in sys.path:
+                sys.path.insert(0, qwenedit_dir)
+            from inference_qwenedit import QwenEditGenerator
+
+            print(f"正在加载 QwenEdit 模型: {config.qwenedit_model_path}")
+            self._qwenedit_generator = QwenEditGenerator(
+                model_path=config.qwenedit_model_path,
+                device=self.primary_device,
+            )
+            print("QwenEdit 模型加载完成")
+        return self._qwenedit_generator
 
     # ---- 主入口 ----
 
@@ -297,10 +321,10 @@ class ZImageInference:
             clean_prompt, noise, timesteps, injection_data, config,
         )
 
-        # === Pass 3: FluxKlein img2img 风格化 ===
+        # === Pass 3: 风格化 ===
         if config.use_harmonization:
-            print("=== Pass 3: FluxKlein img2img 风格化 ===")
-            image = self._run_pass3_klein_refine(
+            print(f"=== Pass 3: {config.harmonizer_type} 风格化 ===")
+            image = self._run_pass3_harmonize(
                 image, injection_data, typography_plan, config,
             )
 
@@ -472,37 +496,32 @@ class ZImageInference:
             image = self.pipeline.vae.decode(latent, return_dict=False)[0]
         return self.pipeline.image_processor.postprocess(image, output_type="pil")[0]
 
-    # ---- Pass 3: FluxKlein img2img 风格化 ----
+    # ---- Pass 3: 风格化 (harmonizer) ----
 
-    def _run_pass3_klein_refine(
+    def _run_pass3_harmonize(
         self,
         pass2_image: Image.Image,
         injection_data: dict,
         typography_plan: dict,
         config: GenerationConfig,
     ) -> Image.Image:
-        """Pass 3: 使用 FluxKlein img2img 根据背景动态选择文字风格。
+        """Pass 3 统一入口：根据 harmonizer_type 分派到 Klein 或 QwenEdit。"""
+        if config.harmonizer_type == "qwenedit":
+            return self._run_pass3_qwenedit(pass2_image, typography_plan, config)
+        return self._run_pass3_klein(pass2_image, injection_data, typography_plan, config)
 
-        流程：
-          1. VLM 根据背景场景生成风格化提示词（对比色+协调风格）
-          2. FluxKlein img2img 编辑文字区域
-          3. 二值 mask 混合：文字区域用编辑结果，背景保持原图
-
-        Args:
-            pass2_image: Pass 2 生成的图像
-            injection_data: 注入数据（含 full_mask）
-            typography_plan: 排版规划（含 image_analysis）
-            config: 生成配置
-
-        Returns:
-            风格化后的图像
-        """
-        # 使用 VLM 生成风格化提示词
+    def _run_pass3_klein(
+        self,
+        pass2_image: Image.Image,
+        injection_data: dict,
+        typography_plan: dict,
+        config: GenerationConfig,
+    ) -> Image.Image:
+        """Pass 3 (Klein): FluxKlein img2img + 二值 mask 混合。"""
         image_analysis = typography_plan.get("image_analysis", {})
-        klein_prompt = self.vlm_agent.generate_klein_style_prompt(image_analysis)
+        klein_prompt = self.vlm_agent.generate_style_prompt(image_analysis)
         print(f"  VLM 生成提示词: {klein_prompt[:80]}...")
 
-        # FluxKlein 生成
         klein = self.get_klein_generator(config)
         klein_seed = config.klein_seed if config.klein_seed is not None else (config.seed or 42)
 
@@ -514,10 +533,10 @@ class ZImageInference:
             guidance_scale=config.klein_guidance_scale,
         )
 
-        # 二值 mask 混合
+        # 二值 mask 混合：文字区域用编辑结果，背景保持原图
         binary_mask = injection_data["full_mask"]
         mask = (binary_mask > 127).astype(np.float32)
-        
+
         if edited.size != pass2_image.size:
             edited = edited.resize(pass2_image.size, Image.LANCZOS)
         if mask.shape[:2] != (pass2_image.height, pass2_image.width):
@@ -528,11 +547,10 @@ class ZImageInference:
         mask_3ch = mask[:, :, np.newaxis]
         edit_arr = np.array(edited).astype(np.float32)
         bg_arr = np.array(pass2_image).astype(np.float32)
-        
+
         result_arr = mask_3ch * edit_arr + (1 - mask_3ch) * bg_arr
         result = Image.fromarray(result_arr.clip(0, 255).astype(np.uint8))
 
-        # 日志
         if self.logger is not None:
             self.logger.save_image(
                 Image.fromarray(binary_mask).convert("RGB"), "pass3_mask",
@@ -542,10 +560,40 @@ class ZImageInference:
             comp.paste(pass2_image, (0, 0))
             comp.paste(edited, (pass2_image.width, 0))
             comp.paste(result, (pass2_image.width * 2, 0))
-            self.logger.save_image(comp, "pass3_result", 
+            self.logger.save_image(comp, "pass3_result",
                 caption="Pass2 | Klein | Final", subfolder="harmonize")
 
         return result
+
+    def _run_pass3_qwenedit(
+        self,
+        pass2_image: Image.Image,
+        typography_plan: dict,
+        config: GenerationConfig,
+    ) -> Image.Image:
+        """Pass 3 (QwenEdit): 指令式全图编辑，无 mask 混合。"""
+        image_analysis = typography_plan.get("image_analysis", {})
+        style_prompt = self.vlm_agent.generate_style_prompt(image_analysis)
+        print(f"  VLM 生成提示词: {style_prompt[:80]}...")
+
+        qwenedit = self.get_qwenedit_generator(config)
+        qe_seed = config.qwenedit_seed if config.qwenedit_seed is not None else (config.seed or 42)
+
+        edited = qwenedit.generate(
+            prompt=style_prompt,
+            image=pass2_image,
+            seed=qe_seed,
+            num_inference_steps=config.qwenedit_steps,
+        )
+
+        if self.logger is not None:
+            comp = Image.new("RGB", (pass2_image.width * 2, pass2_image.height))
+            comp.paste(pass2_image, (0, 0))
+            comp.paste(edited, (pass2_image.width, 0))
+            self.logger.save_image(comp, "pass3_result",
+                caption="Pass2 | QwenEdit", subfolder="harmonize")
+
+        return edited
 
     @staticmethod
     def _text_regions_to_plan(text_regions: list[dict]) -> dict:

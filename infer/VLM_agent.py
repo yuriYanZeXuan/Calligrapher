@@ -93,14 +93,10 @@ PROMPT_TEMPLATES = {
     ),
 
     # ---- Generate style prompt for FluxKlein (text style matching background) ----
-    "generate_klein_style_prompt": (
-        "Generate an image editing instruction to redraw text regions with a style that contrasts yet harmonizes with the background.\n\n"
-        "Principles:\n"
-        "- High contrast: light text on dark backgrounds, dark text on light backgrounds\n"
-        "- Style matches the scene (chalk on blackboard, marker on whiteboard, ink on paper, spray on concrete)\n"
-        "- Natural texture, not perfect digital fonts\n\n"
-        "Output only the editing instruction in English, no explanations. Example: "
-        "'Rewrite the text in white chalk style with natural texture on the blackboard. No other changes.'"
+    "generate_style_prompt": (
+        "Generate a short image editing instruction that only adjusts text color and texture to contrast with the background. "
+        "Do NOT move, resize, or alter any text content or position. "
+        "Output only the instruction in English, no explanations."
     ),
 
     # ---- Prompt refinement ----
@@ -418,7 +414,7 @@ class VLMAgent:
 
     # ---- FluxKlein 风格化提示词生成 ----
 
-    def generate_klein_style_prompt(self, image_analysis: dict) -> str:
+    def generate_style_prompt(self, image_analysis: dict) -> str:
         """根据背景场景生成 FluxKlein 风格化提示词。
         
         Args:
@@ -432,14 +428,11 @@ class VLMAgent:
         text_hint = image_analysis.get("text_style_hint", "")
         
         user_content = (
-            f"背景风格: {bg_style}\n"
-            f"主导颜色: {', '.join(dominant_colors)}\n"
-            f"文字风格提示: {text_hint}\n\n"
-            "请根据以上场景信息，生成一个图像编辑指令，要求将文字重绘为与背景协调但形成对比的风格。"
+            "生成一个图像编辑指令，要求将文字重绘为与背景协调但形成对比的风格。"
         )
         
         raw = self.call_vlm(
-            "generate_klein_style_prompt",
+            "generate_style_prompt",
             user_content,
             max_tokens=256,
             temperature=0.4,

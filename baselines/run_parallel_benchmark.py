@@ -399,31 +399,33 @@ class OursWrapper(ModelWrapper):
     """Wrapper for our full pipeline (ZImageInference with 3-pass architecture).
 
     Ablation flags:
-        no_inject:    disable glyph injection (Pass 2 becomes plain generation)
-        no_harmonize: disable FluxKlein refine (use Pass 2 result as final)
-        no_refiner:   disable prompt refiner (use raw prompt directly)
+        no_inject:       disable glyph injection (Pass 2 becomes plain generation)
+        no_harmonize:    disable Pass 3 refine (use Pass 2 result as final)
+        no_refiner:      disable prompt refiner (use raw prompt directly)
+        harmonizer_type: "klein" (default) or "qwenedit"
     """
 
     KLEIN_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
+    QWENEDIT_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen_edit_2511"
 
     def __init__(self, device="cuda", model_path=None,
-                 no_inject=False, no_harmonize=False, no_refiner=False):
+                 no_inject=False, no_harmonize=False, no_refiner=False,
+                 harmonizer_type="klein"):
         super().__init__(device, model_path)
         self.no_inject = no_inject
         self.no_harmonize = no_harmonize
         self.no_refiner = no_refiner
+        self.harmonizer_type = harmonizer_type
 
         from zimage_inference import ZImageInference, GenerationConfig
         from infer.glyph_injector import InjectionConfig
 
         self._GenerationConfig = GenerationConfig
         self._InjectionConfig = InjectionConfig
-        # Disable internal logging to avoid conflicts in multi-process benchmark
-        # Logs will be handled by benchmark script's output_path
         self.inference = ZImageInference(
             model_path=self.model_path or MODEL_PATHS['ours'],
             device=device,
-            logger=None,  # Disable internal TTSLogger
+            logger=None,
         )
 
     def generate(self, prompt, output_path, **kwargs):
@@ -438,7 +440,9 @@ class OursWrapper(ModelWrapper):
             use_glyph_injection=not self.no_inject,
             injection_config=injection_config,
             use_harmonization=not self.no_harmonize,
+            harmonizer_type=self.harmonizer_type,
             klein_model_path=self.KLEIN_MODEL_PATH,
+            qwenedit_model_path=self.QWENEDIT_MODEL_PATH,
         )
 
         image = self.inference.generate(
@@ -623,6 +627,7 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
             'no_inject': args.no_inject,
             'no_harmonize': args.no_harmonize,
             'no_refiner': args.no_refiner,
+            'harmonizer_type': args.harmonizer_type,
         }
     model = MODELS[args.model](device=device, model_path=args.model_path, **model_kwargs)
 
@@ -721,6 +726,9 @@ def main():
                        help="[ours] Disable FluxKlein refine, use Pass 2 result as final")
     parser.add_argument("--no-refiner", action='store_true',
                        help="[ours] Disable prompt refiner, use raw prompt directly")
+    parser.add_argument("--harmonizer-type", type=str, default="klein",
+                       choices=["klein", "qwenedit"],
+                       help="[ours] Pass 3 harmonizer: 'klein' (FluxKlein+mask) or 'qwenedit' (instruction edit)")
     args = parser.parse_args()
     
     # Setup

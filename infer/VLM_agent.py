@@ -94,9 +94,8 @@ PROMPT_TEMPLATES = {
 
     # ---- Generate style prompt for FluxKlein (text style matching background) ----
     "generate_style_prompt": (
-        "Generate a short image editing instruction that only adjusts text color and texture to contrast with the background. "
+        "You are a helpful assistant that output key style instructions, keep background unedited and make foreground text harmonize with total picture."
         "Do NOT move, resize, or alter any text content or position. "
-        "Output only the instruction in English, no explanations."
     ),
 
     # ---- Prompt refinement ----

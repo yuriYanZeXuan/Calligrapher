@@ -541,19 +541,31 @@ def render_latex(
 # ============ 纯文本字体渲染 ============
 
 
+# 项目自带 CJK 字体（优先级最高，保证跨平台可用）
+_BUNDLED_FONT_DIR = str(Path(__file__).resolve().parent.parent / "assets")
+_BUNDLED_CJK_FONT = os.path.join(_BUNDLED_FONT_DIR, "Arial-Unicode-Bold.ttf")
+
+# 服务器上已知的 CJK 字体
+_SERVER_CJK_FONT = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/anytext/font/Arial_Unicode.ttf"
+
 _FONT_SEARCH_PATHS = {
     # weight -> [路径列表]，优先级从上到下
     "bold": [
+        # 项目自带 / 服务器
+        _BUNDLED_CJK_FONT,
+        _SERVER_CJK_FONT,
         # macOS
         "/Library/Fonts/Arial Bold.ttf",
         "/System/Library/Fonts/Helvetica Bold.ttc",
         "/System/Library/Fonts/HelveticaNeue Bold.ttc",
         # Linux
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
     ],
     "light": [
+        _BUNDLED_CJK_FONT,
+        _SERVER_CJK_FONT,
         # macOS
         "/System/Library/Fonts/HelveticaNeue Light.ttc",
         "/System/Library/Fonts/Helvetica Light.ttc",
@@ -562,16 +574,24 @@ _FONT_SEARCH_PATHS = {
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-ExtraLight.ttf",
     ],
     "regular": [
+        # 项目自带 / 服务器（CJK 优先）
+        _BUNDLED_CJK_FONT,
+        _SERVER_CJK_FONT,
         # macOS
         "/Library/Fonts/Arial Unicode.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/HelveticaNeue.ttc",
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
-        # Linux
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/HelveticaNeue.ttc",
+        # Linux (CJK first, then fallback)
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         # Windows
         "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/simsun.ttc",

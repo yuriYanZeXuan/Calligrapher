@@ -533,12 +533,15 @@ class ZImageInference:
             guidance_scale=config.klein_guidance_scale,
         )
 
+        # 确保 RGB 且尺寸一致
+        if edited.mode != "RGB":
+            edited = edited.convert("RGB")
+        if edited.size != pass2_image.size:
+            edited = edited.resize(pass2_image.size, Image.LANCZOS)
+
         # 二值 mask 混合：文字区域用编辑结果，背景保持原图
         binary_mask = injection_data["full_mask"]
         mask = (binary_mask > 127).astype(np.float32)
-
-        if edited.size != pass2_image.size:
-            edited = edited.resize(pass2_image.size, Image.LANCZOS)
         if mask.shape[:2] != (pass2_image.height, pass2_image.width):
             mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
             mask_pil = mask_pil.resize(pass2_image.size, Image.NEAREST)
@@ -585,6 +588,13 @@ class ZImageInference:
             seed=qe_seed,
             num_inference_steps=config.qwenedit_steps,
         )
+
+        # 确保 RGB 且尺寸与 pass2 一致（QwenEdit 可能返回不同分辨率）
+        if edited.mode != "RGB":
+            edited = edited.convert("RGB")
+        if edited.size != pass2_image.size:
+            print(f"  [WARN] QwenEdit 输出 {edited.size} ≠ Pass2 {pass2_image.size}，resize 对齐")
+            edited = edited.resize(pass2_image.size, Image.LANCZOS)
 
         if self.logger is not None:
             comp = Image.new("RGB", (pass2_image.width * 2, pass2_image.height))

@@ -418,9 +418,12 @@ class OursWrapper(ModelWrapper):
 
         self._GenerationConfig = GenerationConfig
         self._InjectionConfig = InjectionConfig
+        # Disable internal logging to avoid conflicts in multi-process benchmark
+        # Logs will be handled by benchmark script's output_path
         self.inference = ZImageInference(
             model_path=self.model_path or MODEL_PATHS['ours'],
             device=device,
+            logger=None,  # Disable internal TTSLogger
         )
 
     def generate(self, prompt, output_path, **kwargs):

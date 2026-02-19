@@ -89,6 +89,9 @@ class _EnhancementState:
         x_seq_len: int,
         cap_seq_len: int,
         num_layers: int,
+        logger=None,
+        Hp: Optional[int] = None,
+        Wp: Optional[int] = None,
     ):
         self.config = config
         self.text_indices = text_indices
@@ -100,6 +103,12 @@ class _EnhancementState:
         self.current_step = 0
         self.total_steps = 1
         self._bias_cache: dict = {}
+
+        # Attention heatmap visualization
+        self.logger = logger
+        self.Hp = Hp
+        self.Wp = Wp
+        self._vis_layer = num_layers // 2
 
     def should_enhance(self, layer_idx: int) -> bool:
         if not self.text_indices or not self.image_indices:
@@ -236,6 +245,13 @@ class EnhancedAttnProcessor:
             pad_bias.masked_fill_(~attention_mask.bool(), float("-inf"))
             attn_bias = attn_bias + pad_bias
 
+        # Save attention heatmap for the visualization layer (debug only)
+        if (self._state.config.debug
+                and self._state.logger is not None
+                and self._state.Hp is not None
+                and self._layer_idx == self._state._vis_layer):
+            self._save_attn_heatmap(q, k, attn_bias)
+
         out = F.scaled_dot_product_attention(
             q, k, v, attn_mask=attn_bias, dropout_p=0.0, is_causal=False
         )
@@ -245,6 +261,62 @@ class EnhancedAttnProcessor:
         if len(attn.to_out) > 1:
             output = attn.to_out[1](output)
         return output
+
+    @torch.no_grad()
+    def _save_attn_heatmap(self, q, k, attn_bias):
+        """计算 text→image attention 并保存灰度热力图。
+
+        只提取 text query 行，避免计算完整 N×N attention 矩阵。
+        """
+        import numpy as np
+        from PIL import Image
+
+        state = self._state
+        x_len = state.x_seq_len
+        num_patches = state.Hp * state.Wp
+
+        text_abs = torch.tensor(
+            [x_len + i for i in state.text_indices if i < state.cap_seq_len],
+            dtype=torch.long, device=q.device,
+        )
+        img_abs = torch.arange(num_patches, dtype=torch.long, device=q.device)
+
+        if len(text_abs) == 0 or len(img_abs) == 0:
+            return
+
+        scale = q.shape[-1] ** -0.5
+        q_text = q[:, :, text_abs, :]                                   # (B, H, T, D)
+        logits = torch.matmul(q_text * scale, k.transpose(-2, -1))     # (B, H, T, N)
+
+        if attn_bias is not None:
+            logits = logits + attn_bias[:, :, text_abs, :]
+
+        attn_weights = logits.float().softmax(dim=-1)                   # (B, H, T, N)
+        text_to_img = attn_weights[:, :, :, img_abs]                    # (B, H, T, I)
+        heatmap = text_to_img.mean(dim=(0, 1, 2))                      # (I,)
+        heatmap = heatmap.reshape(state.Hp, state.Wp)
+
+        h_min, h_max = heatmap.min(), heatmap.max()
+        if h_max > h_min:
+            heatmap = (heatmap - h_min) / (h_max - h_min)
+        else:
+            heatmap.zero_()
+
+        heatmap_np = (heatmap.cpu().numpy() * 255).astype(np.uint8)
+
+        vis_h = max(state.Hp * 8, 256)
+        vis_w = max(state.Wp * 8, 256)
+        heatmap_pil = Image.fromarray(heatmap_np, mode="L").resize(
+            (vis_w, vis_h), Image.BILINEAR,
+        )
+
+        step = state.current_step
+        state.logger.save_image(
+            heatmap_pil.convert("RGB"),
+            f"attn_text2img_step{step:02d}_L{self._layer_idx:02d}",
+            caption=f"text→image attn | step={step}/{state.total_steps} | layer={self._layer_idx}",
+            subfolder="attention",
+        )
 
 
 class AttentionEnhancement:
@@ -291,7 +363,8 @@ class AttentionEnhancement:
         cap_seq_len = cap_ori_len + (-cap_ori_len) % SEQ_MULTI_OF
 
         state = _EnhancementState(
-            config, text_indices, image_indices, x_seq_len, cap_seq_len, num_layers
+            config, text_indices, image_indices, x_seq_len, cap_seq_len, num_layers,
+            logger=logger, Hp=Hp, Wp=Wp,
         )
 
         t_start, t_end = config.timestep_ratio

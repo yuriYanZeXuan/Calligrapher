@@ -32,12 +32,13 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 PROMPT_TEMPLATES = {
     # ---- 核心：排版分析（Pass 1 参考图 → 排版规划 JSON）----
     "analyze_typography": (
-        "You are an expert in image typography analysis. Given a reference image with a 5×5 grid and coordinate annotations, "
+        "You are an expert in image typography analysis. Given a reference image with a 10×10 grid and coordinate annotations, "
         "analyze the natural text rendering style and overall scene. Then plan the best typography layout for each text/formula item.\n\n"
         "CRITICAL: The reference image shows text that is FLAT and FACING the screen directly (frontal view, no perspective distortion). "
         "You must plan bboxes that are also flat and frontal - bboxes should have parallel top and bottom edges (approximately equal y_min and y_max across the width). "
         "NO angled, slanted, or perspective-distorted text regions.\n\n"
-        "The 5×5 grid helps with precise positioning (normalized coordinates 0.0-1.0).\n\n"
+        "The 10×10 grid (11×11 lines with 0.1 step, covering 0.0-1.0) provides high-density positioning reference. "
+        "Use the grid coordinates for precise bbox placement (normalized coordinates 0.0-1.0).\n\n"
         "For each text block, determine:\n"
         "- content: the text to render (one line per block)\n"
         "- bbox: [x_min, y_min, x_max, y_max] in 0-1 range. MUST be flat/horizontal with y_min ≈ constant across width (frontal view, no perspective tilting)\n"
@@ -146,12 +147,12 @@ def _get_grid_font() -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def _add_grid_overlay(image: Image.Image, grid_size: int = 5) -> Image.Image:
-    """在图像上添加5×5网格和坐标标注。
+def _add_grid_overlay(image: Image.Image, grid_size: int = 11) -> Image.Image:
+    """在图像上添加10×10网格和坐标标注（11×11条线，步长0.1）。
 
     Args:
         image: 输入图像
-        grid_size: 网格数量（默认5，即4×4区域）
+        grid_size: 网格线数量（默认11条线: 0.0, 0.1, ..., 1.0，形成10×10区域）
 
     Returns:
         带网格和坐标标注的图像副本
@@ -163,32 +164,64 @@ def _add_grid_overlay(image: Image.Image, grid_size: int = 5) -> Image.Image:
     # 颜色配置
     grid_color = (255, 0, 0)  # 红色网格线
     text_color = (255, 0, 0)  # 红色文字
+    edge_color = (180, 0, 0)  # 边缘线用稍暗的红色
 
-    # 加载字体
+    # 加载字体 - 使用更小字体避免拥挤
     font = _get_grid_font()
+    
+    # 网格步长：11条线形成10个间隔（0.0, 0.1, 0.2, ..., 1.0）
+    step = 1.0 / (grid_size - 1)  # 0.1
+    
+    # 标注间隔：每2条线标注一次（0.0, 0.2, 0.4, 0.6, 0.8, 1.0）
+    label_interval = 2
 
-    # 绘制竖线和横线，并在交点处标注坐标
+    # 绘制竖线和横线
     for i in range(grid_size):
-        # 计算归一化坐标 (0.0 到 1.0)
-        t = i / (grid_size - 1)
+        # 计算归一化坐标 (0.0 到 1.0，步长0.1)
+        t = i * step
         x = int(t * width)
         y = int(t * height)
-
-        # 绘制竖线
-        draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
+        
+        # 边缘线 (0.0 和 1.0) 使用细线，中间使用标准线宽
+        is_edge = (i == 0 or i == grid_size - 1)
+        line_width = 1 if is_edge else 2
+        color = edge_color if is_edge else grid_color
+        
+        # 绘制竖线（从顶部到底部）
+        draw.line([(x, 0), (x, height)], fill=color, width=line_width)
         # 绘制横线
-        draw.line([(0, y), (width, y)], fill=grid_color, width=1)
+        draw.line([(0, y), (width, y)], fill=color, width=line_width)
 
-        # 在交点处标注坐标
-        for j in range(grid_size):
-            s = j / (grid_size - 1)
-            coord_x = int(s * width)
-            coord_y = int(t * height)
+    # 标注坐标（只在网格交点处，减少密度避免拥挤）
+    for i in range(0, grid_size, label_interval):
+        t = i * step
+        y = int(t * height)
+        
+        for j in range(0, grid_size, label_interval):
+            s = j * step
+            x = int(s * width)
             coord_text = f"({s:.1f},{t:.1f})"
 
-            # 计算文字位置（稍微偏移避免遮挡网格点）
-            text_x = min(coord_x + 3, width - 50)
-            text_y = max(coord_y - 15, 0)
+            # 计算文字位置 - 边缘文字向内偏移
+            text_bbox = draw.textbbox((0, 0), coord_text, font=font)
+            text_w = text_bbox[2] - text_bbox[0]
+            text_h = text_bbox[3] - text_bbox[1]
+            
+            # x方向偏移：左边缘向右，右边缘向左
+            if j == 0:
+                text_x = 2
+            elif j == grid_size - 1:
+                text_x = width - text_w - 2
+            else:
+                text_x = x - text_w // 2
+            
+            # y方向偏移：顶部向下，底部向上
+            if i == 0:
+                text_y = 2
+            elif i == grid_size - 1:
+                text_y = height - text_h - 2
+            else:
+                text_y = y - text_h // 2
 
             draw.text((text_x, text_y), coord_text, fill=text_color, font=font)
 
@@ -314,8 +347,8 @@ class VLMAgent:
         Returns:
             typography_plan 字典，包含 image_analysis 和 text_regions
         """
-        # 为图像添加5×5网格和坐标标注
-        image_with_grid = _add_grid_overlay(image, grid_size=5)
+        # 为图像添加10×10网格和坐标标注（11×11条线，步长0.1）
+        image_with_grid = _add_grid_overlay(image)
 
         contents_desc = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(text_contents))
         user_content = (

@@ -261,7 +261,8 @@ class ZImageInference:
             print("=== VLM 排版规划 ===")
             
             # 生成并保存带网格的参考图（用于 debug）
-            reference_with_grid = _add_grid_overlay(reference_image, grid_size=5)
+            # 使用默认的 11×11 网格（10×10 区域，步长0.1）
+            reference_with_grid = _add_grid_overlay(reference_image)
             if self.logger is not None:
                 self.logger.save_image(
                     reference_with_grid, "pass1_with_grid",

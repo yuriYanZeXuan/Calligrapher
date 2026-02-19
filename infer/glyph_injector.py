@@ -89,6 +89,9 @@ class InjectionConfig:
     attn_enhance_text_to_image: bool = True
     attn_enhance_image_to_text: bool = True
 
+    # Debug
+    debug: bool = False
+
     def should_inject(self, step_idx: int, total_steps: int) -> bool:
         """判断当前步是否需要注入。
 

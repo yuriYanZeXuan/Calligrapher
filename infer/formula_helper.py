@@ -103,9 +103,55 @@ _UNICODE_TO_LATEX = [
     ("Δ", r"\Delta"),
     ("Σ", r"\Sigma"),
     ("Ω", r"\Omega"),
+    # Operators / symbols
+    ("∂", r"\partial"),
+    ("∇", r"\nabla"),
+    ("·", r"\cdot"),
+    ("×", r"\times"),
+    ("√", r"\sqrt"),
+    ("½", r"\frac{1}{2}"),
+    ("¼", r"\frac{1}{4}"),
+    ("¾", r"\frac{3}{4}"),
+    # Superscript letters & signs
+    ("⁺", "^+"), ("⁻", "^-"), ("⁼", "^="),
+    ("ⁿ", "^n"), ("ⁱ", "^i"),
+    ("ᵀ", "^T"), ("ᵘ", "^u"), ("ᵛ", "^v"),
+    # Subscript letters (standard Unicode subscript block)
+    ("ₐ", "_a"), ("ₑ", "_e"), ("ₒ", "_o"), ("ₓ", "_x"),
+    ("ₕ", "_h"), ("ₖ", "_k"), ("ₗ", "_l"), ("ₘ", "_m"),
+    ("ₙ", "_n"), ("ₚ", "_p"), ("ₛ", "_s"), ("ₜ", "_t"),
+    # Subscript letters (modifier letter / phonetic extensions block)
+    ("ᵢ", "_i"), ("ⱼ", "_j"), ("ᵣ", "_r"), ("ᵤ", "_u"),
+    ("ᵥ", "_v"), ("ᵧ", "_y"),
+    # Subscript signs (plain char, grouping step will wrap in braces)
+    ("₊", "+"), ("₋", "-"), ("₌", "="),
+    # Greek capitals
+    ("Γ", r"\Gamma"),
+    # Arrows / relations
+    ("⇌", r"\rightleftharpoons"),
+    ("⇒", r"\Rightarrow"),
+    ("↔", r"\leftrightarrow"),
+    ("↑", r"\uparrow"),
+    # Integrals / contour
+    ("∬", r"\iint"),
+    ("∮", r"\oint"),
+    # Misc symbols
+    ("□", r"\Box"),
+    ("Ĥ", r"\hat{H}"),
     # Special
     ("ℏ", r"\hbar"),
+    ("ħ", r"\hbar"),
 ]
+
+# Combining diacritical marks: character + combining mark → \cmd{character}
+_COMBINING_TO_LATEX = {
+    "\u20D7": r"\vec",      # COMBINING RIGHT ARROW ABOVE  (B⃗ → \vec{B})
+    "\u0302": r"\hat",      # COMBINING CIRCUMFLEX ACCENT  (x̂ → \hat{x})
+    "\u0303": r"\tilde",    # COMBINING TILDE              (x̃ → \tilde{x})
+    "\u0304": r"\bar",      # COMBINING MACRON             (x̄ → \bar{x})
+    "\u0307": r"\dot",      # COMBINING DOT ABOVE          (ẋ → \dot{x})
+    "\u0308": r"\ddot",     # COMBINING DIAERESIS          (ẍ → \ddot{x})
+}
 
 
 def _check_node() -> bool:
@@ -170,14 +216,77 @@ def _fix_sqrt_parens(text: str) -> str:
 def plaintext_to_latex(text: str) -> str:
     """将含 Unicode 数学符号的 plaintext 转换为 LaTeX 命令。"""
     result = text
-    # 先处理 √(...) → \sqrt{...}（带括号的情况）
+
+    # 1) Combining diacriticals: X⃗ → \vec{X}
+    for combining, cmd in _COMBINING_TO_LATEX.items():
+        result = re.sub(
+            rf'(\w){re.escape(combining)}',
+            lambda m, c=cmd: f'{c}{{{m.group(1)}}}',
+            result,
+        )
+
+    # 2) √(...) → \sqrt{...}
     result = _fix_sqrt_parens(result)
-    # 再做逐符号替换（剩余的 bare √ → \sqrt 等）
+
+    # 3) 逐符号替换（\command 后追加空格防止与后续字母粘连，math mode 中多余空格无影响）
     for old, new in _UNICODE_TO_LATEX:
-        result = result.replace(old, new)
-    # 替换后可能产生新的 \sqrt(...)，再修一次
+        if new.startswith('\\') and new[-1:].isalpha():
+            result = result.replace(old, new + ' ')
+        else:
+            result = result.replace(old, new)
+
+    # 4) 再修一次 \sqrt(...)
     result = _fix_sqrt_parens(result)
+
+    # 5) 合并相邻的下标/上标: _v-_1 → _{v-1}, ^-^1 → ^{-1}, _1_2 → _{12}
+    result = _group_scripts(result)
+
     return result
+
+
+def _group_scripts(text: str) -> str:
+    """合并相邻的下标/上标到花括号组。
+
+    例:  _v-_1  → _{v-1}     (Bessel 阶)
+         _n=_1  → _{n=1}     (求和下界)
+         _1_2   → _{12}      (矩阵下标)
+         ^-^1   → ^{-1}      (逆矩阵)
+    """
+    def _is_script_char(ch: str) -> bool:
+        return ch.isalnum() or ch in '+-='
+
+    parts: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if (i < n - 1 and text[i] in ('_', '^')
+                and _is_script_char(text[i + 1])):
+            marker = text[i]
+            group = [text[i + 1]]
+            j = i + 2
+            while j < n:
+                # connector (+-=) followed by same marker + char
+                if (j + 2 < n and text[j] in '-+='
+                        and text[j + 1] == marker
+                        and _is_script_char(text[j + 2])):
+                    group.append(text[j])
+                    group.append(text[j + 2])
+                    j += 3
+                # same marker + char (no connector)
+                elif (j + 1 < n and text[j] == marker
+                      and _is_script_char(text[j + 1])):
+                    group.append(text[j + 1])
+                    j += 2
+                else:
+                    break
+            if len(group) > 1:
+                parts.append(f'{marker}{{{"".join(group)}}}')
+            else:
+                parts.append(marker + group[0])
+            i = j
+        else:
+            parts.append(text[i])
+            i += 1
+    return ''.join(parts)
 
 
 # ============ LaTeX 渲染 ============
@@ -615,13 +724,11 @@ def render_formula(
         font_weight: 字体粗细 ("light"/"regular"/"bold")
         font_path: 自定义字体路径（仅纯文本路径生效）
     """
-    use_latex = force_latex or is_latex(text)
-
-    if not use_latex:
-        converted = plaintext_to_latex(text)
-        if converted != text:
-            use_latex = True
-            text = converted
+    # 始终先做 Unicode → LaTeX 转换，否则混合 Unicode+LaTeX 的文本会漏转
+    converted = plaintext_to_latex(text)
+    use_latex = force_latex or is_latex(text) or (converted != text)
+    if converted != text:
+        text = converted
 
     if use_latex:
         # 优先尝试 MathJax（完整 LaTeX 支持）

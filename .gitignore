@@ -38,3 +38,4 @@ mathjax.tar.gz
 .agents
 manuscript/*
 test_font_coverage.py
+assets/Arial-Unicode-Bold.ttf

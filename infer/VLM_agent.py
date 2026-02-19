@@ -81,8 +81,14 @@ PROMPT_TEMPLATES = {
 
     # ---- Generate clean prompt (remove text/formula descriptions) ----
     "generate_clean_prompt": (
-        "Rewrite the user's prompt to explicitly exclude any text, formulas, math symbols, letters, or numbers. "
-        "Keep the original scene, style, composition, and colors. Replace text regions with 'blank area', 'empty space', or 'clean surface'. "
+        "Rewrite the user's prompt to explicitly exclude any text, formulas, math symbols, letters, or numbers from rendering.\n\n"
+        "You MUST:\n"
+        "1. Keep the EXACT same scene, style, composition, colors, and spatial layout as the original prompt.\n"
+        "2. For each text region listed below, explicitly describe a clean/blank/empty area at that position "
+        "with the correct background material and color (e.g., 'clean blackboard surface', 'blank white paper area', "
+        "'empty wooden sign'). This ensures the generated background matches the original layout.\n"
+        "3. Preserve the overall composition proportions — the scene should look identical except all text is removed.\n"
+        "4. Do NOT change the camera angle, lighting, color palette, or scene structure.\n\n"
         "Output only the rewritten prompt, no explanations."
     ),
 
@@ -368,9 +374,40 @@ class VLMAgent:
 
     # ---- Clean prompt 生成 ----
 
-    def generate_clean_prompt(self, prompt: str) -> str:
-        """将含文字描述的 prompt 改写为不渲染任何文本的 clean 版本。"""
-        user_content = f"原始 prompt:\n{prompt}"
+    def generate_clean_prompt(self, prompt: str, typography_plan: dict = None) -> str:
+        """将含文字描述的 prompt 改写为不渲染任何文本的 clean 版本。
+
+        当提供 typography_plan 时，会将文字区域的位置、占比和背景颜色信息
+        传递给 VLM，使 clean prompt 在对应位置描述正确的空白背景材质，
+        从而让 Pass 2 的背景尽量贴合 Pass 1。
+        """
+        user_content = f"Original prompt:\n{prompt}"
+
+        if typography_plan:
+            analysis = typography_plan.get("image_analysis", {})
+            regions = typography_plan.get("text_regions", [])
+
+            if analysis:
+                user_content += (
+                    f"\n\nImage analysis from reference:"
+                    f"\n- Background style: {analysis.get('background_style', 'unknown')}"
+                    f"\n- Dominant colors: {', '.join(analysis.get('dominant_colors', []))}"
+                    f"\n- Text style hint: {analysis.get('text_style_hint', 'unknown')}"
+                )
+
+            if regions:
+                user_content += "\n\nText regions to keep as BLANK areas (bbox in normalized 0-1 coords):"
+                for i, r in enumerate(regions):
+                    bbox = r.get("bbox", [0, 0, 1, 1])
+                    w_pct = (bbox[2] - bbox[0]) * 100
+                    h_pct = (bbox[3] - bbox[1]) * 100
+                    bg_color = r.get("background_color", "unknown")
+                    user_content += (
+                        f"\n  Region {i+1}: bbox={bbox}"
+                        f" (≈{w_pct:.0f}% width, ≈{h_pct:.0f}% height of image),"
+                        f" background_color={bg_color}"
+                    )
+
         raw = self.call_vlm(
             "generate_clean_prompt",
             user_content,

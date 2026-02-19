@@ -284,7 +284,7 @@ class ZImageInference:
 
         # === Pass 2: Clean 背景 + 字形注入 ===
         print("=== Pass 2: Clean 推理 + 字形注入 ===")
-        clean_prompt = self.vlm_agent.generate_clean_prompt(prompt)
+        clean_prompt = self.vlm_agent.generate_clean_prompt(prompt, typography_plan)
         print(f"Clean prompt: {clean_prompt[:100]}...")
 
         # 需要 injection_data 传递给 Pass 3（含 full_mask）

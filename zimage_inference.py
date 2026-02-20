@@ -135,6 +135,35 @@ class ZImageInference:
             )
         return self._glyph_injector
 
+    # ---- 显存管理 ----
+
+    def _offload_pipeline_to_cpu(self):
+        """将主管道移至 CPU 并释放 GPU 缓存，为 harmonizer 腾出显存。"""
+        if self._pipeline is not None:
+            print("  [MEM] 将 Z-Image pipeline 卸载到 CPU ...")
+            self._pipeline.to("cpu")
+            torch.cuda.empty_cache()
+
+    def _reload_pipeline_to_gpu(self):
+        """将主管道从 CPU 移回 GPU（如果当前在 CPU 上）。"""
+        if self._pipeline is not None:
+            if "cuda" not in str(self._pipeline.device):
+                print(f"  [MEM] 将 Z-Image pipeline 移回 {self.primary_device} ...")
+                self._pipeline.to(self.primary_device)
+
+    def _offload_harmonizer_to_cpu(self):
+        """将非 cpu_offload 模式的 harmonizer 移至 CPU 并释放 GPU 缓存。
+
+        QwenEdit 使用 enable_model_cpu_offload，由 diffusers hook 自动管理，
+        不能手动调用 .to()，否则会破坏 hook。
+        """
+        if self._klein_generator is not None:
+            print("  [MEM] 将 FluxKlein 卸载到 CPU ...")
+            self._klein_generator.pipe.to("cpu")
+        torch.cuda.empty_cache()
+
+    # ---- 延迟加载 harmonizer ----
+
     def get_klein_generator(self, config: "GenerationConfig"):
         """延迟加载 FluxKlein 生成器（按需创建，避免浪费显存）。"""
         if self._klein_generator is None:
@@ -149,10 +178,16 @@ class ZImageInference:
                 device=self.primary_device,
             )
             print("FluxKlein 模型加载完成")
+        else:
+            self._klein_generator.pipe.to(self.primary_device)
         return self._klein_generator
 
     def get_qwenedit_generator(self, config: "GenerationConfig"):
-        """延迟加载 QwenEdit 生成器。"""
+        """延迟加载 QwenEdit 生成器（使用 CPU offload 节省显存）。
+
+        enable_model_cpu_offload 模式下：子模块常驻 CPU，推理时按需搬运到 GPU，
+        用完自动回 CPU。峰值显存仅为单个子模块 + activation。
+        """
         if self._qwenedit_generator is None:
             qwenedit_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baselines", "qwenedit")
             if qwenedit_dir not in sys.path:
@@ -163,8 +198,9 @@ class ZImageInference:
             self._qwenedit_generator = QwenEditGenerator(
                 model_path=config.qwenedit_model_path,
                 device=self.primary_device,
+                enable_cpu_offload=True,
             )
-            print("QwenEdit 模型加载完成")
+            print("QwenEdit 模型加载完成 (CPU offload)")
         return self._qwenedit_generator
 
     # ---- 主入口 ----
@@ -505,10 +541,22 @@ class ZImageInference:
         typography_plan: dict,
         config: GenerationConfig,
     ) -> Image.Image:
-        """Pass 3 统一入口：根据 harmonizer_type 分派到 Klein 或 QwenEdit。"""
-        if config.harmonizer_type == "qwenedit":
-            return self._run_pass3_qwenedit(pass2_image, typography_plan, config)
-        return self._run_pass3_klein(pass2_image, injection_data, typography_plan, config)
+        """Pass 3 统一入口：根据 harmonizer_type 分派到 Klein 或 QwenEdit。
+
+        自动管理显存：进入前卸载主管道到 CPU，完成后恢复到 GPU。
+        """
+        self._offload_pipeline_to_cpu()
+
+        try:
+            if config.harmonizer_type == "qwenedit":
+                result = self._run_pass3_qwenedit(pass2_image, typography_plan, config)
+            else:
+                result = self._run_pass3_klein(pass2_image, injection_data, typography_plan, config)
+        finally:
+            self._offload_harmonizer_to_cpu()
+            self._reload_pipeline_to_gpu()
+
+        return result
 
     def _run_pass3_klein(
         self,
@@ -576,9 +624,9 @@ class ZImageInference:
     ) -> Image.Image:
         """Pass 3 (QwenEdit): 指令式全图编辑，无 mask 混合。"""
         image_analysis = typography_plan.get("image_analysis", {})
-        style_prompt = self.vlm_agent.generate_style_prompt(image_analysis)
-        print(f"  VLM 生成提示词: {style_prompt[:80]}...")
-
+        # style_prompt = self.vlm_agent.generate_style_prompt(image_analysis)
+        # print(f"  VLM 生成提示词: {style_prompt[:80]}...")
+        style_prompt="keep background unedited, make foreground text and formulas be harmonize with whole image."
         qwenedit = self.get_qwenedit_generator(config)
         qe_seed = config.qwenedit_seed if config.qwenedit_seed is not None else (config.seed or 42)
 

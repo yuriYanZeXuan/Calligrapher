@@ -6,15 +6,30 @@ from diffusers import QwenImageEditPipeline
 from diffusers.utils import load_image
 
 class QwenEditGenerator:
-    def __init__(self, model_path="Qwen/Qwen-Image-Edit", device="cuda"):
+    def __init__(self, model_path="Qwen/Qwen-Image-Edit", device="cuda", enable_cpu_offload=False):
         print("Initializing Qwen-Image-Edit pipeline...")
         self.device = device
+        self.cpu_offload = enable_cpu_offload
         self.pipe = QwenImageEditPipeline.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16
         )
-        self.pipe.to(device)
-        print("Qwen-Image-Edit pipeline initialized.")
+
+        if enable_cpu_offload:
+            gpu_id = 0
+            if isinstance(device, str) and device.startswith("cuda:"):
+                try:
+                    gpu_id = int(device.split("cuda:")[-1])
+                except ValueError:
+                    gpu_id = 0
+            try:
+                self.pipe.enable_model_cpu_offload(gpu_id=gpu_id)
+            except TypeError:
+                self.pipe.enable_model_cpu_offload()
+            print(f"Qwen-Image-Edit pipeline initialized with CPU offload (gpu_id={gpu_id}).")
+        else:
+            self.pipe.to(device)
+            print(f"Qwen-Image-Edit pipeline initialized on {device}.")
 
     def generate(
         self,
@@ -31,7 +46,8 @@ class QwenEditGenerator:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        generator = torch.Generator(device=self.device).manual_seed(seed)
+        gen_device = "cpu" if self.cpu_offload else self.device
+        generator = torch.Generator(device=gen_device).manual_seed(seed)
         
         # The QwenImageEditPipeline takes the image and prompt directly
         edited_image = self.pipe(

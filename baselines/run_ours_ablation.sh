@@ -8,6 +8,7 @@
 #   ours_no_inject   : w/o glyph injector  (--no-inject)
 #   ours_no_harmonize: w/o Pass 3 refine    (--no-harmonize), pass2 as final
 #   ours_no_refiner  : w/o prompt refiner   (--no-refiner)
+#   ours_freq_decomp : w/ freq decomposition (--freq-decompose)
 # ============================================================
 
 
@@ -56,4 +57,14 @@ python run_parallel_benchmark.py \
     --gpus $GPUS \
     --no-refiner \
     --output_dir results/ours_no_refiner/$BENCHMARK \
+    --debug
+
+# ---- Ablation: w/ freq decomposition ----
+python run_parallel_benchmark.py \
+    --model ours \
+    --benchmark $BENCHMARK \
+    --gpus $GPUS \
+    --freq-decompose \
+    --harmonizer-type qwenedit \
+    --output_dir results/ours_freq_decomp/$BENCHMARK \
     --debug

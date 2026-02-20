@@ -403,6 +403,7 @@ class OursWrapper(ModelWrapper):
         no_harmonize:    disable Pass 3 refine (use Pass 2 result as final)
         no_refiner:      disable prompt refiner (use raw prompt directly)
         harmonizer_type: "klein" (default) or "qwenedit"
+        freq_decompose:  enable frequency decomposition in glyph injection
     """
 
     KLEIN_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
@@ -410,12 +411,13 @@ class OursWrapper(ModelWrapper):
 
     def __init__(self, device="cuda", model_path=None,
                  no_inject=False, no_harmonize=False, no_refiner=False,
-                 harmonizer_type="klein"):
+                 harmonizer_type="klein", freq_decompose=False):
         super().__init__(device, model_path)
         self.no_inject = no_inject
         self.no_harmonize = no_harmonize
         self.no_refiner = no_refiner
         self.harmonizer_type = harmonizer_type
+        self.freq_decompose = freq_decompose
 
         from zimage_inference import ZImageInference, GenerationConfig
         from infer.glyph_injector import InjectionConfig
@@ -433,7 +435,9 @@ class OursWrapper(ModelWrapper):
         if isinstance(text, str):
             text = [text] if text.strip() else []
 
-        injection_config = self._InjectionConfig()
+        injection_config = self._InjectionConfig(
+            freq_decompose=self.freq_decompose,
+        )
         config = self._GenerationConfig(
             seed=42,
             use_prompt_refiner=not self.no_refiner,
@@ -628,6 +632,7 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
             'no_harmonize': args.no_harmonize,
             'no_refiner': args.no_refiner,
             'harmonizer_type': args.harmonizer_type,
+            'freq_decompose': args.freq_decompose,
         }
     model = MODELS[args.model](device=device, model_path=args.model_path, **model_kwargs)
 
@@ -729,6 +734,8 @@ def main():
     parser.add_argument("--harmonizer-type", type=str, default="klein",
                        choices=["klein", "qwenedit"],
                        help="[ours] Pass 3 harmonizer: 'klein' (FluxKlein+mask) or 'qwenedit' (instruction edit)")
+    parser.add_argument("--freq-decompose", action='store_true',
+                       help="[ours] Enable frequency decomposition in glyph injection (only inject high-frequency components)")
     args = parser.parse_args()
     
     # Setup

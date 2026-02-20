@@ -269,6 +269,10 @@ class ZImageInference:
                 generator=generator,
             ).images[0]
 
+        # 强制 RGB，避免 RGBA 输出（harmonizer/VAE 可能返回 RGBA）
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
         # 保存最终图到 logs
         if self.logger is not None:
             self._output_counter += 1

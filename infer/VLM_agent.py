@@ -394,12 +394,9 @@ class VLMAgent:
                 user_content += "\n\nText regions to keep as BLANK areas (bbox in normalized 0-1 coords):"
                 for i, r in enumerate(regions):
                     bbox = r.get("bbox", [0, 0, 1, 1])
-                    w_pct = (bbox[2] - bbox[0]) * 100
-                    h_pct = (bbox[3] - bbox[1]) * 100
                     bg_color = r.get("background_color", "unknown")
                     user_content += (
-                        f"\n  Region {i+1}: bbox={bbox}"
-                        f" (≈{w_pct:.0f}% width, ≈{h_pct:.0f}% height of image),"
+                        f"\n  Region {i+1}: bbox={bbox},"
                         f" background_color={bg_color}"
                     )
 

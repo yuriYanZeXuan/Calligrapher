@@ -678,8 +678,9 @@ def render_plaintext(
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
 
-    x = (width - text_width) // 2
-    y = (height - text_height) // 2
+    # 补偿 textbbox 相对于锚点的偏移（ascender/descender/bearing），否则文字会被裁切
+    x = (width - text_width) // 2 - text_bbox[0]
+    y = (height - text_height) // 2 - text_bbox[1]
 
     draw.text((x, y), text, fill=text_color, font=font)
     return img

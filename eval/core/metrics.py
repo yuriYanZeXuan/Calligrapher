@@ -330,28 +330,49 @@ class FIDMetrics:
 
 class VLMMetrics:
     """Vision-Language Model based metrics for text rendering quality evaluation.
-    
-    Uses local Qwen2.5-VL model for evaluation.
+
+    Supports two backends:
+      - model_path="ApiCall": 通过 OpenAI 兼容 API 调用远程 VLM（不占 GPU）
+      - 其他路径: 加载本地 Qwen2.5-VL 模型
     """
-    
+
     def __init__(self, model_path: str = "Qwen/Qwen2.5-VL-7B-Instruct", device: str = "auto"):
-        """Initialize VLM metrics with local model.
-        
-        Args:
-            model_path: Path to local VLM model (e.g., /path/to/Qwen2.5-VL-7B)
-            device: Device for inference ('auto', 'cuda', 'cpu')
-        """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.model_path = model_path
         self.device = device
         self.available = False
         self.model = None
         self.processor = None
-        
+        self._api_client = None
+        self._api_model = None
+
+        if model_path == "ApiCall":
+            self._init_api_backend()
+        else:
+            self._init_local_backend(model_path, device)
+
+    # ---- backend initialisation ----
+
+    def _init_api_backend(self):
+        from openai import OpenAI
+        from dotenv import load_dotenv
+        load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+
+        api_key = os.getenv("QST_API_KEY")
+        base_url = os.getenv("QST_BASE_URL")
+        if not api_key or not base_url:
+            self.logger.error("QST_API_KEY / QST_BASE_URL not set – VLM ApiCall unavailable")
+            return
+
+        self._api_client = OpenAI(api_key=api_key, base_url=base_url)
+        self._api_model = "qwen3-vl-235b-a22b-instruct"
+        self.available = True
+        self.logger.info(f"VLM ApiCall backend ready (model={self._api_model})")
+
+    def _init_local_backend(self, model_path: str, device: str):
         from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
         import torch
-        self.device = device
-        
+
         self.logger.info(f"Loading VLM model from: {model_path}")
         self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
@@ -359,153 +380,180 @@ class VLMMetrics:
             torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
             trust_remote_code=True
         ).to(device).eval()
-        
         self.available = True
         self.logger.info(f"VLM model loaded on {device}")
-    
-    def _prepare_image(self, image: Image.Image) -> Image.Image:
-        """Prepare image for model input."""
+
+    # ---- unified VLM call ----
+
+    def _image_to_base64(self, image: Image.Image) -> str:
+        import base64, io
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    def _call_vlm(self, image: Image.Image, text_prompt: str, max_tokens: int = 512) -> str:
+        """Unified VLM call: dispatches to API or local model."""
+        if self._api_client is not None:
+            return self._call_vlm_api(image, text_prompt, max_tokens)
+        return self._call_vlm_local(image, text_prompt, max_tokens)
+
+    def _call_vlm_api(self, image: Image.Image, text_prompt: str, max_tokens: int) -> str:
+        b64 = self._image_to_base64(image)
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                {"type": "text", "text": text_prompt},
+            ],
+        }]
+        resp = self._api_client.chat.completions.create(
+            model=self._api_model,
+            messages=messages,
+            stream=False,
+            max_tokens=max_tokens,
+            temperature=0.0,
+        )
+        return resp.choices[0].message.content.strip()
+
+    def _call_vlm_local(self, image: Image.Image, text_prompt: str, max_tokens: int) -> str:
+        messages = [{"role": "user", "content": [
+            {"type": "image", "image": image},
+            {"type": "text", "text": text_prompt},
+        ]}]
+        text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
+        input_len = inputs['input_ids'].shape[1]
+
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
+
+        generated_ids = outputs[:, input_len:]
+        return self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+
+    # ---- helper ----
+
+    @staticmethod
+    def _prepare_image(image: Image.Image) -> Image.Image:
         if image.mode != 'RGB':
             image = image.convert('RGB')
         return image
-    
-    
-    
-    def _compute_text_accuracy(self, ground_truth: str, recognized: str) -> Dict[str, float]:
-        """Compute text accuracy using Levenshtein distance (same as OCR metrics)."""
+
+    @staticmethod
+    def _compute_text_accuracy(ground_truth: str, recognized: str) -> Dict[str, float]:
+        """Compute text accuracy using Levenshtein distance."""
         import Levenshtein
-        
-        # Normalize texts: lowercase, remove extra spaces
+
         gt_processed = ' '.join(ground_truth.lower().split())
         recognized_processed = ' '.join(recognized.lower().split())
-        
+
         if not gt_processed:
-            return {'text_accuracy': 1.0 if not recognized_processed else 0.0, 'text_ned': 1.0 if not recognized_processed else 0.0}
-        
-        # Compute edit distance
+            both_empty = not recognized_processed
+            return {'text_accuracy': 1.0 if both_empty else 0.0, 'text_ned': 1.0 if both_empty else 0.0}
+
         distance = Levenshtein.distance(gt_processed, recognized_processed)
-        
-        # Text-Acc: Normalized by ground truth length (recall-oriented)
-        text_acc = 1 - (distance / len(gt_processed))
-        text_acc = max(0.0, text_acc)
-        
-        # Text-NED: Normalized by max length (symmetric similarity)
+
+        text_acc = max(0.0, 1 - distance / len(gt_processed))
         max_len = max(len(gt_processed), len(recognized_processed))
-        text_ned = 1 - (distance / (max_len + 1e-5))
-        text_ned = max(0.0, text_ned)
-        
+        text_ned = max(0.0, 1 - distance / (max_len + 1e-5))
+
         return {'text_accuracy': text_acc, 'text_ned': text_ned}
-    
+
+    # ---- evaluation methods ----
+
     def evaluate_text_rendering(self, image: Image.Image, prompt: str) -> Dict[str, Any]:
-        """Evaluate text rendering quality using VLM.
-        
-        Args:
-            image: Generated image
-            prompt: Original text prompt
-            
-        Returns:
-            Dictionary with scores for text accuracy and image quality
+        """Evaluate text rendering quality: text accuracy, image quality, faithfulness.
+
+        Returns dict with keys:
+            text_accuracy, text_ned, image_quality, faithfulness, overall,
+            recognized_text, ground_truth
         """
         if not self.available:
-            return {"text_accuracy": 0.0, "image_quality": 0.0, "overall": 0.0}
-        
+            return {"text_accuracy": 0.0, "text_ned": 0.0, "image_quality": 0.0,
+                    "faithfulness": 0.0, "overall": 0.0}
+
         image = self._prepare_image(image)
-        
-        # Extract ground truth text from prompt
         ground_truth = extract_text_from_prompt(prompt)
-        
-        # Prompt for text recognition - ask VLM to output all visible text
-        text_prompt = '''Please read and output ALL the text content visible in this image.
-Only output the text you can see, nothing else. If there are multiple text elements, separate them with spaces.
-Do not add any explanations or descriptions, just the raw text content.'''
-        
-        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": text_prompt}]}]
-        text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
-        input_len = inputs['input_ids'].shape[1]
-        
-        with torch.no_grad():
-            # do_sample=False for deterministic greedy decoding (no randomness)
-            outputs = self.model.generate(**inputs, max_new_tokens=512, do_sample=False)
-        
-        # Only decode newly generated tokens (exclude input prompt)
-        generated_ids = outputs[:, input_len:]
-        recognized_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-        
-        # Clean up recognized text - remove quotes if wrapped
+
+        # --- 1. Text recognition ---
+        text_prompt = (
+            "Please read and output ALL the text content visible in this image.\n"
+            "Only output the text you can see, nothing else. If there are multiple text elements, "
+            "separate them with spaces.\n"
+            "Do not add any explanations or descriptions, just the raw text content."
+        )
+        recognized_text = self._call_vlm(image, text_prompt, max_tokens=512)
+
         if (recognized_text.startswith('"') and recognized_text.endswith('"')) or \
            (recognized_text.startswith("'") and recognized_text.endswith("'")):
             recognized_text = recognized_text[1:-1]
-        
-        # Compute text accuracy using Levenshtein distance
-        accuracy_result = self._compute_text_accuracy(ground_truth, recognized_text)
-        text_score = accuracy_result['text_accuracy']
-        text_ned = accuracy_result['text_ned']
-        # Ensure text_score is in valid range [0, 1]
-        text_score = max(0.0, min(1.0, float(text_score)))
-        
-        # Prompt for overall image quality
-        quality_prompt = '''Evaluate the overall quality of this image considering:
-1. Image clarity and sharpness
-2. Visual coherence and aesthetics
-3. Proper rendering of all elements
 
-Rate from 0-10, respond with only a number.'''
-        
-        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": quality_prompt}]}]
-        text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self.processor(text=[text_input], images=[image], return_tensors="pt").to(self.device)
-        input_len = inputs['input_ids'].shape[1]
-        
-        with torch.no_grad():
-            # do_sample=False for deterministic greedy decoding (no randomness)
-            outputs = self.model.generate(**inputs, max_new_tokens=10, do_sample=False)
-        
-        # Only decode newly generated tokens
-        generated_ids = outputs[:, input_len:]
-        response = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-        
-        # Extract quality score
+        accuracy_result = self._compute_text_accuracy(ground_truth, recognized_text)
+        text_score = max(0.0, min(1.0, float(accuracy_result['text_accuracy'])))
+        text_ned = accuracy_result['text_ned']
+
+        # --- 2. Image quality ---
+        quality_prompt = (
+            "Evaluate the overall quality of this image considering:\n"
+            "1. Image clarity and sharpness\n"
+            "2. Visual coherence and aesthetics\n"
+            "3. Proper rendering of all elements\n\n"
+            "Rate from 0-10, respond with only a number."
+        )
+        quality_response = self._call_vlm(image, quality_prompt, max_tokens=10)
+
         import re
-        numbers = re.findall(r'\d+\.?\d*', response)
+        numbers = re.findall(r'\d+\.?\d*', quality_response)
         if numbers:
-            raw_score = float(numbers[0])
-            raw_score = min(10.0, max(0.0, raw_score))
+            raw_score = min(10.0, max(0.0, float(numbers[0])))
             quality_score = raw_score / 10.0
         else:
-            quality_score = 0
-        
+            quality_score = 0.0
+
+        # --- 3. Faithfulness (prompt adherence) ---
+        faithfulness_score = self._evaluate_faithfulness(image, prompt)
+
+        overall = (text_score + quality_score + faithfulness_score) / 3
+
         return {
             "text_accuracy": text_score,
             "text_ned": text_ned,
             "image_quality": quality_score,
-            "overall": (text_score + quality_score) / 2,
+            "faithfulness": faithfulness_score,
+            "overall": overall,
             "recognized_text": recognized_text,
-            "ground_truth": ground_truth
+            "ground_truth": ground_truth,
         }
-    
-    def evaluate_aesthetic(self, image: Image.Image) -> float:
-        """Evaluate aesthetic quality using VLM.
-        
-        Args:
-            image: Generated image
-            
-        Returns:
-            Aesthetic score (0-1)
+
+    def _evaluate_faithfulness(self, image: Image.Image, prompt: str) -> float:
+        """Evaluate how faithfully the image matches the prompt description.
+
+        Asks the VLM to score scene composition, objects, style, and text placement
+        adherence on a 0-10 scale, then normalises to [0, 1].
         """
+        faithfulness_prompt = (
+            "You are evaluating how faithfully this generated image matches its text prompt.\n\n"
+            f"Prompt: \"{prompt}\"\n\n"
+            "Consider the following aspects:\n"
+            "1. Scene & background: Does the scene match the description?\n"
+            "2. Objects & elements: Are all described objects/elements present?\n"
+            "3. Style & color: Does the visual style match the prompt's intent?\n"
+            "4. Text content & placement: Is the text rendered in the correct location with correct content?\n\n"
+            "Rate the overall faithfulness from 0-10, respond with only a number."
+        )
+        response = self._call_vlm(image, faithfulness_prompt, max_tokens=10)
+
+        import re
+        numbers = re.findall(r'\d+\.?\d*', response)
+        if numbers:
+            raw = min(10.0, max(0.0, float(numbers[0])))
+            return raw / 10.0
+        return 0.0
+
+    def evaluate_aesthetic(self, image: Image.Image) -> float:
         result = self.evaluate_text_rendering(image, "")
         return result.get("image_quality", 0.0)
-    
+
     def evaluate_text_match(self, image: Image.Image, text: str) -> float:
-        """Evaluate text-image match using VLM.
-        
-        Args:
-            image: Generated image
-            text: Text prompt
-            
-        Returns:
-            Text match score (0-1)
-        """
         result = self.evaluate_text_rendering(image, text)
         return result.get("text_accuracy", 0.0), result.get("text_ned", 0.0)
 

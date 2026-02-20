@@ -48,14 +48,15 @@ from eval.core.metrics import extract_text_from_prompt
 
 # Default local model paths
 DEFAULT_MINERU_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/MinerU_VLM"
-DEFAULT_VLM_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B"
+# DEFAULT_VLM_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B"
+DEFAULT_VLM_PATH = "ApiCall"
 
 # Metric name to output field mapping
 METRIC_FIELDS = {
     'vqa': ['vqa_score'],
     'ocr': ['ocr_acc', 'ocr_ned'],
     'clip': ['clip_score'],
-    'vlm': ['vlm_text_accuracy', 'vlm_text_ned', 'vlm_image_quality', 'vlm_overall'],
+    'vlm': ['vlm_text_accuracy', 'vlm_text_ned', 'vlm_image_quality', 'vlm_faithfulness', 'vlm_overall'],
     'aesthetic': ['aesthetic_score'],
 }
 
@@ -412,6 +413,7 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
                 updates['vlm_text_accuracy'] = round(vlm_result['text_accuracy'], 4)
                 updates['vlm_text_ned'] = round(vlm_result['text_ned'], 4)
                 updates['vlm_image_quality'] = round(vlm_result['image_quality'], 4)
+                updates['vlm_faithfulness'] = round(vlm_result['faithfulness'], 4)
                 updates['vlm_overall'] = round(vlm_result['overall'], 4)
             
             elif metric == 'aesthetic':
@@ -520,35 +522,22 @@ def compute_summary(output_path: str) -> Dict:
     vlm_text_acc_scores = [r['vlm_text_accuracy'] for r in results if 'vlm_text_accuracy' in r]
     vlm_text_ned_scores = [r['vlm_text_ned'] for r in results if 'vlm_text_ned' in r]
     vlm_quality_scores = [r['vlm_image_quality'] for r in results if 'vlm_image_quality' in r]
-    
-    if vlm_overall_scores:
-        summary['vlm_overall'] = {
-            'mean': round(sum(vlm_overall_scores) / len(vlm_overall_scores), 4),
-            'min': round(min(vlm_overall_scores), 4),
-            'max': round(max(vlm_overall_scores), 4),
-            'count': len(vlm_overall_scores)
-        }
-    if vlm_text_acc_scores:
-        summary['vlm_text_accuracy'] = {
-            'mean': round(sum(vlm_text_acc_scores) / len(vlm_text_acc_scores), 4),
-            'min': round(min(vlm_text_acc_scores), 4),
-            'max': round(max(vlm_text_acc_scores), 4),
-            'count': len(vlm_text_acc_scores)
-        }
-    if vlm_text_ned_scores:
-        summary['vlm_text_ned'] = {
-            'mean': round(sum(vlm_text_ned_scores) / len(vlm_text_ned_scores), 4),
-            'min': round(min(vlm_text_ned_scores), 4),
-            'max': round(max(vlm_text_ned_scores), 4),
-            'count': len(vlm_text_ned_scores)
-        }
-    if vlm_quality_scores:
-        summary['vlm_image_quality'] = {
-            'mean': round(sum(vlm_quality_scores) / len(vlm_quality_scores), 4),
-            'min': round(min(vlm_quality_scores), 4),
-            'max': round(max(vlm_quality_scores), 4),
-            'count': len(vlm_quality_scores)
-        }
+    vlm_faith_scores = [r['vlm_faithfulness'] for r in results if 'vlm_faithfulness' in r]
+
+    for key, scores in [
+        ('vlm_overall', vlm_overall_scores),
+        ('vlm_text_accuracy', vlm_text_acc_scores),
+        ('vlm_text_ned', vlm_text_ned_scores),
+        ('vlm_image_quality', vlm_quality_scores),
+        ('vlm_faithfulness', vlm_faith_scores),
+    ]:
+        if scores:
+            summary[key] = {
+                'mean': round(sum(scores) / len(scores), 4),
+                'min': round(min(scores), 4),
+                'max': round(max(scores), 4),
+                'count': len(scores),
+            }
 
     # VQA summary
     vqa_scores = [r['vqa_score'] for r in results if 'vqa_score' in r]
@@ -597,19 +586,10 @@ def compute_summary(output_path: str) -> Dict:
         if cat_vqa:
             cat_summary['vqa_mean'] = round(sum(cat_vqa) / len(cat_vqa), 4)
             
-        cat_vlm_acc = [r['vlm_text_accuracy'] for r in cat_results if 'vlm_text_accuracy' in r]
-        cat_vlm_ned = [r['vlm_text_ned'] for r in cat_results if 'vlm_text_ned' in r]
-        cat_vlm_quality = [r['vlm_image_quality'] for r in cat_results if 'vlm_image_quality' in r]
-        cat_vlm_overall = [r['vlm_overall'] for r in cat_results if 'vlm_overall' in r]
-
-        if cat_vlm_acc:
-            cat_summary['vlm_text_accuracy_mean'] = round(sum(cat_vlm_acc) / len(cat_vlm_acc), 4)
-        if cat_vlm_ned:
-            cat_summary['vlm_text_ned_mean'] = round(sum(cat_vlm_ned) / len(cat_vlm_ned), 4)
-        if cat_vlm_quality:
-            cat_summary['vlm_image_quality_mean'] = round(sum(cat_vlm_quality) / len(cat_vlm_quality), 4)
-        if cat_vlm_overall:
-            cat_summary['vlm_overall_mean'] = round(sum(cat_vlm_overall) / len(cat_vlm_overall), 4)
+        for vlm_key in ['vlm_text_accuracy', 'vlm_text_ned', 'vlm_image_quality', 'vlm_faithfulness', 'vlm_overall']:
+            vals = [r[vlm_key] for r in cat_results if vlm_key in r]
+            if vals:
+                cat_summary[f'{vlm_key}_mean'] = round(sum(vals) / len(vals), 4)
 
         cat_aesthetic = [r['aesthetic_score'] for r in cat_results if 'aesthetic_score' in r]
         if cat_aesthetic:

@@ -82,12 +82,11 @@ PROMPT_TEMPLATES = {
 
     # ---- Generate clean prompt (remove text/formula descriptions) ----
     "generate_clean_prompt": (
-        "Rewrite the user's prompt to explicitly exclude any text, formulas, math symbols, letters, or numbers from rendering.\n\n"
-        "You MUST:\n"
-        "1. Keep the EXACT same scene, style, composition, colors, and spatial layout as the original prompt.\n"
-        "2. Preserve the overall composition proportions — the scene should look identical except all text is removed.\n"
-        "3. Do NOT change the camera angle, lighting, color palette, or scene structure.\n\n"
-        "Output only the rewritten prompt, no explanations."
+        "Rewrite the user's prompt to explicitly exclude any text, formulas, math symbols, letters, or numbers from rendering."
+        "You MUST:"
+        "1. Remove any text related to formulas, math symbols, letters, or numbers."
+        "2. Preserve the description related to backgrounds, styles, and compositions."
+        "3. Output only the rewritten prompt, no explanations."
     ),
 
     # ---- Generate style prompt for FluxKlein (text style matching background) ----

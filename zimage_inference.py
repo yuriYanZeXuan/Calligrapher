@@ -347,7 +347,7 @@ class ZImageInference:
         # === Pass 2: Clean 背景生成 + 像素空间字形合成 ===
         print("=== Pass 2: Clean 推理 + 像素空间字形合成 ===")
         clean_prompt = self.vlm_agent.generate_clean_prompt(prompt, typography_plan)
-        print(f"Clean prompt: {clean_prompt[:100]}...")
+        print(f"Clean prompt: {clean_prompt}...")
 
         image_size = (config.width, config.height)
         injection_data = self.glyph_injector.prepare_injection_from_plan(

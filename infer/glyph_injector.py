@@ -70,11 +70,11 @@ class InjectionConfig:
         attn_enhance_image_to_text: 增强 image→text 方向
     """
     mask_strength: float = 1.
-    timestep_ratio: tuple[float, float] = (0.2, 0.9)  # (t_start, t_end) 注入/增强时间范围
-    inject_last_only: bool = True  # 仅在最后一步注入（去噪完成后粘贴字形）
+    timestep_ratio: tuple[float, float] = (0.2, 0.8)  # (t_start, t_end) 注入/增强时间范围
+    inject_last_only: bool = False  # 仅在最后一步注入（去噪完成后粘贴字形）
 
     # 方案 A: 频率分解注入
-    freq_decompose: bool = False
+    freq_decompose: bool = True
     freq_kernel_size: int = 5
 
     # 方案 C: 递减注入强度调度
@@ -438,6 +438,7 @@ class GlyphInjector:
             "latent_list": latent_list,
             "mask_latent": mask_latent,
             "full_mask": full_mask,
+            "combined_template": combined_template,
             "total_steps": len(timesteps),
         }
 

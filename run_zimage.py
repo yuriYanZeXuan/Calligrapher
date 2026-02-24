@@ -130,7 +130,11 @@ def main():
         with open(args.plan, "r", encoding="utf-8") as f:
             plan = json.load(f)
 
-        # 将 plan 中的 text_regions 作为 debug bypass 传入
+        # 使用 plan 中的 prompt（如果有）
+        if "prompt" in plan:
+            args.prompt = plan["prompt"]
+            print(f"使用 plan prompt: {args.prompt}")
+
         text_regions = plan.get("text_regions", [])
         print(f"Plan 包含 {len(text_regions)} 个 text region:")
         for i, r in enumerate(text_regions):

@@ -344,8 +344,8 @@ class ZImageInference:
         self.pipeline.scheduler.set_timesteps(config.num_inference_steps, device=self.primary_device)
         timesteps = self.pipeline.scheduler.timesteps
 
-        # === Pass 2: Clean 背景 + 字形注入 ===
-        print("=== Pass 2: Clean 推理 + 字形注入 ===")
+        # === Pass 2: Clean 背景生成 + 像素空间字形合成 ===
+        print("=== Pass 2: Clean 推理 + 像素空间字形合成 ===")
         clean_prompt = self.vlm_agent.generate_clean_prompt(prompt, typography_plan)
         print(f"Clean prompt: {clean_prompt[:100]}...")
 
@@ -354,9 +354,14 @@ class ZImageInference:
             typography_plan, image_size, noise, timesteps,
         )
 
-        pass2_image = self._run_pass2_injection_with_data(
+        # 生成干净背景（attention enhancement 仍生效，但跳过 latent 注入避免背景色块）
+        background = self._run_pass2_injection_with_data(
             clean_prompt, noise, timesteps, injection_data, config,
+            skip_latent_injection=True,
         )
+
+        # 像素空间合成：用 full_mask 只贴文字笔画，不带模板背景
+        pass2_image = self._pixel_composite_text(background, injection_data)
         candidates["pass2_injection"] = pass2_image
 
         # === Pass 3: 风格化 ===
@@ -506,8 +511,9 @@ class ZImageInference:
         injection_data: dict,
         config: GenerationConfig,
         attn_enh=None,
+        skip_latent_injection: bool = False,
     ) -> torch.Tensor:
-        """模板注入去噪：频率分解注入 + 递减强度 + 注意力增强/反向抑制。"""
+        """模板注入去噪：attention enhancement + 可选 latent 注入。"""
         dtype = self.pipeline.transformer.dtype
         latent = noise.clone()
         total_steps = len(timesteps)
@@ -531,7 +537,7 @@ class ZImageInference:
                 noise_pred.to(torch.float32), t, latent, return_dict=False,
             )[0]
 
-            if config.use_glyph_injection:
+            if config.use_glyph_injection and not skip_latent_injection:
                 latent = self.glyph_injector.inject_latent(
                     latent, injection_data, step_idx + 1,
                     config=config.injection_config,
@@ -548,6 +554,51 @@ class ZImageInference:
         with torch.no_grad():
             image = self.pipeline.vae.decode(latent, return_dict=False)[0]
         return self.pipeline.image_processor.postprocess(image, output_type="pil")[0]
+
+    # ---- 像素空间合成 ----
+
+    def _pixel_composite_text(
+        self,
+        background: Image.Image,
+        injection_data: dict,
+    ) -> Image.Image:
+        """像素空间合成：用 full_mask 只贴文字笔画像素到背景上。
+
+        与 latent 注入不同，这里在全分辨率操作，mask 精确到笔画，
+        不会引入模板背景色块。
+        """
+        template = injection_data["combined_template"]
+        mask = injection_data["full_mask"]
+
+        bg_arr = np.array(background)
+        tpl_arr = np.array(template)
+
+        # 确保尺寸匹配
+        if tpl_arr.shape[:2] != bg_arr.shape[:2]:
+            template = template.resize(background.size, Image.LANCZOS)
+            tpl_arr = np.array(template)
+        if mask.shape[:2] != bg_arr.shape[:2]:
+            mask = np.array(Image.fromarray(mask).resize(background.size, Image.NEAREST))
+
+        # 只在文字笔画处替换像素
+        stroke_mask = mask > 127
+        result = bg_arr.copy()
+        result[stroke_mask] = tpl_arr[stroke_mask]
+
+        composite = Image.fromarray(result)
+
+        if self.logger is not None:
+            comp_vis = Image.new("RGB", (background.width * 3, background.height))
+            comp_vis.paste(background, (0, 0))
+            comp_vis.paste(Image.fromarray(mask).convert("RGB"), (background.width, 0))
+            comp_vis.paste(composite, (background.width * 2, 0))
+            self.logger.save_image(
+                comp_vis, "pixel_composite",
+                caption="Background | Mask | Composite",
+                subfolder="two_pass",
+            )
+
+        return composite
 
     # ---- Pass 3: 风格化 (harmonizer) ----
 

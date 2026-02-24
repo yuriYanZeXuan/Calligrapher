@@ -1,0 +1,69 @@
+{
+  "metrics": [
+    {
+      "config": "Baseline",
+      "mean_iou": 0.18546619644075646,
+      "median_iou": 0.10342399986681981,
+      "std_iou": 0.21457342861372403,
+      "min_iou": 0.0,
+      "max_iou": 0.565139515786888,
+      "num_samples": 10
+    },
+    {
+      "config": "w/o Agent",
+      "mean_iou": 0.21468498103595574,
+      "median_iou": 0.18075505471393177,
+      "std_iou": 0.16218681836244284,
+      "min_iou": 0.0,
+      "max_iou": 0.49406894579997496,
+      "num_samples": 10
+    },
+    {
+      "config": "w/o Grid",
+      "mean_iou": 0.27025219700554054,
+      "median_iou": 0.2508454604078911,
+      "std_iou": 0.16204526643362846,
+      "min_iou": 0.0,
+      "max_iou": 0.5090840605677198,
+      "num_samples": 7
+    },
+    {
+      "config": "VLM + 3\u00d73 Grid",
+      "mean_iou": 0.4475126877520844,
+      "median_iou": 0.3891589512081671,
+      "std_iou": 0.14636861804103313,
+      "min_iou": 0.2508454604078911,
+      "max_iou": 0.7153340832597658,
+      "num_samples": 10
+    },
+    {
+      "config": "VLM + 5\u00d75 Grid",
+      "mean_iou": 0.5530802722298338,
+      "median_iou": 0.5406250808976796,
+      "std_iou": 0.12802274969287233,
+      "min_iou": 0.3500172296846345,
+      "max_iou": 0.6938616066786072,
+      "num_samples": 5
+    },
+    {
+      "config": "VLM + 8\u00d78 Grid",
+      "mean_iou": 0.3775970144154975,
+      "median_iou": 0.36276813383646234,
+      "std_iou": 0.15515329693716465,
+      "min_iou": 0.17808558785014808,
+      "max_iou": 0.606766202138917,
+      "num_samples": 4
+    }
+  ],
+  "config": {
+    "jsonl_path": "/Users/yanzexuan/code/Calligrapher/eval/UnseenWords/unseen_mid_sci.jsonl",
+    "output_dir": "/Users/yanzexuan/code/Calligrapher/ablation/output_table1",
+    "num_samples": 10,
+    "img_width": 1024,
+    "img_height": 1024,
+    "seed": 42,
+    "vlm_model": "qwen3-vl-235b-a22b-instruct",
+    "skip_vlm": false,
+    "no_visualize": true
+  }
+}

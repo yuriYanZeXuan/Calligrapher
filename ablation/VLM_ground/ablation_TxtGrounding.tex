@@ -1,0 +1,27 @@
+
+\begin{table}[t]
+    \centering
+    \caption{Ablation Study on VLM-Based Text Grounding with Grid Guidance}
+    \label{tab:text_grounding}
+    \small
+    \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Configuration} & \textbf{Mean IoU$\uparrow$} & \textbf{Median IoU$\uparrow$} & \textbf{Std$\downarrow$} & \textbf{Improvement} \\
+    \midrule
+    VLM only (Baseline) & 0.2703 & 0.2508 & 0.1620 & -- \\
+    \midrule
+    VLM + 3$\times$3 Grid & 0.4475 & 0.3892 & 0.1464 & +65.6\% \\
+    \rowcolor{gray!15}
+    \textbf{VLM + 5$\times$5 Grid} & \textbf{0.5531} & \textbf{0.5406} & \textbf{0.1280} & \textbf{+104.6\%} \\
+    VLM + 8$\times$8 Grid & 0.3776 & 0.3628 & 0.1552 & +39.7\% \\
+    \bottomrule
+    \end{tabular}
+    \vspace{4pt}
+    \begin{minipage}{0.95\linewidth}
+    \footnotesize
+    \textit{Note:} IoU measures the overlap between predicted and ground-truth bounding boxes for formula placement. 
+    \textbf{VLM only} uses VLM without coordinate grid overlay as the baseline; Grid variants use VLM with different grid densities.
+    \textbf{5$\times$5 Grid} achieves the best performance, providing +104.6\% improvement over VLM-only baseline.
+    8$\times$8 grid shows degraded performance (+39.7\%), suggesting too fine-grained grids introduce visual noise.
+    \end{minipage}
+    \end{table}

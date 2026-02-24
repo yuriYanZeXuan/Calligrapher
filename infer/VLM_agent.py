@@ -84,11 +84,8 @@ PROMPT_TEMPLATES = {
         "Rewrite the user's prompt to explicitly exclude any text, formulas, math symbols, letters, or numbers from rendering.\n\n"
         "You MUST:\n"
         "1. Keep the EXACT same scene, style, composition, colors, and spatial layout as the original prompt.\n"
-        "2. For each text region listed below, explicitly describe a clean/blank/empty area at that position "
-        "with the correct background material and color (e.g., 'clean blackboard surface', 'blank white paper area', "
-        "'empty wooden sign'). This ensures the generated background matches the original layout.\n"
-        "3. Preserve the overall composition proportions — the scene should look identical except all text is removed.\n"
-        "4. Do NOT change the camera angle, lighting, color palette, or scene structure.\n\n"
+        "2. Preserve the overall composition proportions — the scene should look identical except all text is removed.\n"
+        "3. Do NOT change the camera angle, lighting, color palette, or scene structure.\n\n"
         "Output only the rewritten prompt, no explanations."
     ),
 
@@ -424,7 +421,7 @@ class VLMAgent:
         text_hint = image_analysis.get("text_style_hint", "")
         
         user_content = (
-            "生成一个图像编辑指令，要求将文字重绘为与背景协调但形成对比的风格。"
+            "生成一个简洁的图像编辑指令，要求将文字重绘为与背景协调但形成对比的风格。"
         )
         
         raw = self.call_vlm(

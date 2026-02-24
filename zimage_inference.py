@@ -357,7 +357,6 @@ class ZImageInference:
         # 生成干净背景（attention enhancement 仍生效，但跳过 latent 注入避免背景色块）
         background = self._run_pass2_injection_with_data(
             clean_prompt, noise, timesteps, injection_data, config,
-            skip_latent_injection=True,
         )
 
         # 像素空间合成：用 full_mask 只贴文字笔画，不带模板背景
@@ -511,7 +510,6 @@ class ZImageInference:
         injection_data: dict,
         config: GenerationConfig,
         attn_enh=None,
-        skip_latent_injection: bool = False,
     ) -> torch.Tensor:
         """模板注入去噪：attention enhancement + 可选 latent 注入。"""
         dtype = self.pipeline.transformer.dtype
@@ -537,7 +535,7 @@ class ZImageInference:
                 noise_pred.to(torch.float32), t, latent, return_dict=False,
             )[0]
 
-            if config.use_glyph_injection and not skip_latent_injection:
+            if config.use_glyph_injection:
                 latent = self.glyph_injector.inject_latent(
                     latent, injection_data, step_idx + 1,
                     config=config.injection_config,

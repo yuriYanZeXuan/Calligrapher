@@ -386,27 +386,27 @@ class VLMAgent:
         """
         user_content = f"Original prompt:\n{prompt}"
 
-        if typography_plan:
-            analysis = typography_plan.get("image_analysis", {})
-            regions = typography_plan.get("text_regions", [])
+        # if typography_plan:
+        #     analysis = typography_plan.get("image_analysis", {})
+        #     regions = typography_plan.get("text_regions", [])
 
-            if analysis:
-                user_content += (
-                    f"\n\nImage analysis from reference:"
-                    f"\n- Background style: {analysis.get('background_style', 'unknown')}"
-                    f"\n- Dominant colors: {', '.join(analysis.get('dominant_colors', []))}"
-                    f"\n- Text style hint: {analysis.get('text_style_hint', 'unknown')}"
-                )
+        #     if analysis:
+        #         user_content += (
+        #             f"\n\nImage analysis from reference:"
+        #             f"\n- Background style: {analysis.get('background_style', 'unknown')}"
+        #             f"\n- Dominant colors: {', '.join(analysis.get('dominant_colors', []))}"
+        #             f"\n- Text style hint: {analysis.get('text_style_hint', 'unknown')}"
+        #         )
 
-            if regions:
-                user_content += "\n\nText regions to keep as BLANK areas (bbox in normalized 0-1 coords):"
-                for i, r in enumerate(regions):
-                    bbox = r.get("bbox", [0, 0, 1, 1])
-                    bg_color = r.get("background_color", "unknown")
-                    user_content += (
-                        f"\n  Region {i+1}: bbox={bbox},"
-                        f" background_color={bg_color}"
-                    )
+        #     if regions:
+        #         user_content += "\n\nText regions to keep as BLANK areas (bbox in normalized 0-1 coords):"
+        #         for i, r in enumerate(regions):
+        #             bbox = r.get("bbox", [0, 0, 1, 1])
+        #             bg_color = r.get("background_color", "unknown")
+        #             user_content += (
+        #                 f"\n  Region {i+1}: bbox={bbox},"
+        #                 f" background_color={bg_color}"
+        #             )
 
         raw = self.call_vlm(
             "generate_clean_prompt",

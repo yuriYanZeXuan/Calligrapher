@@ -40,23 +40,19 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    analysis = plan.get("image_analysis", {})
-    dominant = analysis.get("dominant_colors", ["#000000"])
-    default_bg = dominant[0] if dominant else "#000000"
     regions = plan.get("text_regions", [])
 
     print(f"Plan: {args.plan}")
-    print(f"Canvas: {args.width}x{args.height}, background: {default_bg}")
+    print(f"Canvas: {args.width}x{args.height}, background: black")
     print(f"Regions: {len(regions)}")
     print("=" * 60)
 
-    canvas = Image.new("RGB", (args.width, args.height), default_bg)
+    canvas = Image.new("RGB", (args.width, args.height), "black")
 
     for i, r in enumerate(regions):
         content = r["content"]
         bbox = r["bbox"]
         rotation = r.get("rotation", 0)
-        bg_color = r.get("background_color", default_bg)
         text_color = r.get("color", "#FFFFFF")
         font_weight = r.get("font_weight", "regular")
 
@@ -72,21 +68,17 @@ def main():
         img = render_formula(
             content, rw, rh,
             text_color=text_color,
-            background_color=bg_color,
             font_weight=font_weight,
             rotation=rotation,
         )
 
-        # 保存单 region 图
         region_path = output_dir / f"region_{i}_{content[:4]}.png"
         img.save(region_path)
         print(f"       -> {region_path}")
 
-        # 同时渲染无旋转版本用于对比
         img_no_rot = render_formula(
             content, rw, rh,
             text_color=text_color,
-            background_color=bg_color,
             font_weight=font_weight,
             rotation=0,
         )

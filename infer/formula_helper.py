@@ -297,7 +297,6 @@ def render_mathjax(
     width: int,
     height: int,
     text_color: str = "black",
-    background_color: str = "white",
     font_weight: str = "regular",
 ) -> _Opt[Image.Image]:
     """使用 MathJax (Node.js) 渲染 LaTeX → SVG → PIL Image。
@@ -338,7 +337,7 @@ def render_mathjax(
         return None
 
     # SVG → PNG：使用 cairosvg 转换
-    img = _convert_svg_to_png(svg_str, width, height, text_color, background_color)
+    img = _convert_svg_to_png(svg_str, width, height, text_color)
     
     if img is None:
         print("[MathJax] SVG→PNG 转换失败")
@@ -347,8 +346,8 @@ def render_mathjax(
     return img
 
 
-def _convert_svg_to_png(svg_str: str, width: int, height: int, 
-                        text_color: str = "black", background_color: str = "white") -> _Opt[Image.Image]:
+def _convert_svg_to_png(svg_str: str, width: int, height: int,
+                        text_color: str = "black") -> _Opt[Image.Image]:
     """将 MathJax 生成的 SVG 转换为 PNG。
     
     MathJax 输出包裹在 <mjx-container> 中，需要提取内部 SVG 并添加样式。
@@ -445,20 +444,12 @@ def render_latex(
     width: int,
     height: int,
     text_color: str = "black",
-    background_color: str = "white",
     font_weight: str = "regular",
 ) -> Image.Image:
     """使用 matplotlib 渲染 LaTeX 公式为 PIL Image。
 
     支持完整的 LaTeX math mode 语法（分数、积分、矩阵、上下标等）。
     自动二分搜索字号以填满给定区域。
-
-    Args:
-        latex: LaTeX 公式字符串（可以带或不带 $ 包裹）
-        width, height: 输出图像尺寸
-        text_color: 文字颜色
-        background_color: 背景颜色
-        font_weight: 字体粗细 ("light"/"regular"/"bold")
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -473,7 +464,7 @@ def render_latex(
         formula = rf"$\boldsymbol{{{inner}}}$"
 
     fg = text_color
-    bg = background_color
+    bg = "black"
 
     # 自适应字号：二分搜索
     dpi = 150
@@ -526,7 +517,7 @@ def render_latex(
         plt.close(fig)
         print(f"[formula_helper] matplotlib 渲染失败，降级为纯文本: {e}")
         plain = latex.strip().strip("$")
-        return render_plaintext(plain, width, height, text_color, background_color,
+        return render_plaintext(plain, width, height, text_color,
                                 font_weight=font_weight)
     plt.close(fig)
     buf.seek(0)
@@ -658,17 +649,11 @@ def render_plaintext(
     width: int,
     height: int,
     text_color: str = "black",
-    background_color: str = "white",
     font_weight: str = "regular",
     font_path: _Opt[str] = None,
 ) -> Image.Image:
-    """使用 PIL + 系统字体渲染纯文本。
-
-    Args:
-        font_weight: 字体粗细 ("light"/"regular"/"bold")
-        font_path: 自定义字体路径（可选）
-    """
-    img = Image.new("RGB", (width, height), background_color)
+    """使用 PIL + 系统字体渲染纯文本。"""
+    img = Image.new("RGB", (width, height), "black")
     draw = ImageDraw.Draw(img)
 
     font_size = calculate_font_size(text, width, height)
@@ -693,24 +678,21 @@ def _composite_to_canvas(
     img: Image.Image,
     width: int,
     height: int,
-    background_color: str = "white",
 ) -> Image.Image:
-    """将任意尺寸的图像（可能含透明通道）居中合成到 (width, height) 的 RGB 画布上。
+    """将任意尺寸的图像（可能含透明通道）居中合成到 (width, height) 的黑色 RGB 画布上。
 
     如果图像大于目标尺寸，先按比例缩小。
     """
-    # 如果尺寸已匹配，快速返回
     if img.size == (width, height) and img.mode == "RGB":
         return img
 
-    # 按比例缩放使其不超过画布
     iw, ih = img.size
     scale = min(width / max(iw, 1), height / max(ih, 1), 1.0)
     if scale < 1.0:
         iw, ih = int(iw * scale), int(ih * scale)
         img = img.resize((iw, ih), Image.LANCZOS)
 
-    canvas = Image.new("RGB", (width, height), background_color)
+    canvas = Image.new("RGB", (width, height), "black")
     # 居中粘贴
     x = (width - iw) // 2
     y = (height - ih) // 2
@@ -729,45 +711,37 @@ def render_formula(
     width: int,
     height: int,
     text_color: str = "black",
-    background_color: str = "white",
     force_latex: bool = False,
     font_weight: str = "regular",
     font_path: _Opt[str] = None,
     rotation: float = 0.0,
 ) -> Image.Image:
-    """渲染公式/文本图像（自动检测渲染路径）。
+    """渲染公式/文本图像（黑底 + 指定文字颜色）。
 
     优先级：
     1. MathJax (Node.js) — 完整 LaTeX 支持（array, matrix, cases 等）
     2. matplotlib mathtext — 无需 Node.js，支持常用 LaTeX 子集
     3. PIL 纯文本 — 最后兜底
-
-    Args:
-        font_weight: 字体粗细 ("light"/"regular"/"bold")
-        font_path: 自定义字体路径（仅纯文本路径生效）
-        rotation: 旋转角度（度）。0=水平，正值=逆时针↗，负值=顺时针↘
     """
-    # 始终先做 Unicode → LaTeX 转换，否则混合 Unicode+LaTeX 的文本会漏转
     converted = plaintext_to_latex(text)
     use_latex = force_latex or is_latex(text) or (converted != text)
     if converted != text:
         text = converted
 
     if use_latex:
-        img = render_mathjax(text, width, height, text_color, background_color, font_weight)
+        img = render_mathjax(text, width, height, text_color, font_weight)
         if img is not None:
-            img = _composite_to_canvas(img, width, height, background_color)
+            img = _composite_to_canvas(img, width, height)
         else:
-            img = render_latex(text, width, height, text_color, background_color,
+            img = render_latex(text, width, height, text_color,
                                font_weight=font_weight)
     else:
-        img = render_plaintext(text, width, height, text_color, background_color,
+        img = render_plaintext(text, width, height, text_color,
                                font_weight=font_weight, font_path=font_path)
 
     if rotation != 0:
-        from PIL import ImageColor
-        fill = ImageColor.getrgb(background_color)
-        img = img.rotate(rotation, expand=False, resample=Image.BICUBIC, fillcolor=fill)
+        img = img.rotate(rotation, expand=False, resample=Image.BICUBIC,
+                         fillcolor=(0, 0, 0))
 
     return img
 

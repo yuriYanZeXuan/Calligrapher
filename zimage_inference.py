@@ -730,7 +730,6 @@ class ZImageInference:
                 "font_weight": r.get("font_weight", "regular"),
                 "font_size_ratio": r.get("font_size_ratio", 0.7),
                 "color": r.get("color", "#FFFFFF"),
-                "background_color": r.get("background_color", "#000000"),
                 "is_latex": r.get("is_latex", False),
                 "alignment": r.get("alignment", "center"),
                 "rotation": r.get("rotation", 0),

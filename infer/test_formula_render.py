@@ -41,32 +41,26 @@ def render_plan_text_regions(plan_path: str, output_dir: str = "./formula_test_o
         bbox = region["bbox"]  # [x_min, y_min, x_max, y_max] 归一化坐标
         is_latex_flag = region.get("is_latex", False)
         color = region.get("color", "#000000")
-        bg_color = region.get("background_color", "#FFFFFF")
         
-        # 计算尺寸 (使用固定宽度 1024，按比例计算高度)
         canvas_width = 1024
         x1, y1, x2, y2 = bbox
         region_width = int((x2 - x1) * canvas_width)
-        region_height = int((y2 - y1) * canvas_width)  # 假设正方形像素
+        region_height = int((y2 - y1) * canvas_width)
         
         print(f"\n区域 {i}:")
         print(f"  内容: {content[:60]}{'...' if len(content) > 60 else ''}")
         print(f"  类型: {'LaTeX' if is_latex_flag or is_latex(content) else '纯文本'}")
         print(f"  尺寸: {region_width}x{region_height}")
-        print(f"  文字颜色: {color}, 背景: {bg_color}")
+        print(f"  文字颜色: {color}")
         
-        # 转换颜色
         text_color = hex_to_rgb(color)
-        background_color = hex_to_rgb(bg_color)
         
-        # 渲染
         try:
             img = render_formula(
                 content,
                 width=region_width,
                 height=region_height,
                 text_color=text_color,
-                background_color=background_color,
                 force_latex=is_latex_flag
             )
             

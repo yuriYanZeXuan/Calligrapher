@@ -45,7 +45,6 @@ PROMPT_TEMPLATES = {
         "- font_weight: light/regular/bold\n"
         "- font_size_ratio: 0.1-1.0 relative to bbox height\n"
         "- color: hex color matching the original text color in the reference image\n"
-        "- background_color: hex color matching the region background\n"
         "- is_latex: true/false\n"
         "- alignment: left/center/right\n"
         "- rotation: text rotation angle in degrees. 0 = horizontal (left to right). "
@@ -55,7 +54,6 @@ PROMPT_TEMPLATES = {
         "- bboxes must not overlap or exceed image bounds\n"
         "- bboxes must be FLAT and FACING the screen (y_min approximately equal for left and right sides, same for y_max)\n"
         "- color must match the original text color in the reference image\n"
-        "- background_color must match the region background\n"
         "- keep formulas intact\n"
         "- match the reference image's natural layout style\n\n"
         "Output strictly in this JSON format:\n"
@@ -73,7 +71,6 @@ PROMPT_TEMPLATES = {
         '      "font_weight": "regular",\n'
         '      "font_size_ratio": 0.7,\n'
         '      "color": "#FFFFFF",\n'
-        '      "background_color": "#000000",\n'
         '      "is_latex": false,\n'
         '      "alignment": "center",\n'
         '      "rotation": 0\n'
@@ -402,11 +399,7 @@ class VLMAgent:
         #         user_content += "\n\nText regions to keep as BLANK areas (bbox in normalized 0-1 coords):"
         #         for i, r in enumerate(regions):
         #             bbox = r.get("bbox", [0, 0, 1, 1])
-        #             bg_color = r.get("background_color", "unknown")
-        #             user_content += (
-        #                 f"\n  Region {i+1}: bbox={bbox},"
-        #                 f" background_color={bg_color}"
-        #             )
+        #             user_content += f"\n  Region {i+1}: bbox={bbox}"
 
         raw = self.call_vlm(
             "generate_clean_prompt",

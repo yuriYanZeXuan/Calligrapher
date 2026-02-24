@@ -11,7 +11,6 @@
       "font_weight": "regular",
       "font_size_ratio": 0.6,
       "color": "#F0F0E0",
-      "background_color": "#2D4A22",
       "is_latex": true,
       "alignment": "center"
     }

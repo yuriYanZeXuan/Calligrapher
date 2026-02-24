@@ -163,27 +163,15 @@ class GlyphInjector:
         text: str,
         width: int,
         height: int,
-        background_color: str = "black",
         text_color: str = "white",
         force_latex: bool = False,
         font_weight: str = "regular",
         font_path: Optional[str] = None,
         rotation: float = 0.0,
     ) -> Image.Image:
-        """渲染文字模板图像，支持纯文本和 LaTeX 公式。
-
-        Args:
-            text: 渲染文本内容
-            width, height: 输出图像尺寸
-            background_color: 背景颜色
-            text_color: 文字颜色
-            force_latex: 强制 LaTeX 模式
-            font_weight: 字体粗细 ("light"/"regular"/"bold")
-            font_path: 自定义字体路径（可选）
-            rotation: 旋转角度（度）。0=水平，正值=逆时针↗，负值=顺时针↘
-        """
+        """渲染文字模板图像（黑底 + 指定文字颜色），支持纯文本和 LaTeX 公式。"""
         return render_formula(
-            text, width, height, text_color, background_color,
+            text, width, height, text_color,
             force_latex, font_weight=font_weight, font_path=font_path,
             rotation=rotation,
         )
@@ -357,18 +345,9 @@ class GlyphInjector:
             与 prepare_injection() 相同格式的注入数据 dict
         """
         width, height = image_size
-        full_mask = np.zeros((height, width), dtype=np.uint8)
 
-        # 从 image_analysis 提取默认背景色，作为合成模版的底色
-        analysis = typography_plan.get("image_analysis", {})
-        dominant = analysis.get("dominant_colors", ["#000000"])
-        default_bg = dominant[0] if dominant else "#000000"
-
-        # 合成全图模版：所有 region 的文字画在同一张图上，编码一次 latent
-        combined_template = Image.new("RGB", (width, height), default_bg)
-
-        # 第一步：统一渲染所有文字到一张图
-        combined_template = Image.new("RGB", (width, height), default_bg)
+        # 黑底画布：所有 region 的文字画在同一张黑底图上
+        combined_template = Image.new("RGB", (width, height), "black")
         
         for region_spec in typography_plan.get("text_regions", []):
             content = region_spec["content"]
@@ -383,7 +362,6 @@ class GlyphInjector:
             
             text_img = self.render_text_template(
                 content, region_width, region_height,
-                background_color=region_spec.get("background_color", default_bg),
                 text_color=region_spec.get("color", "#FFFFFF"),
                 force_latex=region_spec.get("is_latex", False),
                 font_weight=region_spec.get("font_weight", "regular"),
@@ -395,7 +373,7 @@ class GlyphInjector:
             
             combined_template.paste(text_img, (x1, y1))
         
-        # 第二步：统一提取 mask
+        # 黑底 + 彩色文字 → Otsu 直接分割，旋转区域的黑色填充与画布无缝融合
         full_array = np.array(combined_template)
         full_mask = self.extract_text_mask(full_array)
         

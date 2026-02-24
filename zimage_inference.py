@@ -295,7 +295,11 @@ class ZImageInference:
         generator: Optional[torch.Generator] = None,
         text_regions_override: Optional[list[dict]] = None,
     ) -> Image.Image:
-        """三阶段推理：Pass 1 参考图 + VLM 规划 + Pass 2 clean 注入 + Pass 3 FluxKlein refine。"""
+        """三阶段推理：Pass 1 参考图 + VLM 规划 + Pass 2 clean 注入 + Pass 3 FluxKlein refine。
+
+        将各阶段结果保存到 candidates 字典，最终用 VLM 从中选择最佳图像。
+        """
+        candidates: dict[str, Image.Image] = {}
 
         # 准备共享噪声
         noise = self._prepare_noise(config, generator)
@@ -305,15 +309,14 @@ class ZImageInference:
         timesteps = self.pipeline.scheduler.timesteps
 
         if text_regions_override:
-            # 调试旁路：跳过 VLM，直接用手动 text_regions
             typography_plan = self._text_regions_to_plan(text_regions_override)
             print("[调试旁路] 使用手动指定的 text_regions，跳过 VLM 规划")
         else:
             # === Pass 1: 参考图生成 ===
             print("=== Pass 1: 生成参考图 ===")
             reference_image = self._run_pass1_reference(prompt, noise.clone(), timesteps, config)
+            candidates["pass1_reference"] = reference_image
 
-            # 保存参考图到 logs
             if self.logger is not None:
                 self.logger.save_image(
                     reference_image, "pass1_reference",
@@ -323,9 +326,6 @@ class ZImageInference:
 
             # === VLM 自主规划排版 ===
             print("=== VLM 排版规划 ===")
-            
-            # 生成并保存带网格的参考图（用于 debug）
-            # 使用默认的 11×11 网格（10×10 区域，步长0.1）
             reference_with_grid = _add_grid_overlay(reference_image)
             if self.logger is not None:
                 self.logger.save_image(
@@ -333,16 +333,14 @@ class ZImageInference:
                     caption=f"[Grid] {prompt[:150]}",
                     subfolder="two_pass",
                 )
-            
+
             typography_plan = self.vlm_agent.analyze_typography(
                 reference_image, prompt, text_contents,
             )
 
-        # 保存 typography_plan JSON
         self._save_typography_plan(typography_plan)
 
-        # === 重置 scheduler：Pass 1 和 Pass 2 使用独立的 scheduler 状态 ===
-        # FlowMatchEulerDiscreteScheduler 内部维护 _step_index，连续使用会导致越界
+        # === 重置 scheduler ===
         self.pipeline.scheduler.set_timesteps(config.num_inference_steps, device=self.primary_device)
         timesteps = self.pipeline.scheduler.timesteps
 
@@ -351,24 +349,39 @@ class ZImageInference:
         clean_prompt = self.vlm_agent.generate_clean_prompt(prompt, typography_plan)
         print(f"Clean prompt: {clean_prompt[:100]}...")
 
-        # 需要 injection_data 传递给 Pass 3（含 full_mask）
         image_size = (config.width, config.height)
         injection_data = self.glyph_injector.prepare_injection_from_plan(
             typography_plan, image_size, noise, timesteps,
         )
 
-        image = self._run_pass2_injection_with_data(
+        pass2_image = self._run_pass2_injection_with_data(
             clean_prompt, noise, timesteps, injection_data, config,
         )
+        candidates["pass2_injection"] = pass2_image
 
         # === Pass 3: 风格化 ===
         if config.use_harmonization:
             print(f"=== Pass 3: {config.harmonizer_type} 风格化 ===")
-            image = self._run_pass3_harmonize(
-                image, injection_data, typography_plan, config,
+            pass3_image = self._run_pass3_harmonize(
+                pass2_image, injection_data, typography_plan, config,
             )
+            candidates["pass3_harmonized"] = pass3_image
 
-        return image
+        # === VLM 选择最佳候选图 ===
+        if len(candidates) > 1:
+            print(f"=== VLM 从 {len(candidates)} 张候选图中选择最佳 ===")
+            names = list(candidates.keys())
+            images = list(candidates.values())
+            best_idx = self.vlm_agent.select_best_image(images, prompt)
+            print(f"  VLM 选择: {names[best_idx]} (#{best_idx+1}/{len(candidates)})")
+
+            if self.logger is not None:
+                self.logger.info(f"VLM best selection: {names[best_idx]}")
+
+            return candidates[names[best_idx]]
+
+        # 只有一个候选时直接返回最后一个
+        return list(candidates.values())[-1]
 
     def _prepare_noise(
         self, config: GenerationConfig, generator: Optional[torch.Generator],
@@ -671,6 +684,7 @@ class ZImageInference:
                 "background_color": r.get("background_color", "#000000"),
                 "is_latex": r.get("is_latex", False),
                 "alignment": r.get("alignment", "center"),
+                "rotation": r.get("rotation", 0),
             })
         return {
             "image_analysis": {

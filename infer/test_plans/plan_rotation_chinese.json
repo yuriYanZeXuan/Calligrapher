@@ -1,0 +1,31 @@
+{
+  "image_analysis": {
+    "background_style": "traditional_wooden_signboard",
+    "dominant_colors": ["#654321", "#8B4513"],
+    "text_style_hint": "golden Chinese calligraphy on dark wooden signboard"
+  },
+  "text_regions": [
+    {
+      "content": "缅邈",
+      "bbox": [0.15, 0.12, 0.85, 0.52],
+      "font_weight": "bold",
+      "font_size_ratio": 0.8,
+      "color": "#DAA520",
+      "background_color": "#654321",
+      "is_latex": false,
+      "alignment": "center",
+      "rotation": -20
+    },
+    {
+      "content": "（渺远，遥远）",
+      "bbox": [0.2, 0.55, 0.8, 0.82],
+      "font_weight": "regular",
+      "font_size_ratio": 0.5,
+      "color": "#C0A060",
+      "background_color": "#654321",
+      "is_latex": false,
+      "alignment": "center",
+      "rotation": -20
+    }
+  ]
+}

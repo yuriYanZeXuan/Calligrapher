@@ -134,8 +134,10 @@ def main():
         text_regions = plan.get("text_regions", [])
         print(f"Plan 包含 {len(text_regions)} 个 text region:")
         for i, r in enumerate(text_regions):
+            rot = r.get('rotation', 0)
             print(f"  [{i}] \"{r['content'][:30]}\" bbox={r['bbox']} "
-                  f"latex={r.get('is_latex', False)} weight={r.get('font_weight', 'regular')}")
+                  f"latex={r.get('is_latex', False)} weight={r.get('font_weight', 'regular')} "
+                  f"rotation={rot}°")
 
         image = inference.generate(
             prompt=args.prompt,

@@ -47,7 +47,10 @@ PROMPT_TEMPLATES = {
         "- color: hex color matching the original text color in the reference image\n"
         "- background_color: hex color matching the region background\n"
         "- is_latex: true/false\n"
-        "- alignment: left/center/right\n\n"
+        "- alignment: left/center/right\n"
+        "- rotation: text rotation angle in degrees. 0 = horizontal (left to right). "
+        "Positive = counter-clockwise (tilting upper-right ↗). Negative = clockwise (tilting lower-right ↘). "
+        "Typical range: -30 to 30. Use 0 for most horizontal text.\n\n"
         "Rules:\n"
         "- bboxes must not overlap or exceed image bounds\n"
         "- bboxes must be FLAT and FACING the screen (y_min approximately equal for left and right sides, same for y_max)\n"
@@ -72,7 +75,8 @@ PROMPT_TEMPLATES = {
         '      "color": "#FFFFFF",\n'
         '      "background_color": "#000000",\n'
         '      "is_latex": false,\n'
-        '      "alignment": "center"\n'
+        '      "alignment": "center",\n'
+        '      "rotation": 0\n'
         '    }}\n'
         '  ]\n'
         '}}\n'
@@ -123,6 +127,13 @@ PROMPT_TEMPLATES = {
         "Rank these {n} images from best to worst based on: overall quality, prompt alignment, and text accuracy (if applicable).\n\n"
         "Output only the ranking as comma-separated indices (e.g., 3,1,4,2), nothing else."
     ),
+
+    # ---- Best image selection ----
+    "select_best_image": (
+        "Choose the best image from these {n} candidates. "
+        "Consider: text clarity, visual harmony with background, overall quality.\n\n"
+        "Output ONLY the image number (1, 2, 3...), nothing else."
+    ),
 }
 
 
@@ -145,7 +156,7 @@ def _get_grid_font() -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def _add_grid_overlay(image: Image.Image, grid_size: int = 11) -> Image.Image:
+def _add_grid_overlay(image: Image.Image, grid_size: int = 6) -> Image.Image:
     """在图像上添加10×10网格和坐标标注（11×11条线，步长0.1）。
 
     Args:
@@ -481,6 +492,43 @@ class VLMAgent:
             temperature=0.1,
         )
         return min(max(float(raw.strip()), 0.0), 10.0)
+
+    # ---- 最佳图像选择 ----
+
+    def select_best_image(
+        self,
+        images: list[Image.Image],
+        prompt: str,
+    ) -> int:
+        """从候选图像中选择最佳的一张，返回 0-based 索引。"""
+        n = len(images)
+        if n <= 1:
+            return 0
+
+        parts: list[dict] = [{"type": "text", "text": f"Prompt: {prompt}"}]
+
+        for i, img in enumerate(images):
+            b64 = _encode_image_b64(img)
+            parts.append({"type": "text", "text": f"Image {i+1}:"})
+            parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+
+        system_prompt = PROMPT_TEMPLATES["select_best_image"].format(n=n)
+
+        response = self.client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": parts},
+            ],
+            max_tokens=16,
+            temperature=0.1,
+        )
+        raw = response.choices[0].message.content.strip()
+
+        nums = [int(x) for x in re.findall(r"\d+", raw)]
+        if nums and 1 <= nums[0] <= n:
+            return nums[0] - 1
+        return n - 1  # 默认返回最后一个（通常是最精细的）
 
     # ---- 图像排名 ----
 

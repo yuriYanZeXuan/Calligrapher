@@ -733,6 +733,7 @@ def render_formula(
     force_latex: bool = False,
     font_weight: str = "regular",
     font_path: _Opt[str] = None,
+    rotation: float = 0.0,
 ) -> Image.Image:
     """渲染公式/文本图像（自动检测渲染路径）。
 
@@ -744,6 +745,7 @@ def render_formula(
     Args:
         font_weight: 字体粗细 ("light"/"regular"/"bold")
         font_path: 自定义字体路径（仅纯文本路径生效）
+        rotation: 旋转角度（度）。0=水平，正值=逆时针↗，负值=顺时针↘
     """
     # 始终先做 Unicode → LaTeX 转换，否则混合 Unicode+LaTeX 的文本会漏转
     converted = plaintext_to_latex(text)
@@ -752,18 +754,22 @@ def render_formula(
         text = converted
 
     if use_latex:
-        # 优先尝试 MathJax（完整 LaTeX 支持）
         img = render_mathjax(text, width, height, text_color, background_color, font_weight)
         if img is not None:
-            # MathJax 返回的图可能不是精确的 (width, height)，需要合成到目标画布
             img = _composite_to_canvas(img, width, height, background_color)
-            return img
-        # fallback 到 matplotlib（子集支持，失败时降级纯文本）
-        return render_latex(text, width, height, text_color, background_color,
-                            font_weight=font_weight)
+        else:
+            img = render_latex(text, width, height, text_color, background_color,
+                               font_weight=font_weight)
     else:
-        return render_plaintext(text, width, height, text_color, background_color,
-                                font_weight=font_weight, font_path=font_path)
+        img = render_plaintext(text, width, height, text_color, background_color,
+                               font_weight=font_weight, font_path=font_path)
+
+    if rotation != 0:
+        from PIL import ImageColor
+        fill = ImageColor.getrgb(background_color)
+        img = img.rotate(rotation, expand=False, resample=Image.BICUBIC, fillcolor=fill)
+
+    return img
 
 
 # ============ 测试入口 ============

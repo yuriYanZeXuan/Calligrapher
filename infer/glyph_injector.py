@@ -168,11 +168,9 @@ class GlyphInjector:
         force_latex: bool = False,
         font_weight: str = "regular",
         font_path: Optional[str] = None,
+        rotation: float = 0.0,
     ) -> Image.Image:
         """渲染文字模板图像，支持纯文本和 LaTeX 公式。
-
-        自动检测 LaTeX 内容（\\frac, \\int, ^{}, 等），使用 matplotlib
-        渲染复杂数学公式。纯文本使用 PIL 字体渲染。
 
         Args:
             text: 渲染文本内容
@@ -182,10 +180,12 @@ class GlyphInjector:
             force_latex: 强制 LaTeX 模式
             font_weight: 字体粗细 ("light"/"regular"/"bold")
             font_path: 自定义字体路径（可选）
+            rotation: 旋转角度（度）。0=水平，正值=逆时针↗，负值=顺时针↘
         """
         return render_formula(
             text, width, height, text_color, background_color,
             force_latex, font_weight=font_weight, font_path=font_path,
+            rotation=rotation,
         )
     
     def extract_text_mask(self, image: np.ndarray) -> np.ndarray:
@@ -387,6 +387,7 @@ class GlyphInjector:
                 text_color=region_spec.get("color", "#FFFFFF"),
                 force_latex=region_spec.get("is_latex", False),
                 font_weight=region_spec.get("font_weight", "regular"),
+                rotation=region_spec.get("rotation", 0),
             )
             
             if text_img.size != (region_width, region_height):

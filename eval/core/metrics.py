@@ -398,6 +398,7 @@ class VLMMetrics:
         return self._call_vlm_local(image, text_prompt, max_tokens)
 
     def _call_vlm_api(self, image: Image.Image, text_prompt: str, max_tokens: int) -> str:
+        import time
         b64 = self._image_to_base64(image)
         messages = [{
             "role": "user",
@@ -406,14 +407,19 @@ class VLMMetrics:
                 {"type": "text", "text": text_prompt},
             ],
         }]
-        resp = self._api_client.chat.completions.create(
-            model=self._api_model,
-            messages=messages,
-            stream=False,
-            max_tokens=max_tokens,
-            temperature=0.0,
-        )
-        return resp.choices[0].message.content.strip()
+        while True:
+            try:
+                resp = self._api_client.chat.completions.create(
+                    model=self._api_model,
+                    messages=messages,
+                    stream=False,
+                    max_tokens=max_tokens,
+                    temperature=0.0,
+                )
+                return resp.choices[0].message.content.strip()
+            except Exception as e:
+                self.logger.warning(f"VLM API call failed: {e}, retrying in 30s...")
+                time.sleep(30)
 
     def _call_vlm_local(self, image: Image.Image, text_prompt: str, max_tokens: int) -> str:
         messages = [{"role": "user", "content": [

@@ -371,21 +371,31 @@ class ZImageInference:
         pass2_image = self._pixel_composite_text(background, injection_data)
         candidates["pass2_injection"] = pass2_image
 
-        # === Pass 3: 风格化 ===
+        # === Pass 3: 风格化 → 多变体候选 ===
+        pass3_variants: list[tuple[str, Image.Image]] = []
         if config.use_harmonization:
             print(f"=== Pass 3: {config.harmonizer_type} 风格化 ===")
-            pass3_image = self._run_pass3_harmonize(
+            pass3_variants = self._run_pass3_harmonize(
                 pass2_image, injection_data, typography_plan, config,
             )
-            candidates["pass3_harmonized"] = pass3_image
+            for name, img in pass3_variants:
+                candidates[f"pass3_{name}"] = img
 
-        # === 拼接 pass1/pass2/pass3 保存到 CAT_IMG ===
+        # === 拼接所有阶段结果保存到 CAT_IMG ===
         self._save_candidates_concat(candidates)
 
-        # 返回管线最后一级：pass3 > pass2
-        if "pass3_harmonized" in candidates:
-            return candidates["pass3_harmonized"]
-        return candidates["pass2_injection"]
+        # === VLM 基于文本准确度从 pass2 + 所有 pass3 变体中选优 ===
+        all_text = " ".join(
+            r["content"] for r in typography_plan.get("text_regions", []))
+        selection_pool = [("pass2_injection", pass2_image)]
+        selection_pool.extend(pass3_variants)
+
+        if len(selection_pool) > 1:
+            names, images = zip(*selection_pool)
+            best_idx = self.vlm_agent.select_best_text_match(list(images), all_text)
+            print(f"  VLM 文本准确度选优: {names[best_idx]}")
+            return images[best_idx]
+        return pass2_image
 
     def _prepare_noise(
         self, config: GenerationConfig, generator: Optional[torch.Generator],
@@ -607,8 +617,8 @@ class ZImageInference:
         injection_data: dict,
         typography_plan: dict,
         config: GenerationConfig,
-    ) -> Image.Image:
-        """Pass 3 统一入口：根据 harmonizer_type 分派到 Klein 或 QwenEdit。
+    ) -> list[tuple[str, Image.Image]]:
+        """Pass 3 统一入口，返回 [(name, image), ...] 候选列表。
 
         自动管理显存：进入前卸载主管道到 CPU，完成后恢复到 GPU。
         """
@@ -617,13 +627,14 @@ class ZImageInference:
         try:
             if config.harmonizer_type == "qwenedit":
                 result = self._run_pass3_qwenedit(pass2_image, typography_plan, config)
+                variants = [("qwenedit", result)]
             else:
-                result = self._run_pass3_klein(pass2_image, injection_data, typography_plan, config)
+                variants = self._run_pass3_klein(pass2_image, injection_data, typography_plan, config)
         finally:
             self._offload_harmonizer_to_cpu()
             self._reload_pipeline_to_gpu()
 
-        return result
+        return variants
 
     def _run_pass3_klein(
         self,
@@ -631,66 +642,86 @@ class ZImageInference:
         injection_data: dict,
         typography_plan: dict,
         config: GenerationConfig,
-    ) -> Image.Image:
-        """Pass 3 (Klein): FluxKlein img2img + 二值 mask 混合。"""
+    ) -> list[tuple[str, Image.Image]]:
+        """Pass 3 (Klein): 生成三种变体供 VLM 选优。
+
+        返回 [(name, image), ...] 列表：
+          1. klein_single  — 单图条件（仅 pass2）+ mask 混合
+          2. klein_nomask  — 单图条件（仅 pass2），无 mask
+          3. klein_dual    — 双图条件（pass2 + glyph 模板），无 mask
+        """
         image_analysis = typography_plan.get("image_analysis", {})
         klein_prompt = self.vlm_agent.generate_style_prompt(image_analysis)
         print(f"  VLM 生成提示词: {klein_prompt[:80]}...")
 
         klein = self.get_klein_generator(config)
         klein_seed = config.klein_seed if config.klein_seed is not None else (config.seed or 42)
-
-        edited = klein.generate(
+        gen_kwargs = dict(
             prompt=klein_prompt,
-            image=pass2_image,
-            seed=klein_seed,
             num_inference_steps=config.klein_steps,
             guidance_scale=config.klein_guidance_scale,
         )
 
-        # 确保 RGB 且尺寸一致
-        if edited.mode != "RGB":
-            edited = edited.convert("RGB")
-        if edited.size != pass2_image.size:
-            edited = edited.resize(pass2_image.size, Image.LANCZOS)
+        template = injection_data["combined_template"]
+        if template.size != pass2_image.size:
+            template = template.resize(pass2_image.size, Image.LANCZOS)
 
-        # mask 混合：文字区域保留 Pass 2 精确渲染，背景用 Klein 风格化
-        import cv2 as _cv2
+        def _make_generator():
+            return torch.Generator(device=klein.device).manual_seed(klein_seed)
+
+        def _ensure_rgb(img):
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            if img.size != pass2_image.size:
+                img = img.resize(pass2_image.size, Image.LANCZOS)
+            return img
+
+        # --- 变体 1: 单图 + mask 混合 ---
+        print("    [1/3] klein_single (单图 + mask)")
+        raw_single = klein.pipe(
+            **gen_kwargs, image=[pass2_image], generator=_make_generator(),
+        ).images[0]
+        raw_single = _ensure_rgb(raw_single)
+
         binary_mask = injection_data["full_mask"]
-        mask = (binary_mask > 127).astype(np.uint8)
+        mask = (binary_mask > 127).astype(np.float32)
         if mask.shape[:2] != (pass2_image.height, pass2_image.width):
-            mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
-            mask_pil = mask_pil.resize(pass2_image.size, Image.NEAREST)
-            mask = (np.array(mask_pil) > 127).astype(np.uint8)
+            mask = np.array(Image.fromarray(
+                (mask * 255).astype(np.uint8)).resize(
+                pass2_image.size, Image.NEAREST)).astype(np.float32) / 255.0
+        mask_3ch = mask[:, :, np.newaxis]
+        klein_single = Image.fromarray((
+            mask_3ch * np.array(raw_single).astype(np.float32)
+            + (1 - mask_3ch) * np.array(pass2_image).astype(np.float32)
+        ).clip(0, 255).astype(np.uint8))
 
-        # 膨胀 mask 保护文字边缘，然后高斯羽化实现平滑过渡
-        dilate_kernel = np.ones((5, 5), np.uint8)
-        protected_mask = _cv2.dilate(mask, dilate_kernel, iterations=2)
-        soft_mask = _cv2.GaussianBlur(
-            protected_mask.astype(np.float32), (9, 9), 0)
+        # --- 变体 2: 单图，无 mask ---
+        print("    [2/3] klein_nomask (单图，无 mask)")
+        klein_nomask = raw_single  # 与变体 1 共享同一次推理
 
-        soft_mask_3ch = soft_mask[:, :, np.newaxis]
-        edit_arr = np.array(edited).astype(np.float32)
-        bg_arr = np.array(pass2_image).astype(np.float32)
+        # --- 变体 3: 双图条件，无 mask ---
+        print("    [3/3] klein_dual (双图条件，无 mask)")
+        klein_dual = klein.pipe(
+            **gen_kwargs, image=[pass2_image, template], generator=_make_generator(),
+        ).images[0]
+        klein_dual = _ensure_rgb(klein_dual)
 
-        # soft_mask=1 处保留 Pass 2 文字，soft_mask=0 处使用 Klein 背景
-        result_arr = soft_mask_3ch * bg_arr + (1 - soft_mask_3ch) * edit_arr
-        result = Image.fromarray(result_arr.clip(0, 255).astype(np.uint8))
+        variants = [
+            ("klein_single", klein_single),
+            ("klein_nomask", klein_nomask),
+            ("klein_dual", klein_dual),
+        ]
 
         if self.logger is not None:
             tag = self._current_tag
-            self.logger.save_image(
-                Image.fromarray(binary_mask).convert("RGB"), f"{tag}_pass3_mask",
-                caption=f"mask coverage={mask.mean():.2%}", subfolder="harmonize",
-            )
-            comp = Image.new("RGB", (pass2_image.width * 3, pass2_image.height))
-            comp.paste(pass2_image, (0, 0))
-            comp.paste(edited, (pass2_image.width, 0))
-            comp.paste(result, (pass2_image.width * 2, 0))
-            self.logger.save_image(comp, f"{tag}_pass3_result",
-                caption="Pass2 | Klein | Final", subfolder="harmonize")
+            w, h = pass2_image.size
+            comp = Image.new("RGB", (w * len(variants), h))
+            for i, (name, img) in enumerate(variants):
+                comp.paste(img, (w * i, 0))
+            self.logger.save_image(comp, f"{tag}_pass3_variants",
+                caption=" | ".join(n for n, _ in variants), subfolder="harmonize")
 
-        return result
+        return variants
 
     def _run_pass3_qwenedit(
         self,

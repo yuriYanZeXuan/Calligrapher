@@ -412,7 +412,7 @@ class ZImageInference:
             images = list(candidates.values())
             best_idx = self.vlm_agent.select_best_image(images, prompt)
             print(f"  VLM 选择: {names[best_idx]} (#{best_idx+1}/{len(candidates)})")
-            
+
             if self.logger is not None:
                 self.logger.info(f"VLM best selection: {names[best_idx]}")
 
@@ -687,19 +687,27 @@ class ZImageInference:
         if edited.size != pass2_image.size:
             edited = edited.resize(pass2_image.size, Image.LANCZOS)
 
-        # 二值 mask 混合：文字区域用编辑结果，背景保持原图
+        # mask 混合：文字区域保留 Pass 2 精确渲染，背景用 Klein 风格化
+        import cv2 as _cv2
         binary_mask = injection_data["full_mask"]
-        mask = (binary_mask > 127).astype(np.float32)
+        mask = (binary_mask > 127).astype(np.uint8)
         if mask.shape[:2] != (pass2_image.height, pass2_image.width):
             mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
             mask_pil = mask_pil.resize(pass2_image.size, Image.NEAREST)
-            mask = (np.array(mask_pil).astype(np.float32) / 255.0) > 0.5
+            mask = (np.array(mask_pil) > 127).astype(np.uint8)
 
-        mask_3ch = mask[:, :, np.newaxis]
+        # 膨胀 mask 保护文字边缘，然后高斯羽化实现平滑过渡
+        dilate_kernel = np.ones((5, 5), np.uint8)
+        protected_mask = _cv2.dilate(mask, dilate_kernel, iterations=2)
+        soft_mask = _cv2.GaussianBlur(
+            protected_mask.astype(np.float32), (9, 9), 0)
+
+        soft_mask_3ch = soft_mask[:, :, np.newaxis]
         edit_arr = np.array(edited).astype(np.float32)
         bg_arr = np.array(pass2_image).astype(np.float32)
 
-        result_arr = mask_3ch * edit_arr + (1 - mask_3ch) * bg_arr
+        # soft_mask=1 处保留 Pass 2 文字，soft_mask=0 处使用 Klein 背景
+        result_arr = soft_mask_3ch * bg_arr + (1 - soft_mask_3ch) * edit_arr
         result = Image.fromarray(result_arr.clip(0, 255).astype(np.uint8))
 
         if self.logger is not None:

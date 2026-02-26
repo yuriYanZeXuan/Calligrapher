@@ -313,8 +313,42 @@ class ZImageInference:
             print("[调试旁路] 使用手动指定的 text_regions，跳过 VLM 规划")
         else:
             # === Pass 1: 参考图生成 ===
-            print("=== Pass 1: 生成参考图 ===")
-            reference_image = self._run_pass1_reference(prompt, noise.clone(), timesteps, config)
+            tts_enabled = (
+                config.injection_config.freq_decompose
+                and not config.use_prompt_refiner
+                and config.harmonizer_type == "klein"
+            )
+
+            if tts_enabled:
+                print("=== Pass 1 (TTS×3): 生成 3 张参考图 ===")
+                base_seed = config.seed or 42
+                tts_seeds = [base_seed, base_seed + 100, base_seed + 200]
+                tts_refs = []
+                tts_noises = []
+                for i, seed in enumerate(tts_seeds):
+                    gen = torch.Generator(device=self.primary_device).manual_seed(seed)
+                    n = self._prepare_noise(config, gen)
+                    self.pipeline.scheduler.set_timesteps(
+                        config.num_inference_steps, device=self.primary_device)
+                    ts = self.pipeline.scheduler.timesteps
+                    ref = self._run_pass1_reference(prompt, n.clone(), ts, config)
+                    tts_refs.append(ref)
+                    tts_noises.append(n)
+                    if self.logger is not None:
+                        self.logger.save_image(
+                            ref, f"tts_pass1_seed{seed}",
+                            caption=f"[TTS {i+1}/3 seed={seed}] {prompt[:100]}",
+                            subfolder="two_pass",
+                        )
+
+                best_idx = self.vlm_agent.select_best_image(tts_refs, prompt)
+                print(f"  VLM 选择第 {best_idx+1} 张 (seed={tts_seeds[best_idx]})")
+                reference_image = tts_refs[best_idx]
+                noise = tts_noises[best_idx]
+            else:
+                print("=== Pass 1: 生成参考图 ===")
+                reference_image = self._run_pass1_reference(prompt, noise.clone(), timesteps, config)
+
             candidates["pass1_reference"] = reference_image
 
             if self.logger is not None:

@@ -129,6 +129,14 @@ PROMPT_TEMPLATES = {
         "Consider: text clarity, which can be easily recognized by ocr system."
         "Output ONLY the image number (1, 2, 3...), nothing else."
     ),
+
+    # ---- Text accuracy selection ----
+    "select_best_text_match": (
+        "These {n} images should display the following text:\n\"{text}\"\n\n"
+        "Which image renders this text most clearly and accurately, "
+        "so that an OCR system can perfectly recognize every character?\n"
+        "Output ONLY the image number (1, 2, 3...), nothing else."
+    ),
 }
 
 
@@ -516,6 +524,41 @@ class VLMAgent:
         if nums and 1 <= nums[0] <= n:
             return nums[0] - 1
         return n - 1  # 默认返回最后一个（通常是最精细的）
+
+    def select_best_text_match(
+        self,
+        images: list[Image.Image],
+        expected_text: str,
+    ) -> int:
+        """选择文本渲染最准确的图像，返回 0-based 索引。"""
+        n = len(images)
+        if n <= 1:
+            return 0
+
+        parts: list[dict] = []
+        for i, img in enumerate(images):
+            b64 = _encode_image_b64(img)
+            parts.append({"type": "text", "text": f"Image {i+1}:"})
+            parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+
+        system_prompt = PROMPT_TEMPLATES["select_best_text_match"].format(
+            n=n, text=expected_text)
+
+        response = self.client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": parts},
+            ],
+            max_tokens=16,
+            temperature=0.1,
+        )
+        raw = response.choices[0].message.content.strip()
+
+        nums = [int(x) for x in re.findall(r"\d+", raw)]
+        if nums and 1 <= nums[0] <= n:
+            return nums[0] - 1
+        return 0
 
     # ---- 图像排名 ----
 

@@ -784,3 +784,55 @@ if __name__ == "__main__":
 
     print(f"\n{'=' * 60}")
     print(f"全部完成！共 {len(test_cases)} 张图，保存在 {out_dir}")
+
+
+# ============ 字体库（从 AnyText lang_font_dict 加载） ============
+
+import numpy as np
+
+_ANYTEXT_FONT_BASE = Path(__file__).resolve().parent.parent / "baselines" / "anytext"
+_LANG_FONT_CACHE: _Opt[dict] = None
+
+
+def _detect_text_lang(text: str) -> str:
+    """简易语言检测：遍历字符的 Unicode 范围。"""
+    for ch in text:
+        cp = ord(ch)
+        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
+            return "ch_sim_char"
+        if 0x3040 <= cp <= 0x30FF or 0x31F0 <= cp <= 0x31FF:
+            return "ja"
+        if 0xAC00 <= cp <= 0xD7AF:
+            return "ko"
+        if 0x0900 <= cp <= 0x097F:
+            return "hi"
+    return "en"
+
+
+def get_font_candidates(text: str, n: int = 3) -> list[str]:
+    """根据文本语言从 AnyText 字体库中返回最多 n 个可用字体路径。
+
+    字体按 lang_font_dict.npy 中的覆盖率降序排列，优先返回覆盖最全的。
+    """
+    global _LANG_FONT_CACHE
+    if _LANG_FONT_CACHE is None:
+        dict_path = _ANYTEXT_FONT_BASE / "font" / "lang_font_dict.npy"
+        if not dict_path.exists():
+            return []
+        _LANG_FONT_CACHE = np.load(str(dict_path), allow_pickle=True).item()
+
+    lang = _detect_text_lang(text)
+    entry = _LANG_FONT_CACHE.get(lang, _LANG_FONT_CACHE.get("en", {}))
+    raw_fonts = entry.get("fonts", [])
+
+    resolved = []
+    seen = set()
+    for f in raw_fonts:
+        p = _ANYTEXT_FONT_BASE / f
+        ps = str(p)
+        if p.exists() and ps not in seen:
+            seen.add(ps)
+            resolved.append(ps)
+        if len(resolved) >= n:
+            break
+    return resolved

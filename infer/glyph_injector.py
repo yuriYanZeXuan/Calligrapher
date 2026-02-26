@@ -154,6 +154,7 @@ class GlyphInjector:
         self.device = device
         self.dtype = dtype
         self.logger = logger
+        self.sample_tag = ""
         
         # VAE 缩放因子
         self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1) if hasattr(vae, 'config') else 8
@@ -365,6 +366,7 @@ class GlyphInjector:
                 text_color=region_spec.get("color", "#FFFFFF"),
                 force_latex=region_spec.get("is_latex", False),
                 font_weight=region_spec.get("font_weight", "regular"),
+                font_path=region_spec.get("font_path"),
                 rotation=region_spec.get("rotation", 0),
             )
             
@@ -383,14 +385,15 @@ class GlyphInjector:
         
         # 第四步：统一记录日志
         if self.logger is not None:
+            t = self.sample_tag
             n_regions = len(typography_plan.get("text_regions", []))
             self.logger.save_image(
-                combined_template, "glyph_plan_combined_template",
+                combined_template, f"{t}_glyph_plan_combined_template",
                 caption=f"combined template: {n_regions} regions  size={width}x{height}",
                 subfolder="glyph",
             )
             self.logger.save_image(
-                Image.fromarray(full_mask).convert("RGB"), "glyph_plan_all_mask",
+                Image.fromarray(full_mask).convert("RGB"), f"{t}_glyph_plan_all_mask",
                 caption=f"combined mask: {n_regions} regions", subfolder="glyph",
             )
 
@@ -403,11 +406,12 @@ class GlyphInjector:
         
         # 保存完整分辨率 mask 到 logs
         if self.logger is not None:
+            t = self.sample_tag
             full_mask_pil = Image.fromarray(full_mask)
             coverage = (full_mask > 0).sum() / full_mask.size
             self.logger.save_image(
                 full_mask_pil.convert("RGB"),
-                "full_resolution_mask",
+                f"{t}_full_resolution_mask",
                 caption=f"Full resolution mask | Shape: {full_mask.shape} | Coverage: {coverage:.2%}",
                 subfolder="glyph",
             )
@@ -419,6 +423,37 @@ class GlyphInjector:
             "combined_template": combined_template,
             "total_steps": len(timesteps),
         }
+
+    def render_plan_template(
+        self,
+        typography_plan: dict,
+        image_size: Tuple[int, int],
+    ) -> Tuple[Image.Image, np.ndarray]:
+        """轻量渲染：只返回 (combined_template, full_mask)，不做 VAE/inversion。"""
+        width, height = image_size
+        combined_template = Image.new("RGB", (width, height), "black")
+
+        for region_spec in typography_plan.get("text_regions", []):
+            content = region_spec["content"]
+            bbox = region_spec["bbox"]
+            x1, y1 = int(bbox[0] * width), int(bbox[1] * height)
+            x2, y2 = int(bbox[2] * width), int(bbox[3] * height)
+            rw, rh = max(x2 - x1, 1), max(y2 - y1, 1)
+
+            text_img = self.render_text_template(
+                content, rw, rh,
+                text_color=region_spec.get("color", "#FFFFFF"),
+                force_latex=region_spec.get("is_latex", False),
+                font_weight=region_spec.get("font_weight", "regular"),
+                font_path=region_spec.get("font_path"),
+                rotation=region_spec.get("rotation", 0),
+            )
+            if text_img.size != (rw, rh):
+                text_img = text_img.resize((rw, rh), Image.LANCZOS)
+            combined_template.paste(text_img, (x1, y1))
+
+        full_mask = self.extract_text_mask(np.array(combined_template))
+        return combined_template, full_mask
 
     def inject_latent(
         self,
@@ -464,11 +499,12 @@ class GlyphInjector:
         # 扩展 mask 到 latent 的 channel 维度
         mask = mask.expand_as(current_latent)
         if self.logger is not None:
+            t = self.sample_tag
             mask_np = (mask[0, 0].detach().cpu().numpy() * 255).astype(np.uint8)
             mask_pil = Image.fromarray(mask_np)
             self.logger.save_image(
                 mask_pil.convert("RGB"),
-                f"glyph_latent_mask",
+                f"{t}_glyph_latent_mask",
                 caption=f"latent mask  shape={list(mask.shape)}  coverage={mask.float().mean():.4f}",
                 subfolder="glyph",
             )
@@ -489,7 +525,7 @@ class GlyphInjector:
                     img = self.decode_latent(lat)
                     self.logger.save_image(
                         img,
-                        f"freq_decompose_{name}",
+                        f"{t}_freq_decompose_{name}",
                         caption=f"kernel={config.freq_kernel_size} step={step_idx} strength={s:.3f}",
                         subfolder="glyph",
                     )
@@ -506,7 +542,7 @@ class GlyphInjector:
             injected_img = self.decode_latent(injected)
             self.logger.save_image(
                 injected_img,
-                f"glyph_injected_step{step_idx}",
+                f"{t}_glyph_injected_step{step_idx}",
                 caption=f"step={step_idx}/{total_steps}  mask_strength={s:.2f}",
                 subfolder="glyph",
             )

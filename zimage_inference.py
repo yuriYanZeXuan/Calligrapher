@@ -107,6 +107,7 @@ class ZImageInference:
         self._klein_generator = None
         self._qwenedit_generator = None
         self._output_counter = 0
+        self._current_tag = "000"
 
     # ---- 延迟加载属性 ----
 
@@ -229,6 +230,10 @@ class ZImageInference:
             if hasattr(config, key):
                 setattr(config, key, value)
 
+        # 统一递增计数器，设置本次 sample 的 tag（所有中间产物共用此 tag）
+        self._output_counter += 1
+        self._current_tag = f"{self._output_counter:03d}_{run_name}" if run_name else f"{self._output_counter:03d}"
+
         # 文字内容汇总（用于 prompt refiner）
         text_content_str = None
         if text_contents:
@@ -275,11 +280,9 @@ class ZImageInference:
 
         # 保存最终图到 logs
         if self.logger is not None:
-            self._output_counter += 1
-            tag = f"{self._output_counter:03d}_{run_name}" if run_name else f"{self._output_counter:03d}"
             self.logger.save_image(
-                image, f"final_{tag}",
-                caption=f"[{tag}] {working_prompt[:150]}",
+                image, f"final_{self._current_tag}",
+                caption=f"[{self._current_tag}] {working_prompt[:150]}",
                 subfolder="output",
             )
 
@@ -297,9 +300,15 @@ class ZImageInference:
     ) -> Image.Image:
         """三阶段推理：Pass 1 参考图 + VLM 规划 + Pass 2 clean 注入 + Pass 3 FluxKlein refine。
 
-        将各阶段结果保存到 candidates 字典，最终用 VLM 从中选择最佳图像。
+        将各阶段结果保存到 candidates 字典（仅用于可视化对比，不参与选优）。
+        最终输出始终是管线最后一级（pass3 > pass2），pass1 仅作为排版参考。
         """
         candidates: dict[str, Image.Image] = {}
+        tag = self._current_tag
+
+        # 同步 tag 到 glyph_injector（用于其内部 save_image）
+        if self._glyph_injector is not None:
+            self._glyph_injector.sample_tag = tag
 
         # 准备共享噪声
         noise = self._prepare_noise(config, generator)
@@ -336,7 +345,7 @@ class ZImageInference:
                     tts_noises.append(n)
                     if self.logger is not None:
                         self.logger.save_image(
-                            ref, f"tts_pass1_seed{seed}",
+                            ref, f"{tag}_tts_pass1_seed{seed}",
                             caption=f"[TTS {i+1}/3 seed={seed}] {prompt[:100]}",
                             subfolder="two_pass",
                         )
@@ -353,7 +362,7 @@ class ZImageInference:
 
             if self.logger is not None:
                 self.logger.save_image(
-                    reference_image, "pass1_reference",
+                    reference_image, f"{tag}_pass1_reference",
                     caption=f"[Pass1] {prompt[:150]}",
                     subfolder="two_pass",
                 )
@@ -363,7 +372,7 @@ class ZImageInference:
             reference_with_grid = _add_grid_overlay(reference_image)
             if self.logger is not None:
                 self.logger.save_image(
-                    reference_with_grid, "pass1_with_grid",
+                    reference_with_grid, f"{tag}_pass1_with_grid",
                     caption=f"[Grid] {prompt[:150]}",
                     subfolder="two_pass",
                 )
@@ -384,17 +393,52 @@ class ZImageInference:
         print(f"Clean prompt: {clean_prompt}...")
 
         image_size = (config.width, config.height)
-        injection_data = self.glyph_injector.prepare_injection_from_plan(
-            typography_plan, image_size, noise, timesteps,
-        )
+        self.glyph_injector.sample_tag = tag
 
-        # 生成干净背景（attention enhancement 仍生效，但跳过 latent 注入避免背景色块）
-        background = self._run_pass2_injection_with_data(
-            clean_prompt, noise, timesteps, injection_data, config,
-        )
+        # === 多字体候选：每种字体走完整 prepare → 去噪 → pixel composite ===
+        import copy
+        from infer.formula_helper import get_font_candidates
 
-        # 像素空间合成：用 full_mask 只贴文字笔画，不带模板背景
-        pass2_image = self._pixel_composite_text(background, injection_data)
+        all_text = " ".join(
+            r["content"] for r in typography_plan.get("text_regions", [])
+            if not r.get("is_latex", False)
+        )
+        fonts = get_font_candidates(all_text, n=3) if all_text else []
+
+        if len(fonts) > 1:
+            print(f"=== 字体候选 TTS: {len(fonts)} 种字体 ===")
+            font_variants: list[Image.Image] = []
+            font_injection_data: list[dict] = []
+            for i, fp in enumerate(fonts):
+                print(f"  [{i+1}/{len(fonts)}] {os.path.basename(fp)}")
+                plan_v = copy.deepcopy(typography_plan)
+                for r in plan_v.get("text_regions", []):
+                    if not r.get("is_latex", False):
+                        r["font_path"] = fp
+
+                # 每种字体：完整的 prepare + 去噪 + pixel composite
+                self.pipeline.scheduler.set_timesteps(
+                    config.num_inference_steps, device=self.primary_device)
+                ts = self.pipeline.scheduler.timesteps
+                inj = self.glyph_injector.prepare_injection_from_plan(
+                    plan_v, image_size, noise, ts)
+                bg = self._run_pass2_injection_with_data(
+                    clean_prompt, noise, ts, inj, config)
+                variant = self._pixel_composite_text(bg, inj)
+                font_variants.append(variant)
+                font_injection_data.append(inj)
+
+            best_idx = self.vlm_agent.select_best_text_match(font_variants, all_text)
+            print(f"  VLM 选择字体 #{best_idx+1}")
+            pass2_image = font_variants[best_idx]
+            injection_data = font_injection_data[best_idx]
+        else:
+            injection_data = self.glyph_injector.prepare_injection_from_plan(
+                typography_plan, image_size, noise, timesteps)
+            background = self._run_pass2_injection_with_data(
+                clean_prompt, noise, timesteps, injection_data, config)
+            pass2_image = self._pixel_composite_text(background, injection_data)
+
         candidates["pass2_injection"] = pass2_image
 
         # === Pass 3: 风格化 ===
@@ -405,21 +449,13 @@ class ZImageInference:
             )
             candidates["pass3_harmonized"] = pass3_image
 
-        # === VLM 选择最佳候选图 ===
-        if len(candidates) > 1:
-            print(f"=== VLM 从 {len(candidates)} 张候选图中选择最佳 ===")
-            names = list(candidates.keys())
-            images = list(candidates.values())
-            best_idx = self.vlm_agent.select_best_image(images, prompt)
-            print(f"  VLM 选择: {names[best_idx]} (#{best_idx+1}/{len(candidates)})")
+        # === 拼接所有阶段结果保存到 CAT_IMG（用于可视化对比） ===
+        self._save_candidates_concat(candidates)
 
-            if self.logger is not None:
-                self.logger.info(f"VLM best selection: {names[best_idx]}")
-
-            return candidates[names[best_idx]]
-
-        # 只有一个候选时直接返回最后一个
-        return list(candidates.values())[-1]
+        # 直接返回管线最后一级：pass3 > pass2
+        if "pass3_harmonized" in candidates:
+            return candidates["pass3_harmonized"]
+        return candidates["pass2_injection"]
 
     def _prepare_noise(
         self, config: GenerationConfig, generator: Optional[torch.Generator],
@@ -620,12 +656,13 @@ class ZImageInference:
         composite = Image.fromarray(result)
 
         if self.logger is not None:
+            tag = self._current_tag
             comp_vis = Image.new("RGB", (background.width * 3, background.height))
             comp_vis.paste(background, (0, 0))
             comp_vis.paste(Image.fromarray(mask).convert("RGB"), (background.width, 0))
             comp_vis.paste(composite, (background.width * 2, 0))
             self.logger.save_image(
-                comp_vis, "pixel_composite",
+                comp_vis, f"{tag}_pixel_composite",
                 caption="Background | Mask | Composite",
                 subfolder="two_pass",
             )
@@ -711,15 +748,16 @@ class ZImageInference:
         result = Image.fromarray(result_arr.clip(0, 255).astype(np.uint8))
 
         if self.logger is not None:
+            tag = self._current_tag
             self.logger.save_image(
-                Image.fromarray(binary_mask).convert("RGB"), "pass3_mask",
+                Image.fromarray(binary_mask).convert("RGB"), f"{tag}_pass3_mask",
                 caption=f"mask coverage={mask.mean():.2%}", subfolder="harmonize",
             )
             comp = Image.new("RGB", (pass2_image.width * 3, pass2_image.height))
             comp.paste(pass2_image, (0, 0))
             comp.paste(edited, (pass2_image.width, 0))
             comp.paste(result, (pass2_image.width * 2, 0))
-            self.logger.save_image(comp, "pass3_result",
+            self.logger.save_image(comp, f"{tag}_pass3_result",
                 caption="Pass2 | Klein | Final", subfolder="harmonize")
 
         return result
@@ -753,10 +791,11 @@ class ZImageInference:
             edited = edited.resize(pass2_image.size, Image.LANCZOS)
 
         if self.logger is not None:
+            tag = self._current_tag
             comp = Image.new("RGB", (pass2_image.width * 2, pass2_image.height))
             comp.paste(pass2_image, (0, 0))
             comp.paste(edited, (pass2_image.width, 0))
-            self.logger.save_image(comp, "pass3_result",
+            self.logger.save_image(comp, f"{tag}_pass3_result",
                 caption="Pass2 | QwenEdit", subfolder="harmonize")
 
         return edited
@@ -785,14 +824,32 @@ class ZImageInference:
             "text_regions": plan_regions,
         }
 
+    _CAT_IMG_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/logs/CAT_IMG"
+
+    def _save_candidates_concat(self, candidates: dict[str, Image.Image]) -> None:
+        """将所有候选图水平拼接，保存到 CAT_IMG 目录。"""
+        if not candidates:
+            return
+        imgs = list(candidates.values())
+        max_h = max(img.height for img in imgs)
+        total_w = sum(img.width for img in imgs)
+        concat = Image.new("RGB", (total_w, max_h))
+        x = 0
+        for img in imgs:
+            concat.paste(img, (x, 0))
+            x += img.width
+        os.makedirs(self._CAT_IMG_DIR, exist_ok=True)
+        save_path = os.path.join(self._CAT_IMG_DIR, f"{self._current_tag}.png")
+        concat.save(save_path)
+        print(f"  候选拼接图已保存: {save_path}")
+
     def _save_typography_plan(self, plan: dict) -> None:
         """保存 typography_plan JSON 到 logs 目录。"""
         if self.logger is None:
             return
         plan_dir = self.logger.run_dir / "plans"
         plan_dir.mkdir(parents=True, exist_ok=True)
-        self._output_counter += 1
-        plan_path = plan_dir / f"typography_plan_{self._output_counter:03d}.json"
+        plan_path = plan_dir / f"typography_plan_{self._current_tag}.json"
         with open(plan_path, "w", encoding="utf-8") as f:
             json.dump(plan, f, ensure_ascii=False, indent=2)
         self.logger.info(f"排版规划已保存: {plan_path.relative_to(self.logger.run_dir)}")

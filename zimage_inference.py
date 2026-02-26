@@ -394,8 +394,15 @@ class ZImageInference:
 
         image_size = (config.width, config.height)
         self.glyph_injector.sample_tag = tag
+        injection_data = self.glyph_injector.prepare_injection_from_plan(
+            typography_plan, image_size, noise, timesteps,
+        )
 
-        # === 多字体候选：每种字体走完整 prepare → 去噪 → pixel composite ===
+        background = self._run_pass2_injection_with_data(
+            clean_prompt, noise, timesteps, injection_data, config,
+        )
+
+        # === 多字体候选：共享背景 + 不同字体 pixel composite ===
         import copy
         from infer.formula_helper import get_font_candidates
 
@@ -408,35 +415,21 @@ class ZImageInference:
         if len(fonts) > 1:
             print(f"=== 字体候选 TTS: {len(fonts)} 种字体 ===")
             font_variants: list[Image.Image] = []
-            font_injection_data: list[dict] = []
             for i, fp in enumerate(fonts):
-                print(f"  [{i+1}/{len(fonts)}] {os.path.basename(fp)}")
                 plan_v = copy.deepcopy(typography_plan)
                 for r in plan_v.get("text_regions", []):
                     if not r.get("is_latex", False):
                         r["font_path"] = fp
-
-                # 每种字体：完整的 prepare + 去噪 + pixel composite
-                self.pipeline.scheduler.set_timesteps(
-                    config.num_inference_steps, device=self.primary_device)
-                ts = self.pipeline.scheduler.timesteps
-                inj = self.glyph_injector.prepare_injection_from_plan(
-                    plan_v, image_size, noise, ts)
-                bg = self._run_pass2_injection_with_data(
-                    clean_prompt, noise, ts, inj, config)
-                variant = self._pixel_composite_text(bg, inj)
+                tpl, msk = self.glyph_injector.render_plan_template(plan_v, image_size)
+                variant = self._pixel_composite_text(
+                    background, {"combined_template": tpl, "full_mask": msk})
                 font_variants.append(variant)
-                font_injection_data.append(inj)
+                print(f"  [{i+1}] {os.path.basename(fp)}")
 
             best_idx = self.vlm_agent.select_best_text_match(font_variants, all_text)
             print(f"  VLM 选择字体 #{best_idx+1}")
             pass2_image = font_variants[best_idx]
-            injection_data = font_injection_data[best_idx]
         else:
-            injection_data = self.glyph_injector.prepare_injection_from_plan(
-                typography_plan, image_size, noise, timesteps)
-            background = self._run_pass2_injection_with_data(
-                clean_prompt, noise, timesteps, injection_data, config)
             pass2_image = self._pixel_composite_text(background, injection_data)
 
         candidates["pass2_injection"] = pass2_image

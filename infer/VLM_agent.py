@@ -97,17 +97,16 @@ PROMPT_TEMPLATES = {
 
     # ---- Prompt refinement ----
     "refine_prompt": (
-        "Optimize the user's simple description into a detailed image generation prompt (50-150 words). "
-        "Preserve the original intent while adding visual details (lighting, colors, composition, style). "
+        "Add a description, claiming all texts should be rendered in center, clear, in a good position and adopt horizontal layout."
         "Output only the optimized prompt, no explanations."
     ),
 
-    "refine_prompt_with_text": (
-        "Optimize the user's simple description into a detailed image generation prompt (50-150 words). "
-        "The description includes text to be displayed in the image. Preserve intent, add visual details, "
-        "and specify text position, appearance, and style (handwritten, printed, chalk, etc.). "
-        "Output only the optimized prompt, no explanations."
-    ),
+    # "refine_prompt_with_text": (
+    #     "Optimize the user's simple description into a detailed image generation prompt (50-150 words). "
+    #     "The description includes text to be displayed in the image. Preserve intent, add visual details, "
+    #     "and specify text position, appearance, and style (handwritten, printed, chalk, etc.). "
+    #     "Output only the optimized prompt, no explanations."
+    # ),
 
     # ---- Image scoring ----
     "score_image": (
@@ -127,7 +126,7 @@ PROMPT_TEMPLATES = {
     # ---- Best image selection ----
     "select_best_image": (
         "Choose the best image from these {n} candidates. "
-        "Consider: text clarity, visual harmony with background, overall quality.\n\n"
+        "Consider: text clarity, which can be easily recognized by ocr system."
         "Output ONLY the image number (1, 2, 3...), nothing else."
     ),
 }
@@ -404,7 +403,7 @@ class VLMAgent:
             "generate_clean_prompt",
             user_content,
             max_tokens=512,
-            temperature=0.3,
+            temperature=0,
         )
         return raw.strip()
 
@@ -445,12 +444,8 @@ class VLMAgent:
         temperature: float = 0.7,
     ) -> list[str]:
         """优化用户 prompt（原 PromptRefiner 功能）。"""
-        if text_content:
-            template_key = "refine_prompt_with_text"
-            user_content = f"原始描述：{prompt}\n\n需要显示的文字内容：{text_content}"
-        else:
-            template_key = "refine_prompt"
-            user_content = f"原始描述：{prompt}"
+        template_key = "refine_prompt"
+        user_content = f"original prompt:{prompt}"
 
         results = []
         for _ in range(num_variants):

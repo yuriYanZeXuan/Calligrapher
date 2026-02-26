@@ -51,7 +51,7 @@ class GenerationConfig:
     seed: Optional[int] = None
 
     # Prompt Refiner
-    use_prompt_refiner: bool = True
+    use_prompt_refiner: bool = False
     refiner_temperature: float = 0.7
 
     # Glyph Injection
@@ -378,7 +378,7 @@ class ZImageInference:
             images = list(candidates.values())
             best_idx = self.vlm_agent.select_best_image(images, prompt)
             print(f"  VLM 选择: {names[best_idx]} (#{best_idx+1}/{len(candidates)})")
-
+            
             if self.logger is not None:
                 self.logger.info(f"VLM best selection: {names[best_idx]}")
 

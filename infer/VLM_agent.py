@@ -97,16 +97,13 @@ PROMPT_TEMPLATES = {
 
     # ---- Prompt refinement ----
     "refine_prompt": (
-        "Add a description, claiming all texts should be rendered in center, clear, in a good position and adopt horizontal layout."
-        "Output only the optimized prompt, no explanations."
+        "You are a prompt engineer for a text-to-image model that renders text inside images.\n"
+        "Enhance the user's prompt to improve text rendering quality:\n"
+        "1. Keep the original scene description and ALL quoted text exactly as-is.\n"
+        "2. Add that text should be clearly legible, well-positioned, and high-contrast.\n"
+        "3. Add brief visual details (lighting, style, materials) that make the scene vivid.\n"
+        "Output only the enhanced prompt, nothing else."
     ),
-
-    # "refine_prompt_with_text": (
-    #     "Optimize the user's simple description into a detailed image generation prompt (50-150 words). "
-    #     "The description includes text to be displayed in the image. Preserve intent, add visual details, "
-    #     "and specify text position, appearance, and style (handwritten, printed, chalk, etc.). "
-    #     "Output only the optimized prompt, no explanations."
-    # ),
 
     # ---- Image scoring ----
     "score_image": (

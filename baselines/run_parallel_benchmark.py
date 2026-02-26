@@ -449,10 +449,12 @@ class OursWrapper(ModelWrapper):
             qwenedit_model_path=self.QWENEDIT_MODEL_PATH,
         )
 
+        run_name = os.path.splitext(os.path.basename(output_path))[0]
         image = self.inference.generate(
             prompt=prompt,
             text_contents=text if text else None,
             config=config,
+            run_name=run_name,
         )
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)

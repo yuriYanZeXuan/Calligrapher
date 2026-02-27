@@ -25,8 +25,7 @@ from diffusers.models import AutoencoderKLQwenImage, QwenImageTransformer2DModel
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import deprecate, is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.qwen_image.pipeline_output import QwenImagePipelineOutput
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline, ImagePipelineOutput as QwenImagePipelineOutput
 
 
 if is_torch_xla_available():

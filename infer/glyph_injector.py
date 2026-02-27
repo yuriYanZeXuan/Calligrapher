@@ -243,34 +243,48 @@ class GlyphInjector:
         
         return text_mask
     
+    @property
+    def _is_3d_vae(self) -> bool:
+        return hasattr(self.vae, 'spatial_compression_ratio')
+
     def encode_image(self, image: Image.Image) -> torch.Tensor:
         """将 PIL Image 编码为 latent"""
-        # 转换为 tensor
         img_array = np.array(image).astype(np.float32) / 255.0
         img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).unsqueeze(0)
-        img_tensor = img_tensor * 2.0 - 1.0  # 归一化到 [-1, 1]
+        img_tensor = img_tensor * 2.0 - 1.0
         img_tensor = img_tensor.to(device=self.device, dtype=self.dtype)
-        
-        # VAE encode
+
+        if self._is_3d_vae:
+            img_tensor = img_tensor.unsqueeze(2)  # (B,C,H,W) → (B,C,1,H,W)
+
         with torch.no_grad():
             latent = self.vae.encode(img_tensor).latent_dist.sample()
-            latent = (latent - self.vae.config.shift_factor) * self.vae.config.scaling_factor
-            
+            if hasattr(self.vae.config, 'shift_factor'):
+                latent = (latent - self.vae.config.shift_factor) * self.vae.config.scaling_factor
+
+        if self._is_3d_vae:
+            latent = latent.squeeze(2)  # (B,C,1,H,W) → (B,C,H,W)
+
         return latent
     
     def decode_latent(self, latent: torch.Tensor) -> Image.Image:
         """将 latent 解码为 PIL Image"""
         with torch.no_grad():
             latent = latent.to(self.vae.dtype)
-            latent = (latent / self.vae.config.scaling_factor) + self.vae.config.shift_factor
+            if hasattr(self.vae.config, 'shift_factor'):
+                latent = (latent / self.vae.config.scaling_factor) + self.vae.config.shift_factor
+
+            if self._is_3d_vae:
+                latent = latent.unsqueeze(2)  # (B,C,H,W) → (B,C,1,H,W)
+
             image = self.vae.decode(latent, return_dict=False)[0]
-            
-        # 转换为 PIL Image
+
+            if self._is_3d_vae:
+                image = image[:, :, 0]  # (B,C,1,H,W) → (B,C,H,W)
+
         image = (image / 2 + 0.5).clamp(0, 1)
         image = image.cpu().float().permute(0, 2, 3, 1).numpy()[0]
-        image = (image * 255).astype(np.uint8)
-        
-        return Image.fromarray(image)
+        return Image.fromarray((image * 255).astype(np.uint8))
     
     @staticmethod
     def _freq_decompose_inject(

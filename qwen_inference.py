@@ -12,11 +12,12 @@ QwenImage 推理主入口（对齐 zimage_inference 的 3-pass 架构）
   - VAE 需要 latents_mean/latents_std 归一化
 """
 
+import inspect
 import os
 import sys
 import json
 import math
-from typing import Optional, Union
+from typing import Optional, Union, List
 from dataclasses import dataclass, field
 
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
@@ -36,6 +37,36 @@ from infer.glyph_injector import GlyphInjector, InjectionConfig, create_glyph_in
 from infer.mylogger import TTSLogger
 
 DEFAULT_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen-image-2512"
+
+
+def _calculate_shift(
+    image_seq_len,
+    base_seq_len: int = 256,
+    max_seq_len: int = 4096,
+    base_shift: float = 0.5,
+    max_shift: float = 1.15,
+):
+    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+    b = base_shift - m * base_seq_len
+    return image_seq_len * m + b
+
+
+def _retrieve_timesteps(scheduler, num_inference_steps=None, device=None,
+                        timesteps=None, sigmas=None, **kwargs):
+    if timesteps is not None and sigmas is not None:
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed.")
+    if timesteps is not None:
+        if "timesteps" not in inspect.signature(scheduler.set_timesteps).parameters:
+            raise ValueError(f"{scheduler.__class__}'s set_timesteps does not support custom timesteps.")
+        scheduler.set_timesteps(timesteps=timesteps, device=device, **kwargs)
+        return scheduler.timesteps, len(scheduler.timesteps)
+    if sigmas is not None:
+        if "sigmas" not in inspect.signature(scheduler.set_timesteps).parameters:
+            raise ValueError(f"{scheduler.__class__}'s set_timesteps does not support custom sigmas.")
+        scheduler.set_timesteps(sigmas=sigmas, device=device, **kwargs)
+        return scheduler.timesteps, len(scheduler.timesteps)
+    scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
+    return scheduler.timesteps, num_inference_steps
 
 
 @dataclass
@@ -245,15 +276,14 @@ class QwenImageInference:
         packed_noise = pipe._pack_latents(noise, 1, num_channels, latent_h, latent_w)
         sigmas = np.linspace(1.0, 1 / config.num_inference_steps, config.num_inference_steps)
         image_seq_len = packed_noise.shape[1]
-        from train.qwen_ip.pipeline_qwenimage import calculate_shift, retrieve_timesteps
-        mu = calculate_shift(
+        mu = _calculate_shift(
             image_seq_len,
             pipe.scheduler.config.get("base_image_seq_len", 256),
             pipe.scheduler.config.get("max_image_seq_len", 4096),
             pipe.scheduler.config.get("base_shift", 0.5),
             pipe.scheduler.config.get("max_shift", 1.15),
         )
-        timesteps, _ = retrieve_timesteps(pipe.scheduler, config.num_inference_steps, "cpu", sigmas=sigmas, mu=mu)
+        timesteps, _ = _retrieve_timesteps(pipe.scheduler, config.num_inference_steps, "cpu", sigmas=sigmas, mu=mu)
 
         self.glyph_injector.sample_tag = tag
         injection_data = self.glyph_injector.prepare_injection_from_plan(
@@ -315,15 +345,14 @@ class QwenImageInference:
         # Scheduler
         sigmas = np.linspace(1.0, 1 / config.num_inference_steps, config.num_inference_steps)
         image_seq_len = latent.shape[1]
-        from train.qwen_ip.pipeline_qwenimage import calculate_shift, retrieve_timesteps
-        mu = calculate_shift(
+        mu = _calculate_shift(
             image_seq_len,
             pipe.scheduler.config.get("base_image_seq_len", 256),
             pipe.scheduler.config.get("max_image_seq_len", 4096),
             pipe.scheduler.config.get("base_shift", 0.5),
             pipe.scheduler.config.get("max_shift", 1.15),
         )
-        timesteps, _ = retrieve_timesteps(pipe.scheduler, config.num_inference_steps, device, sigmas=sigmas, mu=mu)
+        timesteps, _ = _retrieve_timesteps(pipe.scheduler, config.num_inference_steps, device, sigmas=sigmas, mu=mu)
 
         img_shapes = [[(1, latent_h // 2, latent_w // 2)]]
 

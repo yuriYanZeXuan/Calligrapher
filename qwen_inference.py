@@ -320,9 +320,10 @@ class QwenImageInference:
         pass2_image = self._pixel_composite_text(background, injection_data)
         candidates["pass2_injection"] = pass2_image
 
-        # Pass 3: 风格化
+        # Pass 3: 风格化（先卸载 QwenImage pipeline 腾显存）
         if config.use_harmonization:
             print(f"=== Pass 3: Klein 风格化 ===")
+            self._offload_pipeline()
             pass3_image = self._run_pass3_klein(pass2_image, injection_data, typography_plan, config)
             if pass3_image is not None:
                 candidates["pass3_klein"] = pass3_image
@@ -457,6 +458,18 @@ class QwenImageInference:
         result = bg_arr.copy()
         result[mask > 127] = tpl_arr[mask > 127]
         return Image.fromarray(result)
+
+    def _offload_pipeline(self):
+        """将 QwenImage pipeline 的所有模型组件移到 CPU 并释放显存。"""
+        if self._pipeline is None:
+            return
+        for name in ("transformer", "vae", "text_encoder"):
+            comp = getattr(self._pipeline, name, None)
+            if comp is not None:
+                comp.to("cpu")
+        self._glyph_injector = None
+        torch.cuda.empty_cache()
+        print("  QwenImage pipeline 已卸载到 CPU")
 
     # ---- Pass 3: Klein ----
 

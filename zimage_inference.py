@@ -387,15 +387,25 @@ class ZImageInference:
         # === 拼接所有阶段结果保存到 CAT_IMG ===
         self._save_candidates_concat(candidates)
 
-        # === OCR 评分选优：pass1 + pass2 + 所有 pass3 变体 ===
+        # === OCR 评分选优 ===
+        # pool: [pass1, pass2, pass3_0, pass3_1, ...]
         selection_pool = [("pass1_reference", candidates["pass1_reference"])]
         selection_pool.append(("pass2_injection", pass2_image))
         selection_pool.extend(pass3_variants)
 
         print(f"=== OCR 选优 ({len(selection_pool)} candidates) ===")
         names, images = zip(*selection_pool)
-        best_idx = self.vlm_agent.select_best_text_match(list(images), prompt)
-        print(f"  OCR 选优结果: {names[best_idx]}")
+        scores = self.vlm_agent.ocr_score_images(list(images), prompt)
+        best_score = max(scores)
+        # pass1 同分 → 选 pass1；否则选分最高中靠后的（画风更好）
+        if scores[0] >= best_score:
+            best_idx = 0
+        else:
+            best_idx = max(
+                (i for i in range(len(scores)) if scores[i] == best_score),
+                default=len(scores) - 1,
+            )
+        print(f"  OCR 选优结果: {names[best_idx]} (score={scores[best_idx]:.3f})")
         return images[best_idx]
 
     def _prepare_noise(

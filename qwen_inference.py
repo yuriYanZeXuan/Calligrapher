@@ -334,12 +334,23 @@ class QwenImageInference:
 
         self._save_candidates_concat(candidates)
 
-        # OCR 评分选优：pass1 + pass2 + pass3
-        pool = list(candidates.items())
+        # OCR 评分选优
+        # pool: [pass1, pass2, pass3...]
+        pool = [("pass1_reference", candidates["pass1_reference"])]
+        pool.extend((k, v) for k, v in candidates.items() if k != "pass1_reference")
         print(f"=== OCR 选优 ({len(pool)} candidates) ===")
         names, images = zip(*pool)
-        best_idx = self.vlm_agent.select_best_text_match(list(images), prompt)
-        print(f"  OCR 选优结果: {names[best_idx]}")
+        scores = self.vlm_agent.ocr_score_images(list(images), prompt)
+        best_score = max(scores)
+        # pass1 同分 → 选 pass1；否则选分最高中靠后的（画风更好）
+        if scores[0] >= best_score:
+            best_idx = 0
+        else:
+            best_idx = max(
+                (i for i in range(len(scores)) if scores[i] == best_score),
+                default=len(scores) - 1,
+            )
+        print(f"  OCR 选优结果: {names[best_idx]} (score={scores[best_idx]:.3f})")
         return images[best_idx]
 
     # ---- Pass 2 去噪（QwenImage 特有的 packed latent + CFG） ----

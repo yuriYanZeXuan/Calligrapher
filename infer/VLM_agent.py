@@ -536,23 +536,18 @@ class VLMAgent:
             return nums[0] - 1
         return n - 1  # 默认返回最后一个（通常是最精细的）
 
-    def select_best_text_match(
+    def ocr_score_images(
         self,
         images: list[Image.Image],
         prompt: str,
-    ) -> int:
-        """用 OCR 评分选择文本渲染最准确的图像，返回 0-based 索引。
+    ) -> list[float]:
+        """对每张图做 OCR 并计算文本准确度，返回 scores 列表。
 
         对齐 eval/core/metrics.py 的 evaluate_text_rendering 评分逻辑：
         1. 从 prompt 中提取期望文本（引号内容）
         2. 用 VLM OCR 识别每张图的文本
         3. 用 Levenshtein 距离计算 text_accuracy
-        4. 返回得分最高的图像索引
         """
-        n = len(images)
-        if n <= 1:
-            return 0
-
         from eval.core.metrics import extract_text_from_prompt
         ground_truth = extract_text_from_prompt(prompt)
 
@@ -582,9 +577,9 @@ class VLMAgent:
 
             score = _text_accuracy(ground_truth, recognized)
             scores.append(score)
-            print(f"  OCR 选优 [{i}]: score={score:.3f}, ocr=\"{recognized[:80]}\"")
+            print(f"  OCR [{i}]: score={score:.3f}, ocr=\"{recognized[:80]}\"")
 
-        return max(range(n), key=lambda i: scores[i])
+        return scores
 
     # ---- 图像排名 ----
 

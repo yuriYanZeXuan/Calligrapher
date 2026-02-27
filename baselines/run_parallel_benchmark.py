@@ -460,6 +460,61 @@ class OursWrapper(ModelWrapper):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         image.save(output_path)
 
+class OursQwenBaseWrapper(ModelWrapper):
+    """Wrapper for our pipeline using QwenImage as base model (with cpu_offload)."""
+
+    KLEIN_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
+
+    def __init__(self, device="cuda", model_path=None,
+                 no_inject=False, no_harmonize=False, no_refiner=False,
+                 harmonizer_type="klein", freq_decompose=False):
+        super().__init__(device, model_path)
+        self.no_inject = no_inject
+        self.no_harmonize = no_harmonize
+        self.no_refiner = no_refiner
+        self.harmonizer_type = harmonizer_type
+        self.freq_decompose = freq_decompose
+
+        from qwen_inference import QwenImageInference, QwenGenerationConfig
+        from infer.glyph_injector import InjectionConfig
+
+        self._QwenGenerationConfig = QwenGenerationConfig
+        self._InjectionConfig = InjectionConfig
+        self.inference = QwenImageInference(
+            model_path=self.model_path or MODEL_PATHS.get('qwenimage',
+                "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen-image-2512"),
+            device=device,
+            logger=None,
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        text = kwargs.get('text', [])
+        if isinstance(text, str):
+            text = [text] if text.strip() else []
+
+        injection_config = self._InjectionConfig(freq_decompose=self.freq_decompose)
+        config = self._QwenGenerationConfig(
+            seed=42,
+            use_prompt_refiner=not self.no_refiner,
+            use_glyph_injection=not self.no_inject,
+            injection_config=injection_config,
+            use_harmonization=not self.no_harmonize,
+            harmonizer_type=self.harmonizer_type,
+            klein_model_path=self.KLEIN_MODEL_PATH,
+        )
+
+        run_name = os.path.splitext(os.path.basename(output_path))[0]
+        image = self.inference.generate(
+            prompt=prompt,
+            text_contents=text if text else None,
+            config=config,
+            run_name=run_name,
+        )
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        image.save(output_path)
+
+
 # Model registry
 MODELS = {
     'textflux': TextFluxWrapper,
@@ -475,6 +530,7 @@ MODELS = {
     'nanobanana': NanoBananaWrapper,
     'fluxtext': FluxTextModelWrapper,
     'ours': OursWrapper,
+    'ours_qwen': OursQwenBaseWrapper,
 }
 
 # --- Data Loading ---
@@ -628,7 +684,7 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
 
     # Initialize model
     model_kwargs = {}
-    if args.model == 'ours':
+    if args.model in ('ours', 'ours_qwen'):
         model_kwargs = {
             'no_inject': args.no_inject,
             'no_harmonize': args.no_harmonize,
@@ -663,7 +719,7 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
 # --- Evaluation ---
 
 def evaluate_results(output_dir, dataset, metrics=['ocr']):
-    """Evaluate generated images."""
+    """Evaluate generated images with gt_text and pred_text."""
     print(f"\nEvaluating {output_dir}...")
     from eval.core.metrics import OCRMetrics
 
@@ -678,26 +734,30 @@ def evaluate_results(output_dir, dataset, metrics=['ocr']):
         if ocr_evaluator:
             gt_text = item.get('text') or item.get('sentence_list') or []
             gt_text = " ".join(gt_text) if isinstance(gt_text, list) else str(gt_text)
-            row['ground_truth'] = gt_text
+            row['gt_text'] = gt_text
             if gt_text.strip():
-                ocr_res = ocr_evaluator.compute_accuracy(
-                    image, gt_text, mask=None
-                )
+                ocr_res = ocr_evaluator.compute_accuracy(image, gt_text, mask=None)
                 row['ocr_accuracy'] = ocr_res['ocr_acc']
                 row['ocr_ned'] = ocr_res['ocr_ned']
+                # 获取 pred_text：再跑一次 OCR 提取识别文本
+                blocks = ocr_evaluator.ocr.two_step_extract(image)
+                row['pred_text'] = ocr_evaluator.blocks_to_text(blocks)
             else:
-                # For benchmarks without explicit GT text (e.g., OneIG-Bench), skip OCR scoring.
                 row['ocr_accuracy'] = None
+                row['pred_text'] = ''
         results.append(row)
-    
+
     if results:
         df = pd.DataFrame(results)
         csv_path = os.path.join(output_dir, 'evaluation_results.csv')
         df.to_csv(csv_path, index=False)
         print(f"Results saved to {csv_path}")
-        
+
         if 'ocr_accuracy' in df.columns:
-            print(f"Mean OCR Accuracy: {df['ocr_accuracy'].mean():.4f}")
+            valid = df['ocr_accuracy'].dropna()
+            if len(valid) > 0:
+                print(f"Mean OCR Accuracy: {valid.mean():.4f}")
+                print(f"Mean OCR NED: {df['ocr_ned'].dropna().mean():.4f}")
     else:
         print("No results to evaluate.")
 

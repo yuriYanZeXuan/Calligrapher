@@ -159,6 +159,31 @@ class GlyphInjector:
         # VAE 缩放因子
         self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1) if hasattr(vae, 'config') else 8
         
+    # 颜色名 → hex 映射（模板是黑底，深色映射到亮色保证可见）
+    _COLOR_MAP = {
+        "white": "#FFFFFF", "black": "#FFFFFF", "red": "#FF4444",
+        "blue": "#6688FF", "green": "#44DD44", "yellow": "#FFEE44",
+        "orange": "#FFAA33", "brown": "#CC9966", "gray": "#BBBBBB",
+        "gold": "#FFD700", "silver": "#C0C0C0", "purple": "#BB77FF",
+        "pink": "#FF88BB",
+    }
+
+    @classmethod
+    def _resolve_color(cls, color: str) -> str:
+        """将颜色名/hex 统一映射为模板可用的 hex 值（黑底上可见）。"""
+        c = color.strip().lower()
+        if c in cls._COLOR_MAP:
+            return cls._COLOR_MAP[c]
+        if c.startswith("#"):
+            # hex 颜色太暗则改白
+            hex_val = c.lstrip("#")
+            if len(hex_val) >= 6:
+                r, g, b = int(hex_val[0:2], 16), int(hex_val[2:4], 16), int(hex_val[4:6], 16)
+                if r + g + b < 128:
+                    return "#FFFFFF"
+            return color
+        return "#FFFFFF"
+
     def render_text_template(
         self,
         text: str,
@@ -357,7 +382,7 @@ class GlyphInjector:
         for i, region_spec in enumerate(regions):
             content = region_spec["content"]
             bbox = region_spec["bbox"]
-            color = region_spec.get("color", "#FFFFFF")
+            color = self._resolve_color(region_spec.get("color", "white"))
 
             x1 = int(bbox[0] * width)
             y1 = int(bbox[1] * height)

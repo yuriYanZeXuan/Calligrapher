@@ -480,7 +480,7 @@ def render_latex(
                 0.5, 0.5, formula,
                 fontsize=mid, color=fg,
                 ha="center", va="center",
-                math_fontfamily="cm",
+                math_fontfamily="stix",
             )
             fig.canvas.draw()
             renderer = fig.canvas.get_renderer()
@@ -507,7 +507,7 @@ def render_latex(
         0.5, 0.5, formula,
         fontsize=best_fontsize, color=fg,
         ha="center", va="center",
-        math_fontfamily="cm",
+        math_fontfamily="stix",
     )
 
     buf = io.BytesIO()
@@ -519,8 +519,9 @@ def render_latex(
         plain = re.sub(r'\\[a-zA-Z]+', ' ', latex.strip().strip("$"))
         plain = re.sub(r'[{}^_]', '', plain).strip()
         fallback_color = text_color if text_color != "black" else "white"
+        math_font = _BUNDLED_MATH_FONT if os.path.exists(_BUNDLED_MATH_FONT) else None
         return render_plaintext(plain, width, height, fallback_color,
-                                font_weight=font_weight)
+                                font_weight=font_weight, font_path=math_font)
     plt.close(fig)
     buf.seek(0)
     img = Image.open(buf).convert("RGB")
@@ -534,9 +535,10 @@ def render_latex(
 # ============ 纯文本字体渲染 ============
 
 
-# 项目自带 CJK 字体（优先级最高，保证跨平台可用）
+# 项目自带字体（优先级最高，保证跨平台可用）
 _BUNDLED_FONT_DIR = str(Path(__file__).resolve().parent.parent / "assets")
 _BUNDLED_CJK_FONT = os.path.join(_BUNDLED_FONT_DIR, "Arial-Unicode-Bold.ttf")
+_BUNDLED_MATH_FONT = os.path.join(_BUNDLED_FONT_DIR, "cambria.ttc")
 
 # 服务器上已知的 CJK 字体
 _SERVER_CJK_FONT = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/anytext/font/Arial_Unicode.ttf"

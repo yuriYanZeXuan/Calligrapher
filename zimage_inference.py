@@ -241,14 +241,11 @@ class ZImageInference:
         elif text_regions:
             text_content_str = " ".join(r.get("content", "") for r in text_regions)
 
-        # 1. Prompt 优化
+        # 1. Prompt 优化（确定性后缀，不经 VLM 改写，保证原始文本不变）
         working_prompt = prompt
-        if config.use_prompt_refiner and text_content_str:
-            refined_prompts = self.vlm_agent.refine_prompt(
-                prompt, text_content=text_content_str, num_variants=1,
-            )
-            working_prompt = refined_prompts[0]
-            print(f"优化后的 prompt: {working_prompt[:100]}...")
+        if config.use_prompt_refiner:
+            working_prompt = prompt + " High quality, with clearly legible and well-positioned text."
+            print(f"Refined prompt: {working_prompt[:120]}...")
 
         # 2. 普通生成（可能带 Glyph Injection 三阶段推理）
         generator = None
@@ -363,6 +360,12 @@ class ZImageInference:
         injection_data = self.glyph_injector.prepare_injection_from_plan(
             typography_plan, image_size, noise, timesteps,
         )
+
+        # === Mask 全黑检测：模板渲染失败 → 回退 pass1 ===
+        if injection_data["full_mask"].max() == 0:
+            print("  [WARN] glyph mask 全黑（模板渲染失败），回退到 pass1")
+            self._save_candidates_concat(candidates)
+            return candidates.get("pass1_reference", list(candidates.values())[-1])
 
         background = self._run_pass2_injection_with_data(
             clean_prompt, noise, timesteps, injection_data, config,

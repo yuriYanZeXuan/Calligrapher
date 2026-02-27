@@ -82,11 +82,18 @@ PROMPT_TEMPLATES = {
 
     # ---- Generate clean prompt (remove text/formula descriptions) ----
     "generate_clean_prompt": (
-        "Rewrite the user's prompt to explicitly exclude any text, formulas, math symbols, letters, or numbers from rendering."
-        "You MUST:"
-        "1. Remove any text related to formulas, math symbols, letters, or numbers."
-        "2. Preserve the description related to backgrounds, styles, and compositions."
-        "3. Output only the rewritten prompt, no explanations."
+        "Remove ALL quoted text, formulas, and text-rendering instructions from the prompt. "
+        "Keep ONLY the scene/background/style description. Add 'no text visible' at the end.\n\n"
+        "Examples:\n"
+        'Input: A classroom blackboard displays "E=mc²" in elegant chalk writing.\n'
+        "Output: A classroom blackboard ,clear and without any text. No text visible.\n\n"
+        'Input: A wooden sign in a garden reads "Welcome Home" in rustic font.\n'
+        "Output: A wooden sign in a garden with rustic style, clear and without any text. No text visible.\n\n"
+        'Input: An educational poster showing "$\\int_0^1 x^2 dx$" with colorful diagrams.\n'
+        "Output: An educational poster with colorful diagrams, clear and without any text. No text visible.\n\n"
+        'Input: 一块石碑上刻着"天道酬勤"四个大字，周围是竹林。\n'
+        "Output: 一块石碑，周围是竹林， clear and without any text. No text visible.\n\n"
+        "Output ONLY the cleaned prompt, nothing else."
     ),
 
     # ---- Generate style prompt for FluxKlein (text style matching background) ----

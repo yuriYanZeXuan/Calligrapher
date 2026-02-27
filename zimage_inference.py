@@ -679,41 +679,43 @@ class ZImageInference:
                 img = img.resize(pass2_image.size, Image.LANCZOS)
             return img
 
-        # --- 变体 1: 单图 + mask 混合 ---
-        print("    [1/3] klein_single (单图 + mask)")
-        raw_single = klein.pipe(
-            **gen_kwargs, image=[pass2_image], generator=_make_generator(),
-        ).images[0]
-        raw_single = _ensure_rgb(raw_single)
+        variants: list[tuple[str, Image.Image]] = []
 
-        binary_mask = injection_data["full_mask"]
-        mask = (binary_mask > 127).astype(np.float32)
-        if mask.shape[:2] != (pass2_image.height, pass2_image.width):
-            mask = np.array(Image.fromarray(
-                (mask * 255).astype(np.uint8)).resize(
-                pass2_image.size, Image.NEAREST)).astype(np.float32) / 255.0
-        mask_3ch = mask[:, :, np.newaxis]
-        klein_single = Image.fromarray((
-            mask_3ch * np.array(raw_single).astype(np.float32)
-            + (1 - mask_3ch) * np.array(pass2_image).astype(np.float32)
-        ).clip(0, 255).astype(np.uint8))
+        # --- 变体 1 & 2: 单图条件 → mask 混合 + 无 mask ---
+        try:
+            print("    [1/3] klein_single + [2/3] klein_nomask")
+            raw_single = klein.pipe(
+                **gen_kwargs, image=[pass2_image], generator=_make_generator(),
+            ).images[0]
+            raw_single = _ensure_rgb(raw_single)
 
-        # --- 变体 2: 单图，无 mask ---
-        print("    [2/3] klein_nomask (单图，无 mask)")
-        klein_nomask = raw_single  # 与变体 1 共享同一次推理
+            binary_mask = injection_data["full_mask"]
+            mask = (binary_mask > 127).astype(np.float32)
+            if mask.shape[:2] != (pass2_image.height, pass2_image.width):
+                mask = np.array(Image.fromarray(
+                    (mask * 255).astype(np.uint8)).resize(
+                    pass2_image.size, Image.NEAREST)).astype(np.float32) / 255.0
+            mask_3ch = mask[:, :, np.newaxis]
+            klein_single = Image.fromarray((
+                mask_3ch * np.array(raw_single).astype(np.float32)
+                + (1 - mask_3ch) * np.array(pass2_image).astype(np.float32)
+            ).clip(0, 255).astype(np.uint8))
 
-        # --- 变体 3: 双图条件，无 mask ---
-        print("    [3/3] klein_dual (双图条件，无 mask)")
-        klein_dual = klein.pipe(
-            **gen_kwargs, image=[pass2_image, template], generator=_make_generator(),
-        ).images[0]
-        klein_dual = _ensure_rgb(klein_dual)
+            variants.append(("klein_single", klein_single))
+            variants.append(("klein_nomask", raw_single))
+        except Exception as e:
+            print(f"    [WARN] Klein 单图推理失败: {e}")
 
-        variants = [
-            ("klein_single", klein_single),
-            ("klein_nomask", klein_nomask),
-            ("klein_dual", klein_dual),
-        ]
+        # --- 变体 3: 双图条件（pass2 + glyph 模板），无 mask ---
+        try:
+            print("    [3/3] klein_dual (双图条件)")
+            klein_dual = klein.pipe(
+                **gen_kwargs, image=[pass2_image, template], generator=_make_generator(),
+            ).images[0]
+            klein_dual = _ensure_rgb(klein_dual)
+            variants.append(("klein_dual", klein_dual))
+        except Exception as e:
+            print(f"    [WARN] Klein 双图推理失败: {e}")
 
         if self.logger is not None:
             tag = self._current_tag

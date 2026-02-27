@@ -86,13 +86,13 @@ PROMPT_TEMPLATES = {
         "Keep ONLY the scene/background/style description. Add 'no text visible' at the end.\n\n"
         "Examples:\n"
         'Input: A classroom blackboard displays "E=mc²" in elegant chalk writing.\n'
-        "Output: A classroom blackboard ,clear and without any text. No text visible.\n\n"
-        'Input: A wooden sign in a garden reads "Welcome Home" in rustic font.\n'
-        "Output: A wooden sign in a garden with rustic style, clear and without any text. No text visible.\n\n"
+        "Output: An empty classroom blackboard as background, clear and without any text. No text visible.\n\n"
+        'Input: An  wooden sign in a garden reads "Welcome Home" in rustic font.\n'
+        "Output: An empty wooden empty sign in a garden with rustic style, clear and without any text. No text visible.\n\n"
         'Input: An educational poster showing "$\\int_0^1 x^2 dx$" with colorful diagrams.\n'
-        "Output: An educational poster with colorful diagrams, clear and without any text. No text visible.\n\n"
+        "Output: An empty educational poster with colorful diagrams, clear and without any text. No text visible.\n\n"
         'Input: 一块石碑上刻着"天道酬勤"四个大字，周围是竹林。\n'
-        "Output: 一块石碑，周围是竹林， clear and without any text. No text visible.\n\n"
+        "Output: 一块空白的石碑作为背景，周围是竹林， clear and without any text. No text visible.\n\n"
         "Output ONLY the cleaned prompt, nothing else."
     ),
 

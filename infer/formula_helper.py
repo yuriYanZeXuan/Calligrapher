@@ -516,8 +516,10 @@ def render_latex(
     except (ValueError, RuntimeError) as e:
         plt.close(fig)
         print(f"[formula_helper] matplotlib 渲染失败，降级为纯文本: {e}")
-        plain = latex.strip().strip("$")
-        return render_plaintext(plain, width, height, text_color,
+        plain = re.sub(r'\\[a-zA-Z]+', ' ', latex.strip().strip("$"))
+        plain = re.sub(r'[{}^_]', '', plain).strip()
+        fallback_color = text_color if text_color != "black" else "white"
+        return render_plaintext(plain, width, height, fallback_color,
                                 font_weight=font_weight)
     plt.close(fig)
     buf.seek(0)
@@ -625,10 +627,13 @@ def get_available_font(
     return ImageFont.load_default()
 
 
-def calculate_font_size(text: str, bbox_width: int, bbox_height: int) -> int:
-    """计算能填满 bbox 的字体大小"""
+def calculate_font_size(
+    text: str, bbox_width: int, bbox_height: int,
+    weight: str = "regular", font_path: _Opt[str] = None,
+) -> int:
+    """计算能填满 bbox 的字体大小（使用实际渲染字体测量，避免度量偏差）。"""
     estimated_size = int(bbox_height * 0.8)
-    font = get_available_font(estimated_size)
+    font = get_available_font(estimated_size, weight=weight, font_path=font_path)
 
     test_img = Image.new("RGB", (bbox_width * 2, bbox_height * 2), "white")
     draw = ImageDraw.Draw(test_img)
@@ -656,7 +661,7 @@ def render_plaintext(
     img = Image.new("RGB", (width, height), "black")
     draw = ImageDraw.Draw(img)
 
-    font_size = calculate_font_size(text, width, height)
+    font_size = calculate_font_size(text, width, height, weight=font_weight, font_path=font_path)
     font = get_available_font(font_size, weight=font_weight, font_path=font_path)
 
     text_bbox = draw.textbbox((0, 0), text, font=font)
@@ -703,6 +708,42 @@ def _composite_to_canvas(
     return canvas
 
 
+# ============ 长文本自动换行 ============
+
+# 可在此处断行的分隔符（LaTeX 和 Unicode 形式）
+_BREAK_PATTERNS = [
+    (r'\\rightarrow', r'\\rightarrow\n'),
+    (r'\\Rightarrow', r'\\Rightarrow\n'),
+    (r'\\approx', r'\\approx\n'),
+    (r'→', '→\n'),
+    (r'⇒', '⇒\n'),
+    (r'≈', '≈\n'),
+    (r'(?<!\\)=(?!=)', '=\n'),  # = 但不匹配 == 或 \= 转义
+]
+
+def _auto_linebreak(text: str, min_len: int = 15) -> str:
+    """当文本较长时，在特定符号后强制插入换行。
+
+    对 LaTeX 公式插入 \\\\ 换行；对纯文本插入 \\n。
+    只在第一个匹配位置断一次（拆成两行）。
+    """
+    if len(text) < min_len:
+        return text
+
+    is_lat = is_latex(text)
+
+    for pat, repl in _BREAK_PATTERNS:
+        m = re.search(pat, text)
+        if m:
+            pos = m.end()
+            if pos < len(text) * 0.85 and pos > len(text) * 0.15:
+                if is_lat:
+                    return text[:pos] + r' \\ ' + text[pos:]
+                return text[:pos] + '\n' + text[pos:]
+
+    return text
+
+
 # ============ 统一入口 ============
 
 
@@ -723,6 +764,8 @@ def render_formula(
     2. matplotlib mathtext — 无需 Node.js，支持常用 LaTeX 子集
     3. PIL 纯文本 — 最后兜底
     """
+    text = _auto_linebreak(text)
+
     converted = plaintext_to_latex(text)
     use_latex = force_latex or is_latex(text) or (converted != text)
     if converted != text:

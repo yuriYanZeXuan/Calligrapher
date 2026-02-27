@@ -350,34 +350,55 @@ class GlyphInjector:
         # 黑底画布：所有 region 的文字画在同一张黑底图上
         combined_template = Image.new("RGB", (width, height), "black")
         
-        for region_spec in typography_plan.get("text_regions", []):
+        regions = typography_plan.get("text_regions", [])
+        if not regions:
+            print(f"  [DIAG] text_regions 为空，typography_plan keys={list(typography_plan.keys())}")
+
+        for i, region_spec in enumerate(regions):
             content = region_spec["content"]
             bbox = region_spec["bbox"]
-            
+            color = region_spec.get("color", "#FFFFFF")
+
             x1 = int(bbox[0] * width)
             y1 = int(bbox[1] * height)
             x2 = int(bbox[2] * width)
             y2 = int(bbox[3] * height)
             region_width = max(x2 - x1, 1)
             region_height = max(y2 - y1, 1)
-            
+
+            if region_width <= 2 or region_height <= 2:
+                print(f"  [DIAG] region {i} bbox 退化: bbox={bbox} → {region_width}x{region_height}px, content=\"{content[:30]}\"")
+
             text_img = self.render_text_template(
                 content, region_width, region_height,
-                text_color=region_spec.get("color", "#FFFFFF"),
+                text_color=color,
                 force_latex=region_spec.get("is_latex", False),
                 font_weight=region_spec.get("font_weight", "regular"),
                 font_path=region_spec.get("font_path"),
                 rotation=region_spec.get("rotation", 0),
             )
-            
+
+            # 检测渲染结果是否全黑
+            img_arr = np.array(text_img)
+            if img_arr.max() == 0:
+                print(f"  [DIAG] region {i} 渲染全黑: content=\"{content[:50]}\", "
+                      f"size={region_width}x{region_height}, color={color}, "
+                      f"is_latex={region_spec.get('is_latex', False)}")
+
             if text_img.size != (region_width, region_height):
                 text_img = text_img.resize((region_width, region_height), Image.LANCZOS)
-            
+
             combined_template.paste(text_img, (x1, y1))
-        
-        # 黑底 + 彩色文字 → Otsu 直接分割，旋转区域的黑色填充与画布无缝融合
+
+        # 黑底 + 彩色文字 → Otsu 直接分割
         full_array = np.array(combined_template)
         full_mask = self.extract_text_mask(full_array)
+
+        if full_mask.max() == 0 and len(regions) > 0:
+            tpl_max = full_array.max()
+            tpl_mean = full_array.mean()
+            print(f"  [DIAG] mask 全黑! template max_pixel={tpl_max}, mean={tpl_mean:.2f}, "
+                  f"regions={len(regions)}")
         
         # 第三步：统一编码为 latent 并计算 inversion
         combined_latent = self.encode_image(combined_template)

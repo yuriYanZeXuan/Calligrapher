@@ -308,6 +308,10 @@ class QwenImageInference:
             typography_plan, image_size, noise.squeeze(1), timesteps,
         )
 
+        # VAE 编码完成后显式卸载到 CPU，为 transformer 去噪腾出显存
+        pipe.vae.to("cpu")
+        torch.cuda.empty_cache()
+
         # Mask 全黑检测
         if injection_data["full_mask"].max() == 0:
             print("  [WARN] glyph mask 全黑，回退到 pass1")
@@ -425,18 +429,23 @@ class QwenImageInference:
                 spatial = spatial_4d.unsqueeze(2)  # (B, C, 1, H, W)
                 latent = pipe._pack_latents(spatial, 1, num_channels, latent_h, latent_w)
 
-        # Decode
+        # Decode: 卸载 transformer，让 VAE 上 GPU 解码
+        pipe.transformer.to("cpu")
+        torch.cuda.empty_cache()
         return self._decode_latent(latent, config.height, config.width)
 
     def _decode_latent(self, latent, height, width):
         pipe = self.pipeline
+        device = latent.device
         latent = pipe._unpack_latents(latent, height, width, pipe.vae_scale_factor)
+
+        pipe.vae.to(device)
         latent = latent.to(pipe.vae.dtype)
 
         latents_mean = torch.tensor(pipe.vae.config.latents_mean).view(
-            1, pipe.vae.config.z_dim, 1, 1, 1).to(latent.device, latent.dtype)
+            1, pipe.vae.config.z_dim, 1, 1, 1).to(device, latent.dtype)
         latents_std_inv = 1.0 / torch.tensor(pipe.vae.config.latents_std).view(
-            1, pipe.vae.config.z_dim, 1, 1, 1).to(latent.device, latent.dtype)
+            1, pipe.vae.config.z_dim, 1, 1, 1).to(device, latent.dtype)
         latent = latent / latents_std_inv + latents_mean
 
         with torch.no_grad():

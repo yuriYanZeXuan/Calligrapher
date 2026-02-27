@@ -116,6 +116,9 @@ class QwenImageInference:
     @property
     def pipeline(self):
         if self._pipeline is None:
+            import transformers.utils as _tu
+            if not hasattr(_tu, "FLAX_WEIGHTS_NAME"):
+                _tu.FLAX_WEIGHTS_NAME = "flax_model.msgpack"
             from diffusers import DiffusionPipeline
             print(f"正在加载 QwenImage 模型到 {self.primary_device} (cpu_offload)...")
             self._pipeline = DiffusionPipeline.from_pretrained(

@@ -344,6 +344,7 @@ class QwenImageInference:
 
     # ---- Pass 2 去噪（QwenImage 特有的 packed latent + CFG） ----
 
+    @torch.no_grad()
     def _run_pass2_denoising(self, clean_prompt, noise, config, injection_data):
         pipe = self.pipeline
         device = pipe._execution_device
@@ -353,11 +354,16 @@ class QwenImageInference:
         latent_w = noise.shape[4]
         num_channels = noise.shape[2]
 
-        # Encode prompt
+        # Encode prompt（text_encoder → GPU）
         prompt_embeds, prompt_embeds_mask = pipe.encode_prompt(
             clean_prompt, device=device, max_sequence_length=512)
         neg_embeds, neg_mask = pipe.encode_prompt(
             "", device=device, max_sequence_length=512)
+
+        # text_encoder 用完后手动卸载，为 transformer 腾出显存
+        if hasattr(pipe, 'text_encoder') and pipe.text_encoder is not None:
+            pipe.text_encoder.to("cpu")
+        torch.cuda.empty_cache()
 
         # Pack noise
         latent = pipe._pack_latents(

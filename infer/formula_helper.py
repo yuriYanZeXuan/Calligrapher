@@ -712,41 +712,52 @@ def _composite_to_canvas(
 
 # ============ 长文本自动换行 ============
 
-# 可在此处断行的分隔符（LaTeX 和 Unicode 形式）
+# 可在此处断行的分隔符 pattern（在匹配位置之后插入 \n）
 _BREAK_PATTERNS = [
-    (r'\\rightarrow', r'\\rightarrow\n'),
-    (r'\\Rightarrow', r'\\Rightarrow\n'),
-    (r'\\approx', r'\\approx\n'),
-    (r'→', '→\n'),
-    (r'⇒', '⇒\n'),
-    (r'≈', '≈\n'),
-    (r'(?<!\\)=(?!=)', '=\n'),  # = 但不匹配 == 或 \= 转义
+    r'\\rightarrow\s?',
+    r'\\Rightarrow\s?',
+    r'\\approx\s?',
+    r'→',
+    r'⇒',
+    r'≈',
+    r'(?<!\\)=(?!=)',
 ]
 
 def _auto_linebreak(text: str, min_len: int = 15) -> str:
-    """当文本较长时，在特定符号后强制插入换行。
+    """当文本较长时，在特定符号后插入 \\n 换行（统一标记，渲染层处理）。
 
-    对 LaTeX 公式插入 \\\\ 换行；对纯文本插入 \\n。
     只在第一个匹配位置断一次（拆成两行）。
     """
     if len(text) < min_len:
         return text
 
-    is_lat = is_latex(text)
-
-    for pat, repl in _BREAK_PATTERNS:
+    for pat in _BREAK_PATTERNS:
         m = re.search(pat, text)
         if m:
             pos = m.end()
             if pos < len(text) * 0.85 and pos > len(text) * 0.15:
-                if is_lat:
-                    return text[:pos] + r' \\ ' + text[pos:]
                 return text[:pos] + '\n' + text[pos:]
 
     return text
 
 
 # ============ 统一入口 ============
+
+
+def _render_single_line(
+    text: str, width: int, height: int,
+    text_color: str, use_latex: bool,
+    font_weight: str, font_path: _Opt[str],
+) -> Image.Image:
+    """渲染单行文本/公式（黑底），内部按优先级选择渲染器。"""
+    if use_latex:
+        img = render_mathjax(text, width, height, text_color, font_weight)
+        if img is not None:
+            return _composite_to_canvas(img, width, height)
+        return render_latex(text, width, height, text_color,
+                            font_weight=font_weight)
+    return render_plaintext(text, width, height, text_color,
+                            font_weight=font_weight, font_path=font_path)
 
 
 def render_formula(
@@ -765,6 +776,8 @@ def render_formula(
     1. MathJax (Node.js) — 完整 LaTeX 支持（array, matrix, cases 等）
     2. matplotlib mathtext — 无需 Node.js，支持常用 LaTeX 子集
     3. PIL 纯文本 — 最后兜底
+
+    支持 \\n 多行：逐行渲染后垂直拼接。
     """
     converted = plaintext_to_latex(text)
     use_latex = force_latex or is_latex(text) or (converted != text)
@@ -773,16 +786,27 @@ def render_formula(
 
     text = _auto_linebreak(text)
 
-    if use_latex:
-        img = render_mathjax(text, width, height, text_color, font_weight)
-        if img is not None:
-            img = _composite_to_canvas(img, width, height)
-        else:
-            img = render_latex(text, width, height, text_color,
-                               font_weight=font_weight)
+    lines = text.split('\n')
+    if len(lines) > 1:
+        line_h = height // len(lines)
+        parts = [
+            _render_single_line(
+                line.strip(), width, line_h,
+                text_color, use_latex, font_weight, font_path,
+            )
+            for line in lines
+        ]
+        canvas = Image.new("RGB", (width, height), "black")
+        for i, part in enumerate(parts):
+            if part.size != (width, line_h):
+                part = part.resize((width, line_h), Image.LANCZOS)
+            canvas.paste(part, (0, i * line_h))
+        img = canvas
     else:
-        img = render_plaintext(text, width, height, text_color,
-                               font_weight=font_weight, font_path=font_path)
+        img = _render_single_line(
+            text, width, height,
+            text_color, use_latex, font_weight, font_path,
+        )
 
     if rotation != 0:
         img = img.rotate(rotation, expand=False, resample=Image.BICUBIC,

@@ -40,3 +40,5 @@ manuscript/*
 test_font_coverage.py
 assets/Arial-Unicode-Bold.ttf
 eval/UnseenWords/Calligrapher_bench_testing
+20260227_165927_debug_unseen_mid_sci_44/
+assets/render_cambria_sci.py

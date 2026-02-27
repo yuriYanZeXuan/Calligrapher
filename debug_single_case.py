@@ -2,8 +2,10 @@
 """
 单条 case 调试脚本 — 定位 glyph 渲染 / mask / Pass 2/3 问题。
 
+支持 ZImage 和 QwenImage 两种 pipeline。
+
 用法:
-  # 1. 直接指定 prompt + text
+  # 1. 直接指定 prompt + text (ZImage)
   python debug_single_case.py \
       --prompt 'A sign displays "小狗" in bold font.' \
       --text '小狗'
@@ -13,7 +15,13 @@
       --benchmark UnseenWords \
       --sample-id unseen_ez_zh_3
 
-  # 3. 自定义选项
+  # 3. 使用 QwenImage pipeline
+  python debug_single_case.py \
+      --model qwen \
+      --benchmark UnseenWords \
+      --sample-id unseen_mid_sci_44
+
+  # 4. 自定义选项
   python debug_single_case.py \
       --prompt 'A poster shows "$E=mc^2$".' \
       --text '$E=mc^2$' \
@@ -85,6 +93,8 @@ def main():
     g.add_argument("--prompt", type=str, help="直接指定 prompt")
     g.add_argument("--sample-id", type=str, help="从 benchmark 中按 id 提取")
 
+    parser.add_argument("--model", type=str, default="zimage",
+                        choices=["zimage", "qwen"], help="推理 pipeline 类型")
     parser.add_argument("--text", nargs="+", default=None, help="待渲染文本列表")
     parser.add_argument("--benchmark", type=str, default="UnseenWords",
                         choices=["UnseenWords", "LongText-Bench"])
@@ -112,29 +122,42 @@ def main():
         text = args.text or []
         run_name = "debug"
 
+    print(f"Model:  {args.model}")
     print(f"Prompt: {prompt}")
     print(f"Text:   {text}")
     print()
 
-    from zimage_inference import ZImageInference, GenerationConfig
     from infer.glyph_injector import InjectionConfig
     from infer.mylogger import TTSLogger
 
     logger = TTSLogger(run_name=f"debug_{run_name}")
-
     injection_config = InjectionConfig(freq_decompose=args.freq_decompose)
-    config = GenerationConfig(
-        seed=args.seed,
-        use_prompt_refiner=not args.no_refiner,
-        use_glyph_injection=True,
-        injection_config=injection_config,
-        use_harmonization=not args.no_harmonize,
-        harmonizer_type=args.harmonizer_type,
-        klein_model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein",
-        qwenedit_model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen_edit_2511",
-    )
 
-    inference = ZImageInference(device=args.device, logger=logger)
+    if args.model == "qwen":
+        from qwen_inference import QwenImageInference, QwenGenerationConfig
+        config = QwenGenerationConfig(
+            seed=args.seed,
+            use_prompt_refiner=not args.no_refiner,
+            use_glyph_injection=True,
+            injection_config=injection_config,
+            use_harmonization=not args.no_harmonize,
+            harmonizer_type=args.harmonizer_type,
+            klein_model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein",
+        )
+        inference = QwenImageInference(device=args.device, logger=logger)
+    else:
+        from zimage_inference import ZImageInference, GenerationConfig
+        config = GenerationConfig(
+            seed=args.seed,
+            use_prompt_refiner=not args.no_refiner,
+            use_glyph_injection=True,
+            injection_config=injection_config,
+            use_harmonization=not args.no_harmonize,
+            harmonizer_type=args.harmonizer_type,
+            klein_model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein",
+            qwenedit_model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen_edit_2511",
+        )
+        inference = ZImageInference(device=args.device, logger=logger)
 
     image = inference.generate(
         prompt=prompt,

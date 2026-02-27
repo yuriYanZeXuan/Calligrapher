@@ -113,12 +113,28 @@ class QwenImageInference:
 
     # ---- 延迟加载 ----
 
+    @staticmethod
+    def _register_qwen_classes():
+        """将 QwenImage 相关类注册到 diffusers 模块（0.29 兼容）。"""
+        import transformers.utils as _tu
+        if not hasattr(_tu, "FLAX_WEIGHTS_NAME"):
+            _tu.FLAX_WEIGHTS_NAME = "flax_model.msgpack"
+
+        import diffusers
+        if hasattr(diffusers, "QwenImagePipeline"):
+            return
+        from train.qwen_ip.pipeline_qwenimage import QwenImagePipeline
+        from train.qwen_ip.transformer import QwenTransformer2DModel
+        from train.qwen_ip.autoencoder_kl_qwenimage import AutoencoderKLQwenImage
+        diffusers.QwenImagePipeline = QwenImagePipeline
+        diffusers.QwenImageTransformer2DModel = QwenTransformer2DModel
+        diffusers.AutoencoderKLQwenImage = AutoencoderKLQwenImage
+
     @property
     def pipeline(self):
         if self._pipeline is None:
-            from train.qwen_ip.pipeline_qwenimage import QwenImagePipeline
+            self._register_qwen_classes()
             import diffusers
-            diffusers.QwenImagePipeline = QwenImagePipeline
             print(f"正在加载 QwenImage 模型到 {self.primary_device} (cpu_offload)...")
             self._pipeline = diffusers.DiffusionPipeline.from_pretrained(
                 self.model_path, torch_dtype=self.dtype,

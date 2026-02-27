@@ -150,7 +150,7 @@ class QwenImageInference:
 
         working_prompt = prompt
         if config.use_prompt_refiner:
-            working_prompt = prompt + " High quality, with clearly legible and well-positioned text."
+            working_prompt = prompt + ",horizontal text layout."
 
         generator = None
         if config.seed is not None:

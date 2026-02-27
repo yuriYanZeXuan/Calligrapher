@@ -244,7 +244,7 @@ class ZImageInference:
         # 1. Prompt 优化（确定性后缀，不经 VLM 改写，保证原始文本不变）
         working_prompt = prompt
         if config.use_prompt_refiner:
-            working_prompt = prompt + " High quality, with clearly legible and well-positioned text."
+            working_prompt = prompt + ",horizontal text layout."
             print(f"Refined prompt: {working_prompt[:120]}...")
 
         # 2. 普通生成（可能带 Glyph Injection 三阶段推理）

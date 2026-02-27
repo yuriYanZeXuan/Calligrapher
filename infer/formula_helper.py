@@ -766,12 +766,12 @@ def render_formula(
     2. matplotlib mathtext — 无需 Node.js，支持常用 LaTeX 子集
     3. PIL 纯文本 — 最后兜底
     """
-    text = _auto_linebreak(text)
-
     converted = plaintext_to_latex(text)
     use_latex = force_latex or is_latex(text) or (converted != text)
     if converted != text:
         text = converted
+
+    text = _auto_linebreak(text)
 
     if use_latex:
         img = render_mathjax(text, width, height, text_color, font_weight)

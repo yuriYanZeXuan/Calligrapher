@@ -387,18 +387,16 @@ class ZImageInference:
         # === 拼接所有阶段结果保存到 CAT_IMG ===
         self._save_candidates_concat(candidates)
 
-        # === VLM 基于文本准确度从 pass2 + 所有 pass3 变体中选优 ===
-        all_text = " ".join(
-            r["content"] for r in typography_plan.get("text_regions", []))
-        selection_pool = [("pass2_injection", pass2_image)]
+        # === OCR 评分选优：pass1 + pass2 + 所有 pass3 变体 ===
+        selection_pool = [("pass1_reference", candidates["pass1_reference"])]
+        selection_pool.append(("pass2_injection", pass2_image))
         selection_pool.extend(pass3_variants)
 
-        if len(selection_pool) > 1:
-            names, images = zip(*selection_pool)
-            best_idx = self.vlm_agent.select_best_text_match(list(images), all_text)
-            print(f"  VLM 文本准确度选优: {names[best_idx]}")
-            return images[best_idx]
-        return pass2_image
+        print(f"=== OCR 选优 ({len(selection_pool)} candidates) ===")
+        names, images = zip(*selection_pool)
+        best_idx = self.vlm_agent.select_best_text_match(list(images), prompt)
+        print(f"  OCR 选优结果: {names[best_idx]}")
+        return images[best_idx]
 
     def _prepare_noise(
         self, config: GenerationConfig, generator: Optional[torch.Generator],

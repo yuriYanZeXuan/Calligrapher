@@ -334,15 +334,13 @@ class QwenImageInference:
 
         self._save_candidates_concat(candidates)
 
-        # VLM 选优
-        all_text = " ".join(r["content"] for r in typography_plan.get("text_regions", []))
-        pool = [(k, v) for k, v in candidates.items() if k != "pass1_reference"]
-        if len(pool) > 1:
-            names, images = zip(*pool)
-            best_idx = self.vlm_agent.select_best_text_match(list(images), all_text)
-            print(f"  VLM 选优: {names[best_idx]}")
-            return images[best_idx]
-        return pool[-1][1] if pool else candidates.get("pass1_reference")
+        # OCR 评分选优：pass1 + pass2 + pass3
+        pool = list(candidates.items())
+        print(f"=== OCR 选优 ({len(pool)} candidates) ===")
+        names, images = zip(*pool)
+        best_idx = self.vlm_agent.select_best_text_match(list(images), prompt)
+        print(f"  OCR 选优结果: {names[best_idx]}")
+        return images[best_idx]
 
     # ---- Pass 2 去噪（QwenImage 特有的 packed latent + CFG） ----
 

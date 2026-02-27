@@ -723,12 +723,20 @@ _BREAK_PATTERNS = [
     r'(?<!\\)=(?!=)',
 ]
 
-def _auto_linebreak(text: str, min_len: int = 15) -> str:
-    """当文本较长时，在特定符号后插入 \\n 换行（统一标记，渲染层处理）。
+def _visual_len(text: str) -> int:
+    """估算 LaTeX 字符串的视觉字符宽度（去除标记后的长度）。"""
+    s = re.sub(r'\\[a-zA-Z]+', 'X', text)
+    s = re.sub(r'[{}^_$]', '', s)
+    return len(s)
 
+
+def _auto_linebreak(text: str, min_visual_len: int = 20) -> str:
+    """当文本视觉长度较长时，在特定符号后插入 \\n 换行（统一标记，渲染层处理）。
+
+    使用视觉长度（去除 LaTeX 标记）判断，避免短公式被误换行。
     只在第一个匹配位置断一次（拆成两行）。
     """
-    if len(text) < min_len:
+    if _visual_len(text) < min_visual_len:
         return text
 
     for pat in _BREAK_PATTERNS:

@@ -150,6 +150,17 @@ def _encode_image_b64(image: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _text_accuracy(ground_truth: str, recognized: str) -> float:
+    """计算文本准确度（对齐 eval/core/metrics.py 的 _compute_text_accuracy）。"""
+    import Levenshtein
+    gt = ' '.join(ground_truth.lower().split())
+    rec = ' '.join(recognized.lower().split())
+    if not gt:
+        return 1.0 if not rec else 0.0
+    distance = Levenshtein.distance(gt, rec)
+    return max(0.0, 1 - distance / len(gt))
+
+
 def _get_grid_font() -> ImageFont.FreeTypeFont:
     """获取用于网格坐标标注的字体。"""
     font_path = Path(__file__).parent.parent / "assets" / "Arial-Unicode-Bold.ttf"
@@ -528,37 +539,52 @@ class VLMAgent:
     def select_best_text_match(
         self,
         images: list[Image.Image],
-        expected_text: str,
+        prompt: str,
     ) -> int:
-        """选择文本渲染最准确的图像，返回 0-based 索引。"""
+        """用 OCR 评分选择文本渲染最准确的图像，返回 0-based 索引。
+
+        对齐 eval/core/metrics.py 的 evaluate_text_rendering 评分逻辑：
+        1. 从 prompt 中提取期望文本（引号内容）
+        2. 用 VLM OCR 识别每张图的文本
+        3. 用 Levenshtein 距离计算 text_accuracy
+        4. 返回得分最高的图像索引
+        """
         n = len(images)
         if n <= 1:
             return 0
 
-        parts: list[dict] = []
+        from eval.core.metrics import extract_text_from_prompt
+        ground_truth = extract_text_from_prompt(prompt)
+
+        ocr_prompt = (
+            "Please read and output ALL the text content visible in this image.\n"
+            "Only output the text you can see, nothing else. If there are multiple text elements, "
+            "separate them with spaces.\n"
+            "Do not add any explanations or descriptions, just the raw text content."
+        )
+
+        scores = []
         for i, img in enumerate(images):
             b64 = _encode_image_b64(img)
-            parts.append({"type": "text", "text": f"Image {i+1}:"})
-            parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+            response = self.client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    {"type": "text", "text": ocr_prompt},
+                ]}],
+                max_tokens=512,
+                temperature=0.0,
+            )
+            recognized = response.choices[0].message.content.strip()
+            if (recognized.startswith('"') and recognized.endswith('"')) or \
+               (recognized.startswith("'") and recognized.endswith("'")):
+                recognized = recognized[1:-1]
 
-        system_prompt = PROMPT_TEMPLATES["select_best_text_match"].format(
-            n=n, text=expected_text)
+            score = _text_accuracy(ground_truth, recognized)
+            scores.append(score)
+            print(f"  OCR 选优 [{i}]: score={score:.3f}, ocr=\"{recognized[:80]}\"")
 
-        response = self.client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": parts},
-            ],
-            max_tokens=16,
-            temperature=0.1,
-        )
-        raw = response.choices[0].message.content.strip()
-
-        nums = [int(x) for x in re.findall(r"\d+", raw)]
-        if nums and 1 <= nums[0] <= n:
-            return nums[0] - 1
-        return 0
+        return max(range(n), key=lambda i: scores[i])
 
     # ---- 图像排名 ----
 

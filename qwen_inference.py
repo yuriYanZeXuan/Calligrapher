@@ -373,6 +373,8 @@ class QwenImageInference:
         timesteps, _ = _retrieve_timesteps(pipe.scheduler, config.num_inference_steps, device, sigmas=sigmas, mu=mu)
 
         img_shapes = [[(1, latent_h // 2, latent_w // 2)]]
+        txt_seq_lens = [prompt_embeds.shape[1]]
+        neg_txt_seq_lens = [neg_embeds.shape[1]]
 
         # Guidance
         guidance = None
@@ -384,28 +386,26 @@ class QwenImageInference:
         for step_idx, t in enumerate(timesteps):
             timestep = t.expand(latent.shape[0]).to(latent.dtype)
 
-            with pipe.transformer.cache_context("cond"):
-                noise_pred = pipe.transformer(
+            noise_pred = pipe.transformer(
+                hidden_states=latent.to(dtype),
+                timestep=timestep / 1000,
+                guidance=guidance,
+                encoder_hidden_states=prompt_embeds,
+                txt_seq_lens=txt_seq_lens,
+                img_shapes=img_shapes,
+                return_dict=False,
+            )[0]
+
+            if config.true_cfg_scale > 1:
+                neg_pred = pipe.transformer(
                     hidden_states=latent.to(dtype),
                     timestep=timestep / 1000,
                     guidance=guidance,
-                    encoder_hidden_states_mask=prompt_embeds_mask,
-                    encoder_hidden_states=prompt_embeds,
+                    encoder_hidden_states=neg_embeds,
+                    txt_seq_lens=neg_txt_seq_lens,
                     img_shapes=img_shapes,
                     return_dict=False,
                 )[0]
-
-            if config.true_cfg_scale > 1:
-                with pipe.transformer.cache_context("uncond"):
-                    neg_pred = pipe.transformer(
-                        hidden_states=latent.to(dtype),
-                        timestep=timestep / 1000,
-                        guidance=guidance,
-                        encoder_hidden_states_mask=neg_mask,
-                        encoder_hidden_states=neg_embeds,
-                        img_shapes=img_shapes,
-                        return_dict=False,
-                    )[0]
                 comb = neg_pred + config.true_cfg_scale * (noise_pred - neg_pred)
                 cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
                 comb_norm = torch.norm(comb, dim=-1, keepdim=True)

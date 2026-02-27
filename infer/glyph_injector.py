@@ -157,7 +157,10 @@ class GlyphInjector:
         self.sample_tag = ""
         
         # VAE 缩放因子
-        self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1) if hasattr(vae, 'config') else 8
+        if hasattr(vae, 'config') and hasattr(vae.config, 'block_out_channels'):
+            self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+        else:
+            self.vae_scale_factor = getattr(vae, 'spatial_compression_ratio', 8)
         
     # 颜色名 → hex 映射（模板是黑底，深色映射到亮色保证可见）
     _COLOR_MAP = {

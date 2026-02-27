@@ -351,12 +351,10 @@ class GlyphInjector:
         Returns:
             每个时间步对应的 latent 列表
         """
+        noise = noise.to(device=latent_0.device, dtype=latent_0.dtype)
         latent_list = []
         for t in timesteps:
-            # 计算 sigma (归一化时间步)
             sigma = t.float() / 1000.0
-            
-            # Flow matching inversion
             z_t = (1 - sigma) * latent_0 + sigma * noise
             latent_list.append(z_t.clone())
         

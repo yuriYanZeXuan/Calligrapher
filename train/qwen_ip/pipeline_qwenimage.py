@@ -19,14 +19,29 @@ import numpy as np
 import torch
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
-from ...image_processor import VaeImageProcessor
-from ...loaders import QwenImageLoraLoaderMixin
-from ...models import AutoencoderKLQwenImage, QwenImageTransformer2DModel
-from ...schedulers import FlowMatchEulerDiscreteScheduler
-from ...utils import deprecate, is_torch_xla_available, logging, replace_example_docstring
-from ...utils.torch_utils import randn_tensor
-from ..pipeline_utils import DiffusionPipeline
-from .pipeline_output import QwenImagePipelineOutput
+import transformers.utils as _tu
+if not hasattr(_tu, "FLAX_WEIGHTS_NAME"):
+    _tu.FLAX_WEIGHTS_NAME = "flax_model.msgpack"
+
+from diffusers.image_processor import VaeImageProcessor
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from diffusers.utils import deprecate, is_torch_xla_available, logging, replace_example_docstring
+from diffusers.utils.torch_utils import randn_tensor
+from diffusers import DiffusionPipeline
+
+# diffusers 0.29 没有 QwenImage 专属类，用兼容占位
+import diffusers.loaders as _loaders
+import diffusers.models as _models
+QwenImageLoraLoaderMixin = getattr(_loaders, "QwenImageLoraLoaderMixin", object)
+AutoencoderKLQwenImage = getattr(_models, "AutoencoderKLQwenImage", object)
+QwenImageTransformer2DModel = getattr(_models, "QwenImageTransformer2DModel", object)
+
+from dataclasses import dataclass
+from diffusers.utils import BaseOutput
+
+@dataclass
+class QwenImagePipelineOutput(BaseOutput):
+    images: list
 
 
 if is_torch_xla_available():

@@ -155,11 +155,40 @@ _COMBINING_TO_LATEX = {
 
 
 def _check_node() -> bool:
-    """检测 Node.js 是否可用（结果缓存）。"""
+    """检测 Node.js 是否可用（结果缓存）。
+    
+    如果 PATH 中找不到 node，会探测常见安装路径并自动补充 PATH。
+    这解决了 conda activate 重置 PATH 导致 ~/.local/bin/node 丢失的问题。
+    """
     global _node_available
-    if _node_available is None:
-        _node_available = shutil.which("node") is not None
-    return _node_available
+    if _node_available is not None:
+        return _node_available
+
+    if shutil.which("node") is not None:
+        _node_available = True
+        return True
+
+    # PATH 中找不到，探测常见安装位置
+    home = os.path.expanduser("~")
+    fallback_dirs = [
+        os.path.join(home, ".local", "bin"),
+        os.path.join(home, ".nvm", "current", "bin"),
+        "/usr/local/bin",
+    ]
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        fallback_dirs.insert(0, os.path.join(conda_prefix, "bin"))
+
+    for d in fallback_dirs:
+        node_path = os.path.join(d, "node")
+        if os.path.isfile(node_path) and os.access(node_path, os.X_OK):
+            os.environ["PATH"] = d + ":" + os.environ.get("PATH", "")
+            print(f"[MathJax] 在 {d} 找到 node，已补充到 PATH")
+            _node_available = True
+            return True
+
+    _node_available = False
+    return False
 
 
 def _fix_sqrt_parens(text: str) -> str:

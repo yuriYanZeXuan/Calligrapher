@@ -777,17 +777,36 @@ class AestheticScoreMetrics:
 class HPSv3Metrics:
     """HPSv3 (Human Preference Score v3) based on Qwen2-VL."""
 
-    HPSV3_ROOT = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3 "
+    HPSV3_ROOT = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3"
 
     def __init__(self, device: str = "cuda",
-                 config_path: str | None = None,
-                 checkpoint_path: str | None = None):
+                 config_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3/config.json",
+                 checkpoint_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3/HPSv3.safetensors"):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
 
         import sys
         if self.HPSV3_ROOT not in sys.path:
             sys.path.insert(0, self.HPSV3_ROOT)
+
+        # Patch parse_args_with_yaml to fix transformers HfArgumentParser
+        # compatibility: newer transformers drops output_dir before it
+        # reaches TrainingConfig.
+        import hpsv3.utils.parser as _parser
+        _orig_fn = _parser.parse_args_with_yaml
+
+        def _patched(dataclass_types, config_path=None,
+                     allow_extra_keys=True, is_train=True):
+            from omegaconf import OmegaConf
+            from transformers import HfArgumentParser
+            args = OmegaConf.to_container(OmegaConf.load(config_path))
+            if not is_train:
+                args.pop('deepspeed', None)
+            args.setdefault('output_dir', '/tmp/hpsv3_eval')
+            parser = HfArgumentParser(dataclass_types)
+            return parser.parse_dict(args, allow_extra_keys=allow_extra_keys), config_path
+
+        _parser.parse_args_with_yaml = _patched
         from hpsv3 import HPSv3RewardInferencer
 
         self.inferencer = HPSv3RewardInferencer(
@@ -795,6 +814,7 @@ class HPSv3Metrics:
             checkpoint_path=checkpoint_path,
             device=device,
         )
+        _parser.parse_args_with_yaml = _orig_fn
         self.logger.info("HPSv3 initialized")
 
     def compute_score(self, image_path: str, prompt: str) -> float:

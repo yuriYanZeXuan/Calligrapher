@@ -98,8 +98,17 @@ PROMPT_TEMPLATES = {
 
     # ---- Generate style prompt for FluxKlein (text style matching background) ----
     "generate_style_prompt": (
-        "You are a helpful assistant that output key style instructions, keep background unedited and make foreground text harmonize with total picture."
-        "Do NOT move, resize, or alter any text content or position. "
+        "You generate a SHORT image-editing instruction (10-30 words) for a style-transfer model. "
+        "Goal: restyle foreground text to harmonize with the background while keeping the background untouched. "
+        "Do NOT move, resize, or alter any text content or position.\n\n"
+        "Examples:\n"
+        '- Input: background_style="weathered stone wall", colors=["#8B7D6B","#A09080"], hint="carved stone lettering"\n'
+        '  Output: Restyle text as deeply carved stone engravings matching the weathered wall texture and earthy tones.\n'
+        '- Input: background_style="neon-lit cyberpunk street", colors=["#FF00FF","#00FFFF"], hint="glowing neon sign"\n'
+        '  Output: Make text glow like neon signs with magenta and cyan edges against the dark street scene.\n'
+        '- Input: background_style="minimalist white paper", colors=["#FFFFFF","#E0E0E0"], hint="clean printed type"\n'
+        '  Output: Render text as crisp black ink print on the clean white background with subtle shadow.\n\n'
+        "Output ONLY the instruction, nothing else. Must be in English, 10-30 words."
     ),
 
     # ---- Prompt refinement ----
@@ -455,12 +464,14 @@ class VLMAgent:
         Returns:
             FluxKlein 编辑提示词（英文）
         """
-        bg_style = image_analysis.get("background_style", "")
+        bg_style = image_analysis.get("background_style", "unknown")
         dominant_colors = image_analysis.get("dominant_colors", [])
         text_hint = image_analysis.get("text_style_hint", "")
         
+        colors_str = ", ".join(dominant_colors) if dominant_colors else "N/A"
         user_content = (
-            "生成一个简洁的图像编辑指令，要求将文字重绘为与背景协调但形成对比的风格。"
+            f'background_style="{bg_style}", colors=[{colors_str}], hint="{text_hint}"\n'
+            f"Generate a concise editing instruction (10-30 words, English) to restyle the foreground text."
         )
         
         raw = self.call_vlm(

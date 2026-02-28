@@ -23,6 +23,19 @@ URL="https://nodejs.org/dist/${NODE_VERSION}/${TARBALL}"
 
 echo "=== 安装 Node.js ${NODE_VERSION} (${NODE_ARCH}) ==="
 
+# 确保 PATH 包含安装目录（无论是否已安装）
+export PATH="$INSTALL_DIR/bin:$PATH"
+
+# 持久化到所有 shell 启动文件（交互式 + 非交互式）
+for rc in "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile"; do
+    if [ -f "$rc" ] || [ "$rc" = "$HOME/.bashrc" ]; then
+        if ! grep -q "$INSTALL_DIR/bin" "$rc" 2>/dev/null; then
+            echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >> "$rc"
+            echo "已写入 $rc"
+        fi
+    fi
+done
+
 # 检查是否已安装
 if command -v node &>/dev/null; then
     echo "Node.js 已存在: $(node --version) at $(which node)"
@@ -38,14 +51,6 @@ else
     tar -xJf "$TMP/$TARBALL" -C "$INSTALL_DIR" --strip-components=1
 
     rm -rf "$TMP"
-
-    # 添加到 PATH（当前 session + bashrc）
-    export PATH="$INSTALL_DIR/bin:$PATH"
-    if ! grep -q "$INSTALL_DIR/bin" "$HOME/.bashrc" 2>/dev/null; then
-        echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >> "$HOME/.bashrc"
-        echo "已写入 ~/.bashrc"
-    fi
-
     echo "Node.js 安装完成: $(node --version)"
 fi
 

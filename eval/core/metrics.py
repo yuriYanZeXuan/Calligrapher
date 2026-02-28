@@ -344,12 +344,15 @@ class VLMMetrics:
         self.model = None
         self.processor = None
         self._api_client = None
+        self._fallback_client = None
         self._api_model = None
 
         if model_path == "ApiCall":
             self._init_api_backend()
         else:
             self._init_local_backend(model_path, device)
+
+    _FALLBACK_API_KEY = "MAASace45968cdbf4afeb71d07ecef846c94"
 
     # ---- backend initialisation ----
 
@@ -365,6 +368,7 @@ class VLMMetrics:
             return
 
         self._api_client = OpenAI(api_key=api_key, base_url=base_url)
+        self._fallback_client = OpenAI(api_key=self._FALLBACK_API_KEY, base_url=base_url)
         self._api_model = "qwen3-vl-235b-a22b-instruct"
         self.available = True
         self.logger.info(f"VLM ApiCall backend ready (model={self._api_model})")
@@ -407,19 +411,29 @@ class VLMMetrics:
                 {"type": "text", "text": text_prompt},
             ],
         }]
-        while True:
+        call_kwargs = dict(
+            model=self._api_model, messages=messages,
+            stream=False, max_tokens=max_tokens, temperature=0.0,
+        )
+        max_retries = 5
+        for attempt in range(max_retries + 1):
             try:
-                resp = self._api_client.chat.completions.create(
-                    model=self._api_model,
-                    messages=messages,
-                    stream=False,
-                    max_tokens=max_tokens,
-                    temperature=0.0,
-                )
+                resp = self._api_client.chat.completions.create(**call_kwargs)
                 return resp.choices[0].message.content.strip()
-            except Exception as e:
-                self.logger.warning(f"VLM API call failed: {e}, retrying in 30s...")
-                time.sleep(30)
+            except Exception as e1:
+                self.logger.warning(f"VLM primary key failed (attempt {attempt + 1}/{max_retries}): {e1}")
+
+            if self._fallback_client is not None:
+                try:
+                    resp = self._fallback_client.chat.completions.create(**call_kwargs)
+                    return resp.choices[0].message.content.strip()
+                except Exception as e2:
+                    self.logger.warning(f"VLM fallback key also failed: {e2}")
+
+            if attempt == max_retries:
+                raise RuntimeError(f"VLM API: both keys failed after {max_retries} retries")
+            self.logger.info("VLM API: retrying in 30s...")
+            time.sleep(30)
 
     def _call_vlm_local(self, image: Image.Image, text_prompt: str, max_tokens: int) -> str:
         messages = [{"role": "user", "content": [
@@ -617,8 +631,13 @@ class VQAScoreMetrics:
         self.device = device
         self.available = False
         
-        # Import local VQAScore from TextCrafter_Eval
-        from eval.TextCrafter_Eval.vqascore import VQAScore
+        from pathlib import Path
+        import importlib.util
+        _vqa_path = Path(__file__).resolve().parent.parent / "TextCrafter_Eval" / "vqascore.py"
+        _spec = importlib.util.spec_from_file_location("vqascore", _vqa_path)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        VQAScore = _mod.VQAScore
         self.vqa_model = VQAScore(model=model, device=device)
         
         self.available = True
@@ -825,14 +844,31 @@ def main():
     txt="阳光明媚的广场上挤满了热闹的户外集市，充满活力的购物人群在色彩斑斓的摊位间穿梭。在这个充满动感的市场场景中央，一个醒目的大型木质招牌悬挂在一个热门摊位上方，温暖的笔触清晰展示着“新鲜农场 当地土特产”的字样。在主标题下方，优雅简洁的标语鼓励性地写着“品尝最自然的农产品”，并附上诱人的优惠信息“特价：今日有机农产品九折！”。摊位周围艺术地散落着小型手写风格的黑板牌，清晰展示着吸引人的附加信息，如“提供显现的苹果，草莓，有机蔬菜”等，进一步吸引好奇的游客驻足。购物者们常驻足细读这些生动呈现的招牌文字，在热闹的集市氛围中增添了温暖与真实感。"
     img_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/samples/result_longtext_zh_12.png"
     # Test VLM metrics
-    vlm = VLMMetrics(model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B", device="cuda")
-    image = Image.open(img_path).convert('RGB')
-    result = vlm.evaluate_text_rendering(image, txt)
-    print("VLM Evaluation Result:")
-    print(f"  Text Accuracy: {result.get('text_accuracy', 0.0):.4f}")
-    print(f"  Image Quality: {result.get('image_quality', 0.0):.4f}")
-    print(f"  Overall Score: {result.get('overall', 0.0):.4f}")
-    print(f"  Text NED: {result.get('text_ned', 0.0):.4f}")
+    # vlm = VLMMetrics(model_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Qwen25VL-7B", device="cuda")
+    # image = Image.open(img_path).convert('RGB')
+    # result = vlm.evaluate_text_rendering(image, txt)
+    # print("VLM Evaluation Result:")
+    # print(f"  Text Accuracy: {result.get('text_accuracy', 0.0):.4f}")
+    # print(f"  Image Quality: {result.get('image_quality', 0.0):.4f}")
+    # print(f"  Overall Score: {result.get('overall', 0.0):.4f}")
+    # print(f"  Text NED: {result.get('text_ned', 0.0):.4f}")
+
+    # Test VQA Score
+    print("\n--- VQA Score Test ---")
+    vqa = VQAScoreMetrics(model='clip-flant5-xxl', device='cuda')
+
+    score = vqa.compute_score(img_path, txt)
+    print(f"  Single score: {score:.4f}")
+
+    scores = vqa.compute_batch(
+        [img_path, img_path],
+        [txt, "a blank white image with nothing on it"],
+    )
+    print(f"  Batch scores: {scores}")
+    assert abs(scores[0] - score) < 1e-4, "Batch/single score mismatch!"
+    print("  PASS: batch/single consistency")
+    assert scores[0] != scores[1], "Different texts should yield different scores"
+    print("  PASS: discriminability check")
 
 if __name__ == "__main__":
     main()

@@ -777,23 +777,17 @@ class AestheticScoreMetrics:
 class HPSv3Metrics:
     """HPSv3 (Human Preference Score v3) based on Qwen2-VL."""
 
-    HPSV3_ROOT = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3"
-
     def __init__(self, device: str = "cuda",
                  config_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3/config.json",
                  checkpoint_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3/HPSv3.safetensors"):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
 
-        import sys
-        if self.HPSV3_ROOT not in sys.path:
-            sys.path.insert(0, self.HPSV3_ROOT)
+        import hpsv3.inference as _hpsv3_inf
 
-        # Patch parse_args_with_yaml to fix transformers HfArgumentParser
-        # compatibility: newer transformers drops output_dir before it
-        # reaches TrainingConfig.
-        import hpsv3.utils.parser as _parser
-        _orig_fn = _parser.parse_args_with_yaml
+        # Patch the module-level reference in hpsv3.inference so that
+        # HPSv3RewardInferencer.__init__ picks up the fixed version.
+        _orig_fn = _hpsv3_inf.parse_args_with_yaml
 
         def _patched(dataclass_types, config_path=None,
                      allow_extra_keys=True, is_train=True):
@@ -806,15 +800,15 @@ class HPSv3Metrics:
             parser = HfArgumentParser(dataclass_types)
             return parser.parse_dict(args, allow_extra_keys=allow_extra_keys), config_path
 
-        _parser.parse_args_with_yaml = _patched
-        from hpsv3 import HPSv3RewardInferencer
+        _hpsv3_inf.parse_args_with_yaml = _patched
 
-        self.inferencer = HPSv3RewardInferencer(
+        self.inferencer = _hpsv3_inf.HPSv3RewardInferencer(
             config_path=config_path,
             checkpoint_path=checkpoint_path,
             device=device,
         )
-        _parser.parse_args_with_yaml = _orig_fn
+
+        _hpsv3_inf.parse_args_with_yaml = _orig_fn
         self.logger.info("HPSv3 initialized")
 
     def compute_score(self, image_path: str, prompt: str) -> float:

@@ -253,6 +253,7 @@ class ZImageInference:
             generator = torch.Generator(device=self.primary_device).manual_seed(config.seed)
 
         has_text = (text_contents and len(text_contents) > 0) or (text_regions and len(text_regions) > 0)
+        self._last_clean_prompt = None
 
         if config.use_glyph_injection and has_text:
             image = self._generate_with_injection(
@@ -353,6 +354,7 @@ class ZImageInference:
         # === Pass 2: Clean 背景生成 + 像素空间字形合成 ===
         print("=== Pass 2: Clean 推理 + 像素空间字形合成 ===")
         clean_prompt = self.vlm_agent.generate_clean_prompt(prompt, typography_plan)
+        self._last_clean_prompt = clean_prompt
         print(f"Clean prompt: {clean_prompt}...")
 
         image_size = (config.width, config.height)

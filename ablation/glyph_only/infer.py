@@ -122,6 +122,7 @@ class GlyphOnlyInference:
         seed: int = 42,
         run_name: str | None = None,
     ) -> Image.Image:
+        self._last_clean_prompt = None
         if not text_contents:
             return self._gen_image(prompt, seed)
 
@@ -136,6 +137,7 @@ class GlyphOnlyInference:
         # Clean prompt → 背景
         print("=== [GlyphOnly] Clean background ===")
         clean_prompt = self.vlm.generate_clean_prompt(prompt, plan)
+        self._last_clean_prompt = clean_prompt
         bg = self._gen_image(clean_prompt, seed)
 
         # 字形渲染 + 像素粘贴

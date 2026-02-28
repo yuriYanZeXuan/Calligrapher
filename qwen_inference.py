@@ -206,6 +206,7 @@ class QwenImageInference:
             generator = torch.Generator(device="cpu").manual_seed(config.seed)
 
         has_text = (text_contents and len(text_contents) > 0) or (text_regions and len(text_regions) > 0)
+        self._last_clean_prompt = None
 
         if config.use_glyph_injection and has_text:
             image = self._generate_with_injection(
@@ -276,6 +277,7 @@ class QwenImageInference:
         # Pass 2: Clean 推理 + 字形注入
         print("=== Pass 2: Clean 推理 + 字形合成 ===")
         clean_prompt = self.vlm_agent.generate_clean_prompt(prompt, typography_plan)
+        self._last_clean_prompt = clean_prompt
         print(f"Clean prompt: {clean_prompt}...")
 
         # 准备噪声和注入数据

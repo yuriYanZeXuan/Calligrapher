@@ -57,6 +57,8 @@ METRIC_FIELDS = {
     'ocr': ['ocr_acc', 'ocr_ned'],
     'clip': ['clip_score'],
     'vlm': ['vlm_text_accuracy', 'vlm_text_ned', 'vlm_image_quality', 'vlm_faithfulness', 'vlm_overall'],
+    'vlm_quality': ['VLM_printed_like', 'VLM_sharpness', 'VLM_OCR_friendly'],
+    'hpsv3': ['hpsv3_score'],
     'aesthetic': ['aesthetic_score'],
 }
 
@@ -332,6 +334,22 @@ def append_or_update_result(output_path: str, sample_id: str, updates: Dict, loc
             fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
+def load_detail_lookup(results_dir: str) -> Dict[str, Dict]:
+    """Load detail.jsonl from results_dir as a dict mapping result_id → detail entry."""
+    detail_path = os.path.join(results_dir, "detail.jsonl")
+    lookup = {}
+    if not os.path.exists(detail_path):
+        return lookup
+    with open(detail_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            lookup[entry["id"]] = entry
+    return lookup
+
+
 def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict], 
                             output_path: str, metric: str, existing_results: Dict[str, Dict]):
     """Worker function for evaluating a single metric across assigned samples."""
@@ -350,10 +368,13 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
         print(f"[GPU {rank}] No samples assigned for metric '{metric}'")
         return
     
+    # Load detail.jsonl for real_prompt lookup (CLIP/VQA use real_prompt when available)
+    detail_lookup = load_detail_lookup(args.results_dir) if hasattr(args, 'results_dir') else {}
+    
     print(f"[GPU {rank}] Evaluating metric '{metric}' on {len(my_dataset)} samples")
     
     # Initialize only the needed evaluator
-    from eval.core.metrics import OCRMetrics, CLIPMetrics, VLMMetrics, VQAScoreMetrics, AestheticScoreMetrics
+    from eval.core.metrics import OCRMetrics, CLIPMetrics, VLMMetrics, VQAScoreMetrics, AestheticScoreMetrics, HPSv3Metrics
     
     evaluator = None
     if metric == 'vqa':
@@ -362,8 +383,10 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
         evaluator = OCRMetrics(model_path=args.mineru_path)
     elif metric == 'clip':
         evaluator = CLIPMetrics(device=device)
-    elif metric == 'vlm':
+    elif metric in ('vlm', 'vlm_quality'):
         evaluator = VLMMetrics(model_path=args.vlm_path, device=device)
+    elif metric == 'hpsv3':
+        evaluator = HPSv3Metrics(device=device)
     elif metric == 'aesthetic':
         evaluator = AestheticScoreMetrics(device=device)
     
@@ -390,9 +413,14 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
             'image_path': image_path,
         }
         
+        # Use real_prompt from detail.jsonl for CLIP/VQA when available
+        detail_key = f"result_{sample_id}"
+        detail_entry = detail_lookup.get(detail_key, {})
+        eval_prompt = detail_entry.get('real_prompt', sample['prompt'])
+        
         try:
             if metric == 'vqa':
-                score = evaluator.compute_score(image_path, sample['prompt'])
+                score = evaluator.compute_score(image_path, eval_prompt)
                 updates['vqa_score'] = round(float(score), 4)
             
             elif metric == 'ocr':
@@ -404,7 +432,7 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
                 updates['ocr_ned'] = round(ocr_metrics['ocr_ned'], 4)
             
             elif metric == 'clip':
-                score = evaluator.compute_clip_score(image_path, sample['prompt'])
+                score = evaluator.compute_clip_score(image_path, eval_prompt)
                 updates['clip_score'] = round(float(score), 2)
             
             elif metric == 'vlm':
@@ -415,6 +443,17 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
                 updates['vlm_image_quality'] = round(vlm_result['image_quality'], 4)
                 updates['vlm_faithfulness'] = round(vlm_result['faithfulness'], 4)
                 updates['vlm_overall'] = round(vlm_result['overall'], 4)
+            
+            elif metric == 'vlm_quality':
+                image = Image.open(image_path).convert('RGB')
+                vlm_q = evaluator.evaluate_vlm_quality(image)
+                updates['VLM_printed_like'] = round(vlm_q['VLM_printed_like'], 4)
+                updates['VLM_sharpness'] = round(vlm_q['VLM_sharpness'], 4)
+                updates['VLM_OCR_friendly'] = round(vlm_q['VLM_OCR_friendly'], 4)
+            
+            elif metric == 'hpsv3':
+                score = evaluator.compute_score(image_path, eval_prompt)
+                updates['hpsv3_score'] = round(float(score), 4)
             
             elif metric == 'aesthetic':
                 score = evaluator.compute_score(image_path)
@@ -539,6 +578,17 @@ def compute_summary(output_path: str) -> Dict:
                 'count': len(scores),
             }
 
+    # VLM quality summary (printed_like / sharpness / OCR_friendly)
+    for vq_key in ['VLM_printed_like', 'VLM_sharpness', 'VLM_OCR_friendly']:
+        vals = [r[vq_key] for r in results if vq_key in r]
+        if vals:
+            summary[vq_key] = {
+                'mean': round(sum(vals) / len(vals), 4),
+                'min': round(min(vals), 4),
+                'max': round(max(vals), 4),
+                'count': len(vals),
+            }
+
     # VQA summary
     vqa_scores = [r['vqa_score'] for r in results if 'vqa_score' in r]
     if vqa_scores:
@@ -547,6 +597,16 @@ def compute_summary(output_path: str) -> Dict:
             'min': round(min(vqa_scores), 4),
             'max': round(max(vqa_scores), 4),
             'count': len(vqa_scores)
+        }
+
+    # HPSv3 summary
+    hpsv3_scores = [r['hpsv3_score'] for r in results if 'hpsv3_score' in r]
+    if hpsv3_scores:
+        summary['hpsv3'] = {
+            'mean': round(sum(hpsv3_scores) / len(hpsv3_scores), 4),
+            'min': round(min(hpsv3_scores), 4),
+            'max': round(max(hpsv3_scores), 4),
+            'count': len(hpsv3_scores)
         }
 
     # Aesthetic summary
@@ -586,7 +646,8 @@ def compute_summary(output_path: str) -> Dict:
         if cat_vqa:
             cat_summary['vqa_mean'] = round(sum(cat_vqa) / len(cat_vqa), 4)
             
-        for vlm_key in ['vlm_text_accuracy', 'vlm_text_ned', 'vlm_image_quality', 'vlm_faithfulness', 'vlm_overall']:
+        for vlm_key in ['vlm_text_accuracy', 'vlm_text_ned', 'vlm_image_quality', 'vlm_faithfulness', 'vlm_overall',
+                        'VLM_printed_like', 'VLM_sharpness', 'VLM_OCR_friendly', 'hpsv3_score']:
             vals = [r[vlm_key] for r in cat_results if vlm_key in r]
             if vals:
                 cat_summary[f'{vlm_key}_mean'] = round(sum(vals) / len(vals), 4)
@@ -617,7 +678,7 @@ def main():
     parser.add_argument('--vlm_path', type=str, default=DEFAULT_VLM_PATH,
                        help='Path to local Qwen2.5-VL model')
     parser.add_argument('--metrics', nargs='+', default=['vqa', 'ocr', 'clip'],
-                       choices=['ocr', 'clip', 'vlm', 'vqa', 'aesthetic'],
+                       choices=['ocr', 'clip', 'vlm', 'vlm_quality', 'vqa', 'hpsv3', 'aesthetic'],
                        help='Metrics to compute (evaluated in order specified)')
     parser.add_argument('--gpus', type=int, default=8,
                        help='Number of GPUs to use')

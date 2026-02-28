@@ -563,6 +563,45 @@ class VLMMetrics:
         result = self.evaluate_text_rendering(image, text)
         return result.get("text_accuracy", 0.0), result.get("text_ned", 0.0)
 
+    def evaluate_vlm_quality(self, image: Image.Image) -> Dict[str, float]:
+        """Evaluate three VLM-based text rendering quality dimensions.
+
+        Returns:
+            Dict with keys: VLM_printed_like, VLM_sharpness, VLM_OCR_friendly
+            Each score normalised to [0, 1].
+        """
+        if not self.available:
+            return {"VLM_printed_like": 0.0, "VLM_sharpness": 0.0, "VLM_OCR_friendly": 0.0}
+
+        image = self._prepare_image(image)
+
+        prompt = (
+            "You are evaluating the quality of text rendered inside a generated image.\n"
+            "Rate the following three aspects independently on a 0-10 scale.\n\n"
+            "1. Printed-like: Does the text look like professionally printed/typeset text "
+            "(as opposed to hand-drawn, blurry, or distorted text)?\n"
+            "2. Sharpness: Are the text edges crisp, clear, and free from artifacts, "
+            "blur, or aliasing?\n"
+            "3. OCR-friendly: Could an OCR engine reliably read the text? Consider "
+            "character spacing, contrast against background, and absence of overlapping elements.\n\n"
+            "Respond with EXACTLY three numbers separated by commas, nothing else. "
+            "Example: 8, 7, 9"
+        )
+
+        response = self._call_vlm(image, prompt, max_tokens=30)
+
+        import re
+        numbers = re.findall(r'\d+\.?\d*', response)
+        scores = [0.0, 0.0, 0.0]
+        for i, n in enumerate(numbers[:3]):
+            scores[i] = min(10.0, max(0.0, float(n))) / 10.0
+
+        return {
+            "VLM_printed_like": scores[0],
+            "VLM_sharpness": scores[1],
+            "VLM_OCR_friendly": scores[2],
+        }
+
 
 class VQAScoreMetrics:
     """VQA Score metrics using local VQAScore implementation."""
@@ -734,6 +773,39 @@ class AestheticScoreMetrics:
             scores.append(score)
         
         return scores
+
+class HPSv3Metrics:
+    """HPSv3 (Human Preference Score v3) based on Qwen2-VL."""
+
+    HPSV3_ROOT = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3 "
+
+    def __init__(self, device: str = "cuda",
+                 config_path: str | None = None,
+                 checkpoint_path: str | None = None):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.device = device
+
+        import sys
+        if self.HPSV3_ROOT not in sys.path:
+            sys.path.insert(0, self.HPSV3_ROOT)
+        from hpsv3 import HPSv3RewardInferencer
+
+        self.inferencer = HPSv3RewardInferencer(
+            config_path=config_path,
+            checkpoint_path=checkpoint_path,
+            device=device,
+        )
+        self.logger.info("HPSv3 initialized")
+
+    def compute_score(self, image_path: str, prompt: str) -> float:
+        """Return the HPSv3 mu score for one image-prompt pair."""
+        rewards = self.inferencer.reward([prompt], [image_path])
+        return float(rewards[0][0].item())
+
+    def compute_batch(self, image_paths: List[str], prompts: List[str]) -> List[float]:
+        rewards = self.inferencer.reward(prompts, image_paths)
+        return [float(r[0].item()) for r in rewards]
+
 
 def main():
     txt="阳光明媚的广场上挤满了热闹的户外集市，充满活力的购物人群在色彩斑斓的摊位间穿梭。在这个充满动感的市场场景中央，一个醒目的大型木质招牌悬挂在一个热门摊位上方，温暖的笔触清晰展示着“新鲜农场 当地土特产”的字样。在主标题下方，优雅简洁的标语鼓励性地写着“品尝最自然的农产品”，并附上诱人的优惠信息“特价：今日有机农产品九折！”。摊位周围艺术地散落着小型手写风格的黑板牌，清晰展示着吸引人的附加信息，如“提供显现的苹果，草莓，有机蔬菜”等，进一步吸引好奇的游客驻足。购物者们常驻足细读这些生动呈现的招牌文字，在热闹的集市氛围中增添了温暖与真实感。"

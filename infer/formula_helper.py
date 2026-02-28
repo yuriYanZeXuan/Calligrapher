@@ -913,3 +913,38 @@ def get_font_candidates(text: str, n: int = 3) -> list[str]:
         if len(resolved) >= n:
             break
     return resolved
+
+
+# ============ 字体注册表 ============
+
+
+_FONT_REGISTRY: _Opt[dict[str, str]] = None
+
+_FONT_SCAN_DIRS = [
+    Path(_BUNDLED_FONT_DIR),
+    _ANYTEXT_FONT_BASE / "font" / "lang_font",
+    _ANYTEXT_FONT_BASE / "font" / "fontlib" / "googlefont",
+    _ANYTEXT_FONT_BASE / "font" / "fontlib" / "wordart",
+]
+
+
+def get_font_registry() -> dict[str, str]:
+    """返回 {字体名: 路径} 注册表（惰性构建，扫描所有已知字体目录）。"""
+    global _FONT_REGISTRY
+    if _FONT_REGISTRY is None:
+        registry = {}
+        for d in _FONT_SCAN_DIRS:
+            if not d.exists():
+                continue
+            for f in sorted(d.iterdir()):
+                if f.suffix.lower() in (".ttf", ".ttc", ".otf") and f.stem not in registry:
+                    registry[f.stem] = str(f)
+        _FONT_REGISTRY = registry
+    return _FONT_REGISTRY
+
+
+def resolve_font_name(name: _Opt[str]) -> _Opt[str]:
+    """将字体名解析为路径。返回 None 表示使用默认字体。"""
+    if not name or name == "auto":
+        return None
+    return get_font_registry().get(name)

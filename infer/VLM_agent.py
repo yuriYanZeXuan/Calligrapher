@@ -5,7 +5,7 @@ VLM Agent: 统一的 VLM 调用中心
 提供 Agent 式的排版分析、prompt 改写、图像评分等功能。
 
 设计原则:
-- 不使用 try-except fallback，调用失败直接抛异常
+- API 调用失败时自动重试（最多 5 次，间隔 30s），耗尽后抛异常
 - 所有 prompt 模板用全局字典 PROMPT_TEMPLATES 维护
 - VLMAgent 类封装所有 VLM 交互逻辑
 """
@@ -13,6 +13,7 @@ VLM Agent: 统一的 VLM 调用中心
 import os
 import re
 import json
+import time
 import base64
 from io import BytesIO
 from pathlib import Path
@@ -42,6 +43,7 @@ PROMPT_TEMPLATES = {
         "For each text block, determine:\n"
         "- content: the text to render (one line per block)\n"
         "- bbox: [x_min, y_min, x_max, y_max] in 0-1 range. MUST be flat/horizontal with y_min ≈ constant across width (frontal view, no perspective tilting)\n"
+        "- font: font name from available list below, or \"auto\" for default. Choose a font that matches the scene style\n"
         "- font_weight: light/regular/bold\n"
         "- font_size_ratio: 0.1-1.0 relative to bbox height\n"
         "- color: one of [white, black, red, blue, green, yellow, orange, brown, gray, gold, silver, purple, pink]\n"
@@ -50,6 +52,7 @@ PROMPT_TEMPLATES = {
         "- rotation: text rotation angle in degrees. 0 = horizontal (left to right). "
         "Positive = counter-clockwise (tilting upper-right ↗). Negative = clockwise (tilting lower-right ↘). "
         "Typical range: -30 to 30. Use 0 for most horizontal text.\n\n"
+        "Available fonts: {{font_list}}\n\n"
         "Rules:\n"
         "- bboxes must not overlap or exceed image bounds\n"
         "- bboxes must be FLAT and FACING the screen (y_min approximately equal for left and right sides, same for y_max)\n"
@@ -68,6 +71,7 @@ PROMPT_TEMPLATES = {
         '    {{\n'
         '      "content": "text",\n'
         '      "bbox": [x_min, y_min, x_max, y_max],\n'
+        '      "font": "auto",\n'
         '      "font_weight": "regular",\n'
         '      "font_size_ratio": 0.7,\n'
         '      "color": "white",\n'
@@ -276,7 +280,7 @@ class VLMAgent:
     """统一的 VLM 调用接口
 
     集中管理所有 VLM/LLM 交互：排版分析、prompt 改写、图像评分等。
-    不使用 try-except fallback，调用失败直接向上层抛出异常。
+    API 调用失败时自动重试（最多 5 次，间隔 30s），耗尽后向上层抛出异常。
     """
 
     def __init__(
@@ -337,17 +341,26 @@ class VLMAgent:
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
                 )
 
-        response = self.client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_parts},
-            ],
-            stream=False,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        return response.choices[0].message.content
+        max_retries = 5
+        for attempt in range(max_retries + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_parts},
+                    ],
+                    stream=False,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                if attempt == max_retries:
+                    raise
+                print(f"[VLM] 请求失败 (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"[VLM] 30s 后重试...")
+                time.sleep(30)
 
     # ---- 排版分析（核心）----
 
@@ -380,12 +393,17 @@ class VLMAgent:
             f"图像上的红色网格线和坐标标注可以帮助你精确定位文本区域。"
         )
 
+        from .formula_helper import get_font_registry
+        font_names = sorted(get_font_registry().keys())
+        font_list = ", ".join(font_names) if font_names else "auto only"
+
         raw = self.call_vlm(
             "analyze_typography",
             user_content,
-            images=[image_with_grid],  # 传入带网格的图像
+            images=[image_with_grid],
             max_tokens=2048,
             temperature=0.3,
+            font_list=font_list,
         )
         return _extract_json_from_response(raw)
 

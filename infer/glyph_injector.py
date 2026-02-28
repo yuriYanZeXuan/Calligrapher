@@ -26,6 +26,7 @@ from .formula_helper import (
     render_formula,
     get_available_font,
     calculate_font_size,
+    resolve_font_name,
 )
 
 
@@ -409,12 +410,14 @@ class GlyphInjector:
             if region_width <= 2 or region_height <= 2:
                 print(f"  [DIAG] region {i} bbox 退化: bbox={bbox} → {region_width}x{region_height}px, content=\"{content[:30]}\"")
 
+            font_path = region_spec.get("font_path") or resolve_font_name(region_spec.get("font"))
+
             text_img = self.render_text_template(
                 content, region_width, region_height,
                 text_color=color,
                 force_latex=region_spec.get("is_latex", False),
                 font_weight=region_spec.get("font_weight", "regular"),
-                font_path=region_spec.get("font_path"),
+                font_path=font_path,
                 rotation=region_spec.get("rotation", 0),
             )
 
@@ -501,12 +504,14 @@ class GlyphInjector:
             x2, y2 = int(bbox[2] * width), int(bbox[3] * height)
             rw, rh = max(x2 - x1, 1), max(y2 - y1, 1)
 
+            font_path = region_spec.get("font_path") or resolve_font_name(region_spec.get("font"))
+
             text_img = self.render_text_template(
                 content, rw, rh,
                 text_color=region_spec.get("color", "#FFFFFF"),
                 force_latex=region_spec.get("is_latex", False),
                 font_weight=region_spec.get("font_weight", "regular"),
-                font_path=region_spec.get("font_path"),
+                font_path=font_path,
                 rotation=region_spec.get("rotation", 0),
             )
             if text_img.size != (rw, rh):

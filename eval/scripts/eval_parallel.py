@@ -77,6 +77,7 @@ def load_longtext_benchmark(benchmark_path: str) -> List[Dict]:
     for jsonl_file in jsonl_files:
         lang_prefix = 'zh' if 'zh' in jsonl_file.name else 'en'
         
+        file_prefix = os.path.splitext(os.path.basename(jsonl_file))[0]
         with open(jsonl_file, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
@@ -87,6 +88,7 @@ def load_longtext_benchmark(benchmark_path: str) -> List[Dict]:
                 sample_id = f"longtext_{lang_prefix}_{prompt_id}"
                 samples.append({
                     'id': sample_id,
+                    '_source': file_prefix,
                     'prompt': item.get('prompt', ''),
                     'text': item.get('text', []),
                     'category': item.get('category', ''),
@@ -162,7 +164,11 @@ def load_cvtg_benchmark(benchmark_path: str) -> List[Dict]:
 
 
 def load_unseenwords_benchmark(benchmark_path: str) -> List[Dict]:
-    """Load UnseenWords benchmark data from jsonl files."""
+    """Load UnseenWords benchmark data from jsonl files.
+    
+    Each sample is tagged with '_source' = filename stem (e.g. 'unseen_en')
+    so results can be split back into per-file outputs later.
+    """
     import glob
     samples = []
     
@@ -183,6 +189,7 @@ def load_unseenwords_benchmark(benchmark_path: str) -> List[Dict]:
                 sample_id = f"{file_prefix}_{prompt_id}"
                 samples.append({
                     'id': sample_id,
+                    '_source': file_prefix,
                     'prompt': item.get('prompt', ''),
                     'text': item.get('text', []),
                     'category': item.get('category', ''),
@@ -368,8 +375,12 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
         print(f"[GPU {rank}] No samples assigned for metric '{metric}'")
         return
     
-    # Load detail.jsonl for real_prompt lookup (CLIP/VQA use real_prompt when available)
-    detail_lookup = load_detail_lookup(args.results_dir) if hasattr(args, 'results_dir') else {}
+    # Cache detail.jsonl lookups per results_dir (for multi-dir mode)
+    _detail_cache: Dict[str, Dict] = {}
+    def get_detail_lookup(rdir: str) -> Dict[str, Dict]:
+        if rdir not in _detail_cache:
+            _detail_cache[rdir] = load_detail_lookup(rdir)
+        return _detail_cache[rdir]
     
     print(f"[GPU {rank}] Evaluating metric '{metric}' on {len(my_dataset)} samples")
     
@@ -398,23 +409,24 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
     
     for sample in my_dataset:
         sample_id = sample['id']
+        # Multi-dir mode: use per-sample dir & original id for image lookup
+        sample_results_dir = sample.get('_results_dir', args.results_dir)
+        original_id = sample.get('_original_id', sample_id)
         
-        # Find image
-        image_path = find_result_image(args.results_dir, sample_id)
+        image_path = find_result_image(sample_results_dir, original_id)
         if not image_path:
             updates = {'error': 'Image not found'}
             append_or_update_result(output_path, sample_id, updates, lock_file)
             continue
         
-        # Prepare updates dict
         updates = {
             'prompt': sample['prompt'],
             'category': sample.get('category', ''),
             'image_path': image_path,
         }
         
-        # Use real_prompt from detail.jsonl for CLIP/VQA when available
-        detail_key = f"result_{sample_id}"
+        detail_lookup = get_detail_lookup(sample_results_dir)
+        detail_key = f"result_{original_id}"
         detail_entry = detail_lookup.get(detail_key, {})
         eval_prompt = detail_entry.get('real_prompt', sample['prompt'])
         
@@ -661,18 +673,94 @@ def compute_summary(output_path: str) -> Dict:
     return summary
 
 
+def split_results_by_source(output_path: str, dataset: List[Dict], split_dir: str):
+    """Split merged results into per-source-file outputs.
+    
+    Uses the '_source' tag on each dataset sample to determine which output
+    file a result belongs to. Output filenames match the original source
+    (e.g. unseen_en.jsonl).
+    """
+    source_map: Dict[str, str] = {}
+    for sample in dataset:
+        source_map[sample['id']] = sample.get('_source', '_unknown')
+
+    results = load_existing_results(output_path)
+    buckets: Dict[str, list] = {}
+    for sample_id, result in results.items():
+        source = source_map.get(sample_id, '_unknown')
+        buckets.setdefault(source, []).append(result)
+
+    os.makedirs(split_dir, exist_ok=True)
+    for source, entries in sorted(buckets.items()):
+        out_path = os.path.join(split_dir, f"{source}.jsonl")
+        with open(out_path, 'w', encoding='utf-8') as f:
+            for entry in entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        
+        summary = compute_summary(out_path)
+        summary_path = out_path.replace('.jsonl', '_summary.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        print(f"  {source}: {len(entries)} samples -> {out_path}")
+
+    print(f"Split into {len(buckets)} files in {split_dir}")
+
+
+def split_merged_to_per_dir(merged_output: str, dir_tags: Dict[str, str]):
+    """Split a merged eval output back into per-results_dir output files.
+    
+    Args:
+        merged_output: Path to the merged eval_detail.jsonl
+        dir_tags: Mapping from dir_tag (e.g. 'd0') to results_dir path
+    """
+    results = load_existing_results(merged_output)
+
+    # Group results by dir_tag (prefix before '::')
+    buckets: Dict[str, list] = {tag: [] for tag in dir_tags}
+    for sample_id, result in results.items():
+        sep = sample_id.find('::')
+        if sep == -1:
+            continue
+        tag = sample_id[:sep]
+        if tag not in buckets:
+            continue
+        restored = dict(result)
+        restored['id'] = sample_id[sep + 2:]
+        buckets[tag].append(restored)
+
+    for tag, entries in buckets.items():
+        results_dir = dir_tags[tag]
+        out_path = os.path.join(results_dir, 'eval_detail.jsonl')
+        with open(out_path, 'w', encoding='utf-8') as f:
+            for entry in entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+        summary = compute_summary(out_path)
+        summary_path = out_path.replace('.jsonl', '_summary.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        print(f"  [{tag}] {len(entries)} samples -> {out_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Parallel evaluation with multi-GPU support (metric-by-metric)')
     
-    parser.add_argument('--results_dir', type=str, required=True,
-                       help='Directory containing generated images')
+    dir_group = parser.add_mutually_exclusive_group(required=True)
+    dir_group.add_argument('--results_dir', type=str, default=None,
+                           help='Single directory containing generated images')
+    dir_group.add_argument('--results_dirs', nargs='+', default=None,
+                           help='Multiple results directories to evaluate together '
+                                '(one metric load for all dirs)')
+    
     parser.add_argument('--benchmark', type=str, required=True,
-                       help='Path to benchmark file')
+                       help='Path to benchmark file or directory')
     parser.add_argument('--benchmark_type', type=str, default='longtext',
                        choices=['longtext', 'oneig', 'cvtg', 'unseenwords', 'generic'],
                        help='Benchmark type')
-    parser.add_argument('--output', type=str, required=True,
-                       help='Output JSONL file path')
+    parser.add_argument('--output', type=str, default=None,
+                       help='Output JSONL file path (required for single-dir mode)')
     parser.add_argument('--mineru_path', type=str, default=DEFAULT_MINERU_PATH,
                        help='Path to local MinerU VLM model')
     parser.add_argument('--vlm_path', type=str, default=DEFAULT_VLM_PATH,
@@ -686,57 +774,120 @@ def main():
                        help='Resume: skip samples that already have the metric computed')
     parser.add_argument('--verbose', action='store_true',
                        help='Print progress for each sample')
+    parser.add_argument('--split_output_dir', type=str, default=None,
+                       help='After evaluation, split merged results into per-source-file '
+                            'outputs in this directory (e.g. unseen_en.jsonl, unseen_zh.jsonl)')
     
     args = parser.parse_args()
-    
-    print("="*60)
-    print("Parallel Evaluation - Metric-by-Metric Mode")
-    print("="*60)
-    print(f"Results dir: {args.results_dir}")
-    print(f"Benchmark: {args.benchmark}")
-    print(f"Type: {args.benchmark_type}")
-    print(f"Output: {args.output}")
-    print(f"GPUs: {args.gpus}")
-    print(f"Metrics (in order): {args.metrics}")
-    print(f"MinerU: {args.mineru_path}")
-    print(f"VLM: {args.vlm_path}")
-    print(f"Resume: {args.resume}")
-    print("="*60)
-    
-    # Load benchmark
+
+    multi_dir_mode = args.results_dirs is not None
+
+    # Load benchmark once
     print("\nLoading benchmark...")
-    dataset = load_benchmark(args.benchmark, args.benchmark_type)
-    print(f"Loaded {len(dataset)} samples")
-    
-    # Show resume status if applicable
-    if args.resume and os.path.exists(args.output):
-        existing = load_existing_results(args.output)
-        print(f"\nResume mode: Found {len(existing)} existing results")
+    base_dataset = load_benchmark(args.benchmark, args.benchmark_type)
+    print(f"Loaded {len(base_dataset)} samples from benchmark")
+
+    if multi_dir_mode:
+        # ----- Multi-dir mode: merge all dirs into one dataset -----
+        dir_tags: Dict[str, str] = {}
+        merged_dataset: List[Dict] = []
+        for i, rdir in enumerate(args.results_dirs):
+            tag = f"d{i}"
+            dir_tags[tag] = rdir
+            for sample in base_dataset:
+                merged = dict(sample)
+                merged['_results_dir'] = rdir
+                merged['_original_id'] = sample['id']
+                merged['id'] = f"{tag}::{sample['id']}"
+                merged_dataset.append(merged)
+
+        # Merged output file: next to first results_dir or use --output
+        if args.output:
+            merged_output = args.output
+        else:
+            merged_output = os.path.join(
+                os.path.dirname(args.results_dirs[0]),
+                '_merged_eval_detail.jsonl')
+        os.makedirs(os.path.dirname(merged_output) or '.', exist_ok=True)
+
+        print("=" * 60)
+        print("Parallel Evaluation - Multi-Dir Mode")
+        print("=" * 60)
+        for tag, rdir in dir_tags.items():
+            print(f"  [{tag}] {rdir}")
+        print(f"Benchmark: {args.benchmark} ({args.benchmark_type})")
+        print(f"Samples per dir: {len(base_dataset)}, Total: {len(merged_dataset)}")
+        print(f"Merged output: {merged_output}")
+        print(f"Metrics: {args.metrics}")
+        print(f"GPUs: {args.gpus}")
+        print("=" * 60)
+
+        if args.resume and os.path.exists(merged_output):
+            existing = load_existing_results(merged_output)
+            print(f"\nResume mode: Found {len(existing)} existing results")
+            for metric in args.metrics:
+                remaining = len(get_samples_needing_metric(merged_dataset, existing, metric))
+                total = len(merged_dataset)
+                print(f"  - {metric}: {total - remaining}/{total} done, {remaining} remaining")
+
+        mp.set_start_method('spawn', force=True)
+
         for metric in args.metrics:
-            remaining = len(get_samples_needing_metric(dataset, existing, metric))
-            print(f"  - {metric}: {len(dataset) - remaining}/{len(dataset)} done, {remaining} remaining")
-    
-    # Set multiprocessing start method
-    mp.set_start_method('spawn', force=True)
-    
-    # Evaluate metrics one by one
-    for metric in args.metrics:
-        run_metric_evaluation(args, dataset, args.output, metric)
-    
-    print("\n" + "="*60)
-    print("All metrics evaluation completed!")
-    print("="*60)
-    
-    # Compute and save summary
-    summary = compute_summary(args.output)
-    summary_path = args.output.replace('.jsonl', '_summary.json')
-    with open(summary_path, 'w', encoding='utf-8') as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-    
-    print("\nEvaluation Summary:")
-    print(json.dumps(summary, indent=2))
-    print(f"\nResults: {args.output}")
-    print(f"Summary: {summary_path}")
+            run_metric_evaluation(args, merged_dataset, merged_output, metric)
+
+        print("\n" + "=" * 60)
+        print("All metrics completed! Splitting results to per-dir outputs...")
+        print("=" * 60)
+        split_merged_to_per_dir(merged_output, dir_tags)
+
+    else:
+        # ----- Single-dir mode (original behavior) -----
+        if not args.output:
+            parser.error("--output is required when using --results_dir")
+
+        dataset = base_dataset
+
+        print("=" * 60)
+        print("Parallel Evaluation - Metric-by-Metric Mode")
+        print("=" * 60)
+        print(f"Results dir: {args.results_dir}")
+        print(f"Benchmark: {args.benchmark}")
+        print(f"Type: {args.benchmark_type}")
+        print(f"Output: {args.output}")
+        print(f"GPUs: {args.gpus}")
+        print(f"Metrics (in order): {args.metrics}")
+        print(f"Resume: {args.resume}")
+        print("=" * 60)
+
+        if args.resume and os.path.exists(args.output):
+            existing = load_existing_results(args.output)
+            print(f"\nResume mode: Found {len(existing)} existing results")
+            for metric in args.metrics:
+                remaining = len(get_samples_needing_metric(dataset, existing, metric))
+                print(f"  - {metric}: {len(dataset) - remaining}/{len(dataset)} done, {remaining} remaining")
+
+        mp.set_start_method('spawn', force=True)
+
+        for metric in args.metrics:
+            run_metric_evaluation(args, dataset, args.output, metric)
+
+        print("\n" + "=" * 60)
+        print("All metrics evaluation completed!")
+        print("=" * 60)
+
+        summary = compute_summary(args.output)
+        summary_path = args.output.replace('.jsonl', '_summary.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        print("\nEvaluation Summary:")
+        print(json.dumps(summary, indent=2))
+        print(f"\nResults: {args.output}")
+        print(f"Summary: {summary_path}")
+
+        if args.split_output_dir:
+            print(f"\nSplitting results by source into {args.split_output_dir} ...")
+            split_results_by_source(args.output, dataset, args.split_output_dir)
 
 
 if __name__ == '__main__':

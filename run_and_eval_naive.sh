@@ -25,10 +25,6 @@ EVAL_BASE="${BASE_DIR}/${EVAL_VER}"
 # 评估相关配置
 METRICS="clip vlm vqa aesthetic"
 BENCHMARK_DIR="eval/UnseenWords"
-JSONL_FILES=(
-    unseen_ez_en.jsonl unseen_ez_zh.jsonl unseen_ez_sci.jsonl unseen_en.jsonl
-    unseen_zh.jsonl unseen_mid_sci.jsonl unseen_hardL1_sci.jsonl unseen_hardL2_sci.jsonl
-)
 
 # ==================== 实验配置 ====================
 # 格式: "实验名:模型名:额外参数"
@@ -67,27 +63,26 @@ eval_experiment() {
     local exp_name=$1
     local results_dir="${RESULTS_BASE}/${exp_name}/${BENCHMARK}"
     local output_dir="${EVAL_BASE}/${exp_name}"
+    local merged_output="${output_dir}/_merged_eval.jsonl"
 
     echo "============================================================"
-    echo "Evaluating: ${exp_name}"
+    echo "Evaluating: ${exp_name} (batch mode)"
     echo "  Results: $results_dir"
     echo "  Output : $output_dir"
     echo "============================================================"
 
     mkdir -p "$output_dir"
 
-    for jsonl in "${JSONL_FILES[@]}"; do
-        name="${jsonl%.jsonl}"
-        python eval/scripts/eval_parallel.py \
-            --results_dir "$results_dir" \
-            --benchmark "${BENCHMARK_DIR}/${jsonl}" \
-            --benchmark_type unseenwords \
-            --output "${output_dir}/${name}.jsonl" \
-            --metrics $METRICS \
-            --gpus "$GPUS" \
-            --resume \
-            --verbose
-    done
+    python eval/scripts/eval_parallel.py \
+        --results_dir "$results_dir" \
+        --benchmark "$BENCHMARK_DIR" \
+        --benchmark_type unseenwords \
+        --output "$merged_output" \
+        --metrics $METRICS \
+        --gpus "$GPUS" \
+        --resume \
+        --verbose \
+        --split_output_dir "$output_dir"
 }
 
 # ==================== 主流程 ====================

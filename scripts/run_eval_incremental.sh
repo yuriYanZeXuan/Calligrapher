@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # ------------------------------------------------------------------
-# Incremental evaluation script.
+# Incremental evaluation script — Multi-Dir Batch Mode.
 #
-# 直接提供 results 目录的绝对路径，脚本会：
-#   1. 在该目录下构造 detail.jsonl（如果缺失）
-#   2. 在该目录下运行增量评测，输出 eval_detail.jsonl
+# 按 benchmark 类型分组，将同类型的所有 results 目录合并到一次
+# eval_parallel.py 调用中，每个指标只加载一次模型权重。
 #
-# 从目录名自动推断 benchmark 类型，从路径关键词推断是否调用 VLM。
+# 评测完成后，结果自动拆分回各目录的 eval_detail.jsonl（格式不变）。
 # 支持 resume — 中断后可安全重跑。
 # ------------------------------------------------------------------
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -49,61 +48,99 @@ RESULT_DIRS=(
     # /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/results7/ours_freq_decomp_klein/OneIG-Bench
 )
 
-# ---- Main loop ----
+# ---- Step 1: 逐目录构造 detail.jsonl（互不依赖） ----
+echo ""
+echo "========================================"
+echo " Step 1: Construct detail.jsonl"
+echo "========================================"
 for results_dir in "${RESULT_DIRS[@]}"; do
     if [[ ! -d "$results_dir" ]]; then
         echo "[SKIP] $results_dir does not exist"
         continue
     fi
 
-    # 从目录路径最后一级推断 benchmark 名
     bench_name="$(basename "$results_dir")"
     if [[ -z "${BENCH_PATH[$bench_name]+x}" ]]; then
         echo "[ERROR] Unknown benchmark '$bench_name' (from $results_dir), skipping"
         continue
     fi
+
+    detail_path="${results_dir}/detail.jsonl"
+    if [[ -f "$detail_path" ]]; then
+        echo "[OK]   detail.jsonl exists: $results_dir"
+        continue
+    fi
+
+    echo "[BUILD] $results_dir ..."
+    vlm_flag=""
+    if is_our_model_path "$results_dir"; then
+        vlm_flag="--use_vlm"
+    fi
+    python scripts/construct_detail.py \
+        --results_dir "$results_dir" \
+        --benchmark "${BENCH_PATH[$bench_name]}" \
+        --benchmark_type "${BENCH_TYPE[$bench_name]}" \
+        --resume \
+        $vlm_flag
+done
+
+# ---- Step 2: 按 benchmark 类型分组，批量评测 ----
+echo ""
+echo "========================================"
+echo " Step 2: Batch evaluation (multi-dir)"
+echo "========================================"
+
+# 按 bench_name 分组
+declare -A GROUPED_DIRS  # bench_name -> space-separated dirs
+
+for results_dir in "${RESULT_DIRS[@]}"; do
+    if [[ ! -d "$results_dir" ]]; then
+        continue
+    fi
+    bench_name="$(basename "$results_dir")"
+    if [[ -z "${BENCH_PATH[$bench_name]+x}" ]]; then
+        continue
+    fi
+    GROUPED_DIRS["$bench_name"]="${GROUPED_DIRS[$bench_name]:-} $results_dir"
+done
+
+for bench_name in "${!GROUPED_DIRS[@]}"; do
     bench_path="${BENCH_PATH[$bench_name]}"
     bench_type="${BENCH_TYPE[$bench_name]}"
+    # 将空格分隔的路径转为数组
+    read -ra dirs <<< "${GROUPED_DIRS[$bench_name]}"
 
     echo ""
     echo "============================================================"
-    echo " Dir:       $results_dir"
     echo " Benchmark: $bench_name ($bench_type)"
+    echo " Dirs (${#dirs[@]}):"
+    for d in "${dirs[@]}"; do
+        echo "   - $d"
+    done
     echo "============================================================"
 
-    # Step 1: 在 results_dir 下构造 detail.jsonl
-    detail_path="${results_dir}/detail.jsonl"
-    if [[ ! -f "$detail_path" ]]; then
-        echo "[Step 1] Constructing detail.jsonl ..."
-        vlm_flag=""
-        if is_our_model_path "$results_dir"; then
-            vlm_flag="--use_vlm"
-        fi
-        python scripts/construct_detail.py \
-            --results_dir "$results_dir" \
+    if [[ ${#dirs[@]} -eq 1 ]]; then
+        # 单目录回退到 --results_dir 模式
+        python eval/scripts/eval_parallel.py \
+            --results_dir "${dirs[0]}" \
             --benchmark "$bench_path" \
             --benchmark_type "$bench_type" \
+            --output "${dirs[0]}/eval_detail.jsonl" \
+            --metrics clip vqa vlm_quality hpsv3 \
+            --gpus "$GPUS" \
             --resume \
-            $vlm_flag
+            --verbose
     else
-        echo "[Step 1] detail.jsonl already exists, skipping"
+        # 多目录合并评测（每个指标只加载一次权重）
+        python eval/scripts/eval_parallel.py \
+            --results_dirs "${dirs[@]}" \
+            --benchmark "$bench_path" \
+            --benchmark_type "$bench_type" \
+            --metrics clip vqa vlm_quality hpsv3 \
+            --gpus "$GPUS" \
+            --resume \
+            --verbose
     fi
-
-    # Step 2: 在 results_dir 下运行评测，输出也保存在同目录
-    output_jsonl="${results_dir}/eval_detail.jsonl"
-
-    echo "[Step 2] Evaluating clip, vqa, vlm_quality, hpsv3 (resume) ..."
-    python eval/scripts/eval_parallel.py \
-        --results_dir "$results_dir" \
-        --benchmark "$bench_path" \
-        --benchmark_type "$bench_type" \
-        --output "$output_jsonl" \
-        --metrics clip vqa vlm_quality hpsv3 \
-        --gpus "$GPUS" \
-        --resume \
-        --verbose
-
-    echo "[DONE] $results_dir"
 done
 
 echo ""

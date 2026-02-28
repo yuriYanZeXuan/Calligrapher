@@ -446,7 +446,7 @@ class OursWrapper(ModelWrapper):
 
     def __init__(self, device="cuda", model_path=None,
                  no_inject=False, no_harmonize=False, no_refiner=False,
-                 harmonizer_type="klein", freq_decompose=False):
+                 harmonizer_type="klein", freq_decompose=False, debug=False):
         super().__init__(device, model_path)
         self.no_inject = no_inject
         self.no_harmonize = no_harmonize
@@ -456,13 +456,15 @@ class OursWrapper(ModelWrapper):
 
         from zimage_inference import ZImageInference, GenerationConfig
         from infer.glyph_injector import InjectionConfig
+        from infer.mylogger import TTSLogger
 
         self._GenerationConfig = GenerationConfig
         self._InjectionConfig = InjectionConfig
+        logger = TTSLogger(run_name="ours_debug") if debug else None
         self.inference = ZImageInference(
             model_path=self.model_path or MODEL_PATHS['ours'],
             device=device,
-            logger=None,
+            logger=logger,
         )
 
     def generate(self, prompt, output_path, **kwargs):
@@ -504,7 +506,7 @@ class OursQwenBaseWrapper(ModelWrapper):
 
     def __init__(self, device="cuda", model_path=None,
                  no_inject=False, no_harmonize=False, no_refiner=False,
-                 harmonizer_type="klein", freq_decompose=False):
+                 harmonizer_type="klein", freq_decompose=False, debug=False):
         super().__init__(device, model_path)
         self.no_inject = no_inject
         self.no_harmonize = no_harmonize
@@ -514,14 +516,16 @@ class OursQwenBaseWrapper(ModelWrapper):
 
         from qwen_inference import QwenImageInference, QwenGenerationConfig
         from infer.glyph_injector import InjectionConfig
+        from infer.mylogger import TTSLogger
 
         self._QwenGenerationConfig = QwenGenerationConfig
         self._InjectionConfig = InjectionConfig
+        logger = TTSLogger(run_name="ours_qwen_debug") if debug else None
         self.inference = QwenImageInference(
             model_path=self.model_path or MODEL_PATHS.get('qwenimage',
                 "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen-image-2512"),
             device=device,
-            logger=None,
+            logger=logger,
         )
 
     def generate(self, prompt, output_path, **kwargs):
@@ -769,6 +773,7 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
             'no_refiner': args.no_refiner,
             'harmonizer_type': args.harmonizer_type,
             'freq_decompose': args.freq_decompose,
+            'debug': args.debug,
         }
     model = MODELS[args.model](device=device, model_path=args.model_path, **model_kwargs)
 

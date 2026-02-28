@@ -778,7 +778,7 @@ class HPSv3Metrics:
     """HPSv3 (Human Preference Score v3) based on Qwen2-VL."""
 
     def __init__(self, device: str = "cuda",
-                 config_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3/config.json",
+                 config_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3/HPSv3.yaml",
                  checkpoint_path="/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/HPSv3/HPSv3.safetensors"):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device

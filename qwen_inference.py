@@ -103,7 +103,7 @@ class QwenImageInference:
         self.model_path = model_path
         self.dtype = dtype
         self.primary_device = device
-        self.logger = logger or TTSLogger(run_name="qwen_inference")
+        self.logger = logger
         self._pipeline = None
         self._vlm_agent = None
         self._glyph_injector = None
@@ -528,7 +528,7 @@ class QwenImageInference:
     _CAT_IMG_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/logs/CAT_IMG_QWEN"
 
     def _save_candidates_concat(self, candidates):
-        if not candidates:
+        if not candidates or self.logger is None:
             return
         imgs = list(candidates.values())
         max_h = max(img.height for img in imgs)

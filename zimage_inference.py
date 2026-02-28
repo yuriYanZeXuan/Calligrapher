@@ -92,7 +92,7 @@ class ZImageInference:
     ):
         self.model_path = model_path
         self.dtype = dtype
-        self.logger = logger or TTSLogger(run_name="zimage_inference")
+        self.logger = logger
 
         if isinstance(device, str):
             self.devices = [device]
@@ -804,7 +804,7 @@ class ZImageInference:
 
     def _save_candidates_concat(self, candidates: dict[str, Image.Image]) -> None:
         """将所有候选图水平拼接，保存到 CAT_IMG 目录。"""
-        if not candidates:
+        if not candidates or self.logger is None:
             return
         imgs = list(candidates.values())
         max_h = max(img.height for img in imgs)

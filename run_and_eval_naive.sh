@@ -6,8 +6,8 @@
 # 无 latent 注入、频率分解、风格化
 #
 # 支持 base model:
-#   naive_qwen  : QwenImage  作为 Pass1 + Clean 背景
-#   naive_klein : FluxKlein  作为 Pass1 + Clean 背景
+#   naive_zimage : Z-Image    作为 Pass1 + Clean 背景
+#   naive_qwen   : QwenImage  作为 Pass1 + Clean 背景
 # ============================================================
 
 # ==================== 可配置参数 ====================
@@ -33,8 +33,8 @@ JSONL_FILES=(
 # ==================== 实验配置 ====================
 # 格式: "实验名:模型名:额外参数"
 declare -a EXPERIMENTS=(
+    "naive_zimage:glyph_only_zimage:"
     "naive_qwen:glyph_only_qwen:"
-    "naive_klein:glyph_only_klein:"
 )
 
 # ==================== 函数定义 ====================

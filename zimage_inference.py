@@ -803,8 +803,8 @@ class ZImageInference:
     _CAT_IMG_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/logs/CAT_IMG"
 
     def _save_candidates_concat(self, candidates: dict[str, Image.Image]) -> None:
-        """将所有候选图水平拼接，保存到 CAT_IMG 目录。"""
-        if not candidates or self.logger is None:
+        """将所有候选图水平拼接，保存到 CAT_IMG 目录（始终启用，不受 debug 控制）。"""
+        if not candidates:
             return
         imgs = list(candidates.values())
         max_h = max(img.height for img in imgs)

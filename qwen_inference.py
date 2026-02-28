@@ -595,7 +595,7 @@ class QwenImageInference:
     _CAT_IMG_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/logs/CAT_IMG_QWEN"
 
     def _save_candidates_concat(self, candidates):
-        if not candidates or self.logger is None:
+        if not candidates:
             return
         imgs = list(candidates.values())
         max_h = max(img.height for img in imgs)

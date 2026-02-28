@@ -515,6 +515,40 @@ class OursQwenBaseWrapper(ModelWrapper):
         image.save(output_path)
 
 
+class GlyphOnlyWrapper(ModelWrapper):
+    """Glyph-Only ablation: Pass1 → VLM → Clean bg + pixel paste (no injection/harmonize)."""
+    BASE_MODEL = "zimage"
+    DEFAULT_PATH_KEY = "z_image"
+
+    def __init__(self, device="cuda", model_path=None, **_):
+        super().__init__(device, model_path)
+        from ablation.glyph_only.infer import GlyphOnlyInference
+        self.inference = GlyphOnlyInference(
+            self.BASE_MODEL,
+            self.model_path or MODEL_PATHS[self.DEFAULT_PATH_KEY],
+            device,
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        text = kwargs.get('text', [])
+        if isinstance(text, str):
+            text = [text] if text.strip() else []
+        run_name = os.path.splitext(os.path.basename(output_path))[0]
+        image = self.inference.generate(prompt, text or None, run_name=run_name)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        image.save(output_path)
+
+
+class GlyphOnlyQwenWrapper(GlyphOnlyWrapper):
+    BASE_MODEL = "qwen"
+    DEFAULT_PATH_KEY = "qwenimage"
+
+
+class GlyphOnlyKleinWrapper(GlyphOnlyWrapper):
+    BASE_MODEL = "klein"
+    DEFAULT_PATH_KEY = "fluxklein"
+
+
 # Model registry
 MODELS = {
     'textflux': TextFluxWrapper,
@@ -531,6 +565,9 @@ MODELS = {
     'fluxtext': FluxTextModelWrapper,
     'ours': OursWrapper,
     'ours_qwen': OursQwenBaseWrapper,
+    'glyph_only_zimage': GlyphOnlyWrapper,
+    'glyph_only_qwen': GlyphOnlyQwenWrapper,
+    'glyph_only_klein': GlyphOnlyKleinWrapper,
 }
 
 # --- Data Loading ---

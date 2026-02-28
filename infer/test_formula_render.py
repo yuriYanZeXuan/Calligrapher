@@ -1,87 +1,123 @@
 #!/usr/bin/env python3
 """
-测试 formula_helper 渲染 plan_multi_region.json 中的文本区域
+诊断 MathJax 渲染回退问题
+
+针对 unseen_ez_sci_10 的公式 "∇·E=ρ"，逐步检查 MathJax 管线每个环节。
 """
 
-import json
+import io
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
-# 确保能导入 formula_helper
 sys.path.insert(0, str(Path(__file__).parent))
 
-from formula_helper import render_formula, is_latex
-from PIL import Image
+from formula_helper import (
+    _check_node, _MATHJAX_SCRIPT, _convert_svg_to_png,
+    render_mathjax, render_latex, render_formula,
+    plaintext_to_latex, is_latex,
+)
 
 
-def hex_to_rgb(hex_color: str) -> str:
-    """将 HEX 颜色转换为 PIL 可用的颜色字符串"""
-    hex_color = hex_color.lstrip('#')
-    return f"#{hex_color}"
+FORMULA = "∇·E=ρ"
+WIDTH, HEIGHT = 512, 192
+OUT_DIR = Path("output/debug_mathjax")
 
 
-def render_plan_text_regions(plan_path: str, output_dir: str = "./formula_test_output"):
-    """渲染 plan JSON 中的所有文本区域"""
-    
-    # 读取 plan
-    with open(plan_path, 'r', encoding='utf-8') as f:
-        plan = json.load(f)
-    
-    # 创建输出目录
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    
-    text_regions = plan.get("text_regions", [])
-    
-    print(f"找到 {len(text_regions)} 个文本区域")
-    print("=" * 60)
-    
-    for i, region in enumerate(text_regions, 1):
-        content = region["content"]
-        bbox = region["bbox"]  # [x_min, y_min, x_max, y_max] 归一化坐标
-        is_latex_flag = region.get("is_latex", False)
-        color = region.get("color", "#000000")
-        
-        canvas_width = 1024
-        x1, y1, x2, y2 = bbox
-        region_width = int((x2 - x1) * canvas_width)
-        region_height = int((y2 - y1) * canvas_width)
-        
-        print(f"\n区域 {i}:")
-        print(f"  内容: {content[:60]}{'...' if len(content) > 60 else ''}")
-        print(f"  类型: {'LaTeX' if is_latex_flag or is_latex(content) else '纯文本'}")
-        print(f"  尺寸: {region_width}x{region_height}")
-        print(f"  文字颜色: {color}")
-        
-        text_color = hex_to_rgb(color)
-        
-        try:
-            img = render_formula(
-                content,
-                width=region_width,
-                height=region_height,
-                text_color=text_color,
-                force_latex=is_latex_flag
-            )
-            
-            # 保存
-            save_path = output_path / f"region_{i}_{content[:20].replace(' ', '_').replace('$', '')}.png"
-            img.save(save_path)
-            print(f"  ✅ 已保存: {save_path}")
-            
-        except Exception as e:
-            print(f"  ❌ 渲染失败: {e}")
-    
-    print("\n" + "=" * 60)
-    print(f"全部完成！输出目录: {output_path.absolute()}")
+def step(name: str):
+    print(f"\n{'='*60}\n  {name}\n{'='*60}")
+
+
+def main():
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    step("0. 原始输入")
+    print(f"  公式: {FORMULA!r}")
+    print(f"  is_latex: {is_latex(FORMULA)}")
+    converted = plaintext_to_latex(FORMULA)
+    print(f"  plaintext_to_latex: {converted!r}")
+    print(f"  转换后 is_latex: {is_latex(converted)}")
+
+    step("1. Node.js 可用性")
+    node_path = shutil.which("node")
+    print(f"  shutil.which('node'): {node_path}")
+    print(f"  _check_node(): {_check_node()}")
+    if node_path:
+        ver = subprocess.run(["node", "--version"], capture_output=True, text=True)
+        print(f"  node version: {ver.stdout.strip()}")
+
+    step("2. MathJax 脚本")
+    print(f"  路径: {_MATHJAX_SCRIPT}")
+    print(f"  exists: {_MATHJAX_SCRIPT.exists()}")
+    mathjax_es5 = _MATHJAX_SCRIPT.parent.parent / "dataset_pipeline" / "LTB" / "assets" / "mathjax" / "es5"
+    print(f"  MathJax es5 目录: {mathjax_es5}")
+    print(f"  es5 exists: {mathjax_es5.exists()}")
+    if mathjax_es5.exists():
+        startup = mathjax_es5 / "startup.js"
+        print(f"  startup.js exists: {startup.exists()}")
+
+    step("3. 直接调用 node 渲染 SVG")
+    test_latex = converted.strip("$") if converted.startswith("$") else converted
+    print(f"  传入公式: {test_latex!r}")
+    if _check_node() and _MATHJAX_SCRIPT.exists():
+        result = subprocess.run(
+            ["node", str(_MATHJAX_SCRIPT), test_latex],
+            capture_output=True, text=True, timeout=15,
+        )
+        print(f"  returncode: {result.returncode}")
+        print(f"  stderr: {result.stderr.strip()[:300]}")
+        svg_str = result.stdout
+        has_svg = "<svg" in svg_str if svg_str else False
+        print(f"  stdout 长度: {len(svg_str)}")
+        print(f"  含 <svg>: {has_svg}")
+        if svg_str:
+            print(f"  SVG 前 300 字符: {svg_str[:300]}")
+
+        if has_svg:
+            step("4. SVG → PNG (cairosvg)")
+            img = _convert_svg_to_png(svg_str, WIDTH, HEIGHT, "white")
+            print(f"  结果: {img}")
+            if img is not None:
+                path = OUT_DIR / "step4_svg_to_png.png"
+                img.save(path)
+                print(f"  保存: {path}")
+    else:
+        print("  [SKIP] node 或 MathJax 脚本不可用")
+
+    step("5. cairosvg 可用性")
+    try:
+        import cairosvg
+        print(f"  cairosvg version: {cairosvg.__version__}")
+    except ImportError as e:
+        print(f"  [FAIL] cairosvg 未安装: {e}")
+
+    step("6. render_mathjax() 完整调用")
+    img = render_mathjax(converted, WIDTH, HEIGHT, "white")
+    print(f"  结果: {img}")
+    if img is not None:
+        path = OUT_DIR / "step6_mathjax.png"
+        img.save(path)
+        print(f"  保存: {path}")
+    else:
+        print("  [FAIL] MathJax 返回 None → 会回退到 matplotlib")
+
+    step("7. render_latex() (matplotlib 回退)")
+    img = render_latex(converted, WIDTH, HEIGHT, "white")
+    path = OUT_DIR / "step7_matplotlib.png"
+    img.save(path)
+    print(f"  保存: {path}")
+
+    step("8. render_formula() 完整流程")
+    img = render_formula(FORMULA, WIDTH, HEIGHT, text_color="white")
+    path = OUT_DIR / "step8_final.png"
+    img.save(path)
+    print(f"  保存: {path}")
+
+    print(f"\n{'='*60}")
+    print(f"诊断完成！输出目录: {OUT_DIR.absolute()}")
 
 
 if __name__ == "__main__":
-    # 默认使用 plan_multi_region.json
-    default_plan = Path(__file__).parent / "test_plans" / "plan_multi_region.json"
-    
-    plan_file = sys.argv[1] if len(sys.argv) > 1 else str(default_plan)
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else "./formula_test_output"
-    
-    print(f"使用 plan: {plan_file}")
-    render_plan_text_regions(plan_file, output_dir)
+    main()

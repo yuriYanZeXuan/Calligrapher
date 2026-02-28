@@ -310,7 +310,11 @@ def render_mathjax(
     Returns:
         PIL Image，如果 Node.js 不可用或渲染失败则返回 None。
     """
-    if not _check_node() or not _MATHJAX_SCRIPT.exists():
+    if not _check_node():
+        print("[MathJax] 回退: Node.js 不可用 (shutil.which('node') 为空)")
+        return None
+    if not _MATHJAX_SCRIPT.exists():
+        print(f"[MathJax] 回退: 渲染脚本不存在 {_MATHJAX_SCRIPT}")
         return None
 
     # 去掉 $ 包裹（MathJax 自己处理）
@@ -455,13 +459,13 @@ def render_latex(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # 确保被 $ 包裹；bold 时用 \mathbf 或 \boldsymbol 包裹
+    # 确保被 $ 包裹
+    # 注意：不用 \boldsymbol 包裹整个公式——matplotlib 的 bold math font
+    # 缺少 \cdot, \times 等运算符 glyph，会产生 dummy 替换。
+    # MathJax 路径（render_mathjax）已正确处理 bold。
     formula = latex.strip()
     if not formula.startswith("$"):
         formula = f"${formula}$"
-    if font_weight == "bold":
-        inner = formula.strip("$")
-        formula = rf"$\boldsymbol{{{inner}}}$"
 
     fg = text_color
     bg = "black"
@@ -762,6 +766,7 @@ def _render_single_line(
         img = render_mathjax(text, width, height, text_color, font_weight)
         if img is not None:
             return _composite_to_canvas(img, width, height)
+        print(f"[formula_helper] MathJax 不可用，回退 matplotlib: {text[:60]}")
         return render_latex(text, width, height, text_color,
                             font_weight=font_weight)
     return render_plaintext(text, width, height, text_color,

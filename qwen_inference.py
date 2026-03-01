@@ -595,20 +595,6 @@ class QwenImageInference:
 
     _CAT_IMG_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/logs/CAT_IMG_QWEN"
 
-    @staticmethod
-    def _scan_max_counter(cat_img_dir: str) -> int:
-        """扫描目录中已有文件的最大数字前缀，返回该值作为起始 counter。
-        多 GPU 进程共享同一目录时可避免文件名覆盖。"""
-        if not os.path.isdir(cat_img_dir):
-            return 0
-        max_num = 0
-        _leading_num = re.compile(r"^(\d+)")
-        for fname in os.listdir(cat_img_dir):
-            m = _leading_num.match(fname)
-            if m:
-                max_num = max(max_num, int(m.group(1)))
-        return max_num
-
     def _save_candidates_concat(self, candidates):
         if not candidates:
             return
@@ -621,7 +607,10 @@ class QwenImageInference:
             concat.paste(img, (x, 0))
             x += img.width
         os.makedirs(self._CAT_IMG_DIR, exist_ok=True)
-        concat.save(os.path.join(self._CAT_IMG_DIR, f"{self._current_tag}.jpg"),
+        next_id = len([f for f in os.listdir(self._CAT_IMG_DIR) if f.endswith(".jpg")]) + 1
+        run_name = re.sub(r"^\d+_?", "", self._current_tag)
+        save_tag = f"{next_id:04d}_{run_name}" if run_name else f"{next_id:04d}"
+        concat.save(os.path.join(self._CAT_IMG_DIR, f"{save_tag}.jpg"),
                      format="JPEG", quality=90)
 
     def _save_typography_plan(self, plan):

@@ -341,22 +341,6 @@ def append_or_update_result(output_path: str, sample_id: str, updates: Dict, loc
             fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
-def load_detail_lookup(results_dir: str) -> Dict[str, Dict]:
-    """Load detail.jsonl from results_dir as a dict mapping result_id → detail entry."""
-    detail_path = os.path.join(results_dir, "detail.jsonl")
-    lookup = {}
-    if not os.path.exists(detail_path):
-        return lookup
-    with open(detail_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            entry = json.loads(line)
-            lookup[entry["id"]] = entry
-    return lookup
-
-
 def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict], 
                             output_path: str, metric: str, existing_results: Dict[str, Dict]):
     """Worker function for evaluating a single metric across assigned samples."""
@@ -374,13 +358,6 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
     if not my_dataset:
         print(f"[GPU {rank}] No samples assigned for metric '{metric}'")
         return
-    
-    # Cache detail.jsonl lookups per results_dir (for multi-dir mode)
-    _detail_cache: Dict[str, Dict] = {}
-    def get_detail_lookup(rdir: str) -> Dict[str, Dict]:
-        if rdir not in _detail_cache:
-            _detail_cache[rdir] = load_detail_lookup(rdir)
-        return _detail_cache[rdir]
     
     print(f"[GPU {rank}] Evaluating metric '{metric}' on {len(my_dataset)} samples")
     
@@ -425,10 +402,7 @@ def worker_fn_single_metric(rank: int, world_size: int, args, dataset: List[Dict
             'image_path': image_path,
         }
         
-        detail_lookup = get_detail_lookup(sample_results_dir)
-        detail_key = f"result_{original_id}"
-        detail_entry = detail_lookup.get(detail_key, {})
-        eval_prompt = detail_entry.get('real_prompt', sample['prompt'])
+        eval_prompt = sample['prompt']
         
         try:
             if metric == 'vqa':

@@ -27,13 +27,6 @@ BENCH_TYPE["OneIG-Bench"]="oneig"
 BENCH_TYPE["UnseenWords"]="unseenwords"
 BENCH_TYPE["CVTG-2K"]="cvtg"
 
-# 从路径关键词判断是否为 "我们的模型"（需要 VLM 生成 clean_prompt）
-is_our_model_path() {
-    local p="$1"
-    [[ "$p" == *"/ours"* || "$p" == *"/glyph_only"* ]] && return 0
-    return 1
-}
-
 # ============================================================
 #  在此列出所有待评测的 results 目录（绝对路径）
 #  脚本会从最后一级目录名推断 benchmark 类型。
@@ -48,46 +41,10 @@ RESULT_DIRS=(
     # /mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/baselines/results7/ours_freq_decomp_klein/OneIG-Bench
 )
 
-# ---- Step 1: 逐目录构造 detail.jsonl（互不依赖） ----
+# ---- 按 benchmark 类型分组，批量评测 ----
 echo ""
 echo "========================================"
-echo " Step 1: Construct detail.jsonl"
-echo "========================================"
-for results_dir in "${RESULT_DIRS[@]}"; do
-    if [[ ! -d "$results_dir" ]]; then
-        echo "[SKIP] $results_dir does not exist"
-        continue
-    fi
-
-    bench_name="$(basename "$results_dir")"
-    if [[ -z "${BENCH_PATH[$bench_name]+x}" ]]; then
-        echo "[ERROR] Unknown benchmark '$bench_name' (from $results_dir), skipping"
-        continue
-    fi
-
-    detail_path="${results_dir}/detail.jsonl"
-    if [[ -f "$detail_path" ]]; then
-        echo "[OK]   detail.jsonl exists: $results_dir"
-        continue
-    fi
-
-    echo "[BUILD] $results_dir ..."
-    vlm_flag=""
-    if is_our_model_path "$results_dir"; then
-        vlm_flag="--use_vlm"
-    fi
-    python scripts/construct_detail.py \
-        --results_dir "$results_dir" \
-        --benchmark "${BENCH_PATH[$bench_name]}" \
-        --benchmark_type "${BENCH_TYPE[$bench_name]}" \
-        --resume \
-        $vlm_flag
-done
-
-# ---- Step 2: 按 benchmark 类型分组，批量评测 ----
-echo ""
-echo "========================================"
-echo " Step 2: Batch evaluation (multi-dir)"
+echo " Batch evaluation (multi-dir)"
 echo "========================================"
 
 # 按 bench_name 分组

@@ -5,7 +5,6 @@ import os
 import sys
 import argparse
 import json
-import fcntl
 import torch
 import torch.multiprocessing as mp
 from PIL import Image
@@ -51,37 +50,6 @@ MODEL_PATHS = {
 }
 
 # --- Detail JSONL helpers ---
-
-def _build_real_prompt(clean_prompt: str, text_list: list) -> str:
-    """Construct real_prompt = clean_prompt + text description for CLIP/VQA evaluation."""
-    if not text_list:
-        return clean_prompt
-    text_desc = ", ".join(f"'{t}'" for t in text_list)
-    return f"{clean_prompt}, with text {text_desc}"
-
-
-def _append_detail(output_path: str, prompt: str, text_list: list, clean_prompt: str | None):
-    """Append one sample's detail to detail.jsonl (process-safe with file lock)."""
-    detail_path = os.path.join(os.path.dirname(output_path), "detail.jsonl")
-    sample_id = os.path.splitext(os.path.basename(output_path))[0]
-    if clean_prompt is None:
-        clean_prompt = prompt
-    real_prompt = _build_real_prompt(clean_prompt, text_list)
-    entry = {
-        "id": sample_id,
-        "prompt": prompt,
-        "clean_prompt": clean_prompt,
-        "real_prompt": real_prompt,
-        "text": text_list,
-    }
-    lock_path = detail_path + ".lock"
-    with open(lock_path, "a") as lf:
-        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-        try:
-            with open(detail_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        finally:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
 # --- Model Wrappers ---
@@ -496,8 +464,6 @@ class OursWrapper(ModelWrapper):
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         image.save(output_path)
-        clean_prompt = getattr(self.inference, '_last_clean_prompt', None)
-        _append_detail(output_path, prompt, text, clean_prompt)
 
 class OursQwenBaseWrapper(ModelWrapper):
     """Wrapper for our pipeline using QwenImage as base model (with cpu_offload)."""
@@ -554,8 +520,6 @@ class OursQwenBaseWrapper(ModelWrapper):
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         image.save(output_path)
-        clean_prompt = getattr(self.inference, '_last_clean_prompt', None)
-        _append_detail(output_path, prompt, text, clean_prompt)
 
 
 class GlyphOnlyWrapper(ModelWrapper):
@@ -580,8 +544,6 @@ class GlyphOnlyWrapper(ModelWrapper):
         image = self.inference.generate(prompt, text or None, run_name=run_name)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         image.save(output_path)
-        clean_prompt = getattr(self.inference, '_last_clean_prompt', None)
-        _append_detail(output_path, prompt, text, clean_prompt)
 
 
 class GlyphOnlyQwenWrapper(GlyphOnlyWrapper):

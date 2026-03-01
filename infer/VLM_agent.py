@@ -33,12 +33,15 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 PROMPT_TEMPLATES = {
     # ---- 核心：排版分析（Pass 1 参考图 → 排版规划 JSON）----
     "analyze_typography": (
-        "You are an expert in image typography analysis. Given a reference image with a 10×10 grid and coordinate annotations, "
+        "You are an expert in image typography analysis. Given a reference image with a 5×5 grid and coordinate annotations, "
         "analyze the natural text rendering style and overall scene. Then plan the best typography layout for each text/formula item.\n\n"
         "CRITICAL: The reference image shows text that is FLAT and FACING the screen directly (frontal view, no perspective distortion). "
         "You must plan bboxes that are also flat and frontal - bboxes should have parallel top and bottom edges (approximately equal y_min and y_max across the width). "
         "NO angled, slanted, or perspective-distorted text regions.\n\n"
-        "The 10×10 grid (11×11 lines with 0.1 step, covering 0.0-1.0) provides high-density positioning reference. "
+        "IMPORTANT: The red grid lines and coordinate labels overlaid on the image are ONLY positioning aids added by the system. "
+        "They are NOT part of the actual image content. You MUST completely ignore them when describing background_style, dominant_colors, and text_style_hint in image_analysis. "
+        "Do NOT mention grid, red lines, coordinate labels, or overlay artifacts in image_analysis.\n\n"
+        "The 5×5 grid (6 lines per axis at 0.0, 0.2, 0.4, 0.6, 0.8, 1.0) provides positioning reference. "
         "Use the grid coordinates for precise bbox placement (normalized coordinates 0.0-1.0).\n\n"
         "For each text block, determine:\n"
         "- content: the text to render (one line per block)\n"
@@ -184,11 +187,11 @@ def _get_grid_font() -> ImageFont.FreeTypeFont:
 
 
 def _add_grid_overlay(image: Image.Image, grid_size: int = 6) -> Image.Image:
-    """在图像上添加10×10网格和坐标标注（11×11条线，步长0.1）。
+    """在图像上添加 5×5 网格和坐标标注（6 条线，步长 0.2）。
 
     Args:
         image: 输入图像
-        grid_size: 网格线数量（默认11条线: 0.0, 0.1, ..., 1.0，形成10×10区域）
+        grid_size: 每个轴的线数（默认 6 条: 0.0, 0.2, 0.4, 0.6, 0.8, 1.0，形成 5×5 区域）
 
     Returns:
         带网格和坐标标注的图像副本
@@ -205,10 +208,9 @@ def _add_grid_overlay(image: Image.Image, grid_size: int = 6) -> Image.Image:
     # 加载字体 - 使用更小字体避免拥挤
     font = _get_grid_font()
     
-    # 网格步长：11条线形成10个间隔（0.0, 0.1, 0.2, ..., 1.0）
-    step = 1.0 / (grid_size - 1)  # 0.1
+    step = 1.0 / (grid_size - 1)
     
-    # 标注间隔：每2条线标注一次（0.0, 0.2, 0.4, 0.6, 0.8, 1.0）
+    # 标注间隔：每 label_interval 条线标注一次
     label_interval = 2
 
     # 绘制竖线和横线
@@ -404,9 +406,9 @@ class VLMAgent:
 
         contents_desc = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(text_contents))
         user_content = (
-            f"原始 prompt: {prompt}\n\n"
-            f"待渲染的文本/公式内容列表:\n{contents_desc}\n\n"
-            f"图像上的红色网格线和坐标标注可以帮助你精确定位文本区域。"
+            f"Original prompt: {prompt}\n\n"
+            f"Text/formula items to render:\n{contents_desc}\n\n"
+            f"The red 5×5 grid lines (step 0.2) and coordinate labels on the image are positioning aids only, not part of the actual image content."
         )
 
         from .formula_helper import get_font_registry

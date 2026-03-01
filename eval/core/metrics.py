@@ -564,6 +564,25 @@ class VLMMetrics:
             return raw / 10.0
         return 0.0
 
+    def evaluate_image_quality(self, image: Image.Image) -> float:
+        """Rate overall image quality on [0, 1] (clarity, coherence, aesthetics)."""
+        if not self.available:
+            return 0.0
+        image = self._prepare_image(image)
+        quality_prompt = (
+            "Evaluate the overall quality of this image considering:\n"
+            "1. Image clarity and sharpness\n"
+            "2. Visual coherence and aesthetics\n"
+            "3. Proper rendering of all elements\n\n"
+            "Rate from 0-10, respond with only a number."
+        )
+        response = self._call_vlm(image, quality_prompt, max_tokens=10)
+        import re
+        numbers = re.findall(r'\d+\.?\d*', response)
+        if numbers:
+            return min(10.0, max(0.0, float(numbers[0]))) / 10.0
+        return 0.0
+
     def evaluate_aesthetic(self, image: Image.Image) -> float:
         result = self.evaluate_text_rendering(image, "")
         return result.get("image_quality", 0.0)

@@ -107,6 +107,7 @@ class QwenImageInference:
         self.logger = logger
         self._pipeline = None
         self._vlm_agent = None
+        self._vlm_metrics = None
         self._glyph_injector = None
         self._klein_generator = None
         self._output_counter = 0
@@ -151,6 +152,13 @@ class QwenImageInference:
         if self._vlm_agent is None:
             self._vlm_agent = VLMAgent()
         return self._vlm_agent
+
+    @property
+    def vlm_metrics(self):
+        if self._vlm_metrics is None:
+            from eval.core.metrics import VLMMetrics
+            self._vlm_metrics = VLMMetrics(model_path="ApiCall")
+        return self._vlm_metrics
 
     @property
     def glyph_injector(self) -> GlyphInjector:
@@ -338,24 +346,23 @@ class QwenImageInference:
 
         self._save_candidates_concat(candidates)
 
-        # OCR 评分选优
-        # pool: [pass1, pass2, pass3_0, pass3_1, ...]
+        # VLM Style + Faithfulness 综合选优
         selection_pool = [("pass1_reference", candidates["pass1_reference"])]
         selection_pool.append(("pass2_injection", pass2_image))
         selection_pool.extend(pass3_variants)
 
-        print(f"=== OCR 选优 ({len(selection_pool)} candidates) ===")
+        print(f"=== VLM 综合选优 ({len(selection_pool)} candidates) ===")
         names, images = zip(*selection_pool)
-        scores = self.vlm_agent.ocr_score_images(list(images), prompt)
-        best_score = max(scores)
-        if scores[0] >= best_score:
-            best_idx = 0
-        else:
-            best_idx = max(
-                (i for i in range(len(scores)) if scores[i] == best_score),
-                default=len(scores) - 1,
-            )
-        print(f"  OCR 选优结果: {names[best_idx]} (score={scores[best_idx]:.3f})")
+        composite_scores = []
+        for i, (name, img) in enumerate(selection_pool):
+            quality = self.vlm_metrics.evaluate_image_quality(img)
+            faithfulness = self.vlm_metrics._evaluate_faithfulness(img, prompt)
+            score = (quality + faithfulness) / 2.0
+            composite_scores.append(score)
+            print(f"  [{i}] {name}: quality={quality:.3f} faith={faithfulness:.3f} => {score:.3f}")
+
+        best_idx = max(range(len(composite_scores)), key=lambda i: composite_scores[i])
+        print(f"  选优结果: {names[best_idx]} (score={composite_scores[best_idx]:.3f})")
         return images[best_idx]
 
     # ---- Pass 2 去噪（QwenImage 特有的 packed latent + CFG） ----

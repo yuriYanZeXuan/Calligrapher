@@ -653,6 +653,10 @@ def split_results_by_source(output_path: str, dataset: List[Dict], split_dir: st
     Uses the '_source' tag on each dataset sample to determine which output
     file a result belongs to. Output filenames match the original source
     (e.g. unseen_en.jsonl).
+    
+    If a split file already exists, new metric fields are merged into
+    existing entries (keyed by 'id') so that multiple evaluation passes
+    (e.g. regular metrics + hpsv3) accumulate rather than overwrite.
     """
     source_map: Dict[str, str] = {}
     for sample in dataset:
@@ -667,8 +671,20 @@ def split_results_by_source(output_path: str, dataset: List[Dict], split_dir: st
     os.makedirs(split_dir, exist_ok=True)
     for source, entries in sorted(buckets.items()):
         out_path = os.path.join(split_dir, f"{source}.jsonl")
+
+        existing: Dict[str, Dict] = {}
+        if os.path.exists(out_path):
+            existing = load_existing_results(out_path)
+
+        for entry in entries:
+            eid = entry.get('id', '')
+            if eid in existing:
+                existing[eid].update(entry)
+            else:
+                existing[eid] = entry
+
         with open(out_path, 'w', encoding='utf-8') as f:
-            for entry in entries:
+            for entry in existing.values():
                 f.write(json.dumps(entry, ensure_ascii=False) + '\n')
         
         summary = compute_summary(out_path)
@@ -676,7 +692,7 @@ def split_results_by_source(output_path: str, dataset: List[Dict], split_dir: st
         with open(summary_path, 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
 
-        print(f"  {source}: {len(entries)} samples -> {out_path}")
+        print(f"  {source}: {len(existing)} samples -> {out_path}")
 
     print(f"Split into {len(buckets)} files in {split_dir}")
 

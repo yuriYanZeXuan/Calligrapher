@@ -109,7 +109,7 @@ class QwenImageInference:
         self._vlm_agent = None
         self._glyph_injector = None
         self._klein_generator = None
-        self._output_counter = self._scan_max_counter(self._CAT_IMG_DIR)
+        self._output_counter = 0
         self._current_tag = "000"
 
     # ---- 延迟加载 ----

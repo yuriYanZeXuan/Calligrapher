@@ -827,11 +827,11 @@ class HPSv3Metrics:
 
     def compute_score(self, image_path: str, prompt: str) -> float:
         """Return the HPSv3 mu score for one image-prompt pair."""
-        rewards = self.inferencer.reward([image_path], [prompt])
+        rewards = self.inferencer.reward([prompt], [image_path])
         return float(rewards[0][0].item())
 
     def compute_batch(self, image_paths: List[str], prompts: List[str]) -> List[float]:
-        rewards = self.inferencer.reward(image_paths, prompts)
+        rewards = self.inferencer.reward(prompts, image_paths)
         return [float(r[0].item()) for r in rewards]
 
 

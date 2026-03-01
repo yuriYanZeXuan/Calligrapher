@@ -285,14 +285,11 @@ def _extract_json_from_response(text: str) -> dict:
 # ============ VLMAgent 类 ============
 
 
-_FALLBACK_API_KEY = "MAASace45968cdbf4afeb71d07ecef846c94"
-
-
 class VLMAgent:
     """统一的 VLM 调用接口
 
     集中管理所有 VLM/LLM 交互：排版分析、prompt 改写、图像评分等。
-    API 调用失败时先用备用 key 立即重试，仍失败才等 30s，最多 5 轮。
+    API 调用失败时轮换 QST_API_KEY / QST_API_KEY2，无限重试直到成功。
     """
 
     def __init__(
@@ -301,25 +298,36 @@ class VLMAgent:
         base_url: Optional[str] = None,
         model: str = "qwen3-vl-235b-a22b-instruct",
     ):
-        self._api_key = api_key or os.getenv("QST_API_KEY")
         self._base_url = base_url or os.getenv("QST_BASE_URL")
         self._model = model
-        self._primary_client: Optional[OpenAI] = None
-        self._fallback_client: Optional[OpenAI] = None
+
+        key1 = api_key or os.getenv("QST_API_KEY")
+        key2 = os.getenv("QST_API_KEY2")
+        self._clients: list[OpenAI] = []
+        if key1:
+            self._clients.append(OpenAI(api_key=key1, base_url=self._base_url))
+        if key2:
+            self._clients.append(OpenAI(api_key=key2, base_url=self._base_url))
+        if not self._clients:
+            raise RuntimeError("QST_API_KEY and QST_API_KEY2 are both unset")
 
     @property
     def client(self) -> OpenAI:
-        """延迟创建主 OpenAI 客户端"""
-        if self._primary_client is None:
-            self._primary_client = OpenAI(api_key=self._api_key, base_url=self._base_url)
-        return self._primary_client
+        return self._clients[0]
 
-    @property
-    def fallback_client(self) -> OpenAI:
-        """延迟创建备用 OpenAI 客户端"""
-        if self._fallback_client is None:
-            self._fallback_client = OpenAI(api_key=_FALLBACK_API_KEY, base_url=self._base_url)
-        return self._fallback_client
+    def _api_call(self, **call_kwargs) -> str:
+        """轮换所有 key 无限重试，返回响应文本。"""
+        attempt = 0
+        while True:
+            for idx, cli in enumerate(self._clients):
+                try:
+                    resp = cli.chat.completions.create(**call_kwargs)
+                    return resp.choices[0].message.content
+                except Exception as e:
+                    print(f"[VLM] key{idx + 1} 失败 (round {attempt + 1}): {e}")
+            attempt += 1
+            print(f"[VLM] 所有 key 均失败，30s 后第 {attempt + 1} 轮重试...")
+            time.sleep(30)
 
     # ---- 核心调用 ----
 
@@ -365,29 +373,10 @@ class VLMAgent:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_parts},
         ]
-        call_kwargs = dict(model=self._model, messages=messages,
-                           stream=False, max_tokens=max_tokens, temperature=temperature)
-
-        max_retries = 5
-        for attempt in range(max_retries + 1):
-            # 1) 主 key
-            try:
-                resp = self.client.chat.completions.create(**call_kwargs)
-                return resp.choices[0].message.content
-            except Exception as e1:
-                print(f"[VLM] 主 key 失败 (attempt {attempt + 1}/{max_retries}): {e1}")
-
-            # 2) 备用 key（立即重试，不等待）
-            try:
-                resp = self.fallback_client.chat.completions.create(**call_kwargs)
-                return resp.choices[0].message.content
-            except Exception as e2:
-                print(f"[VLM] 备用 key 也失败: {e2}")
-
-            if attempt == max_retries:
-                raise RuntimeError(f"[VLM] 主 key 和备用 key 均失败，已重试 {max_retries} 轮")
-            print(f"[VLM] 30s 后重试...")
-            time.sleep(30)
+        return self._api_call(
+            model=self._model, messages=messages,
+            stream=False, max_tokens=max_tokens, temperature=temperature,
+        )
 
     # ---- 排版分析（核心）----
 
@@ -567,7 +556,7 @@ class VLMAgent:
 
         system_prompt = PROMPT_TEMPLATES["select_best_image"].format(n=n)
 
-        response = self.client.chat.completions.create(
+        raw = self._api_call(
             model=self._model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -575,8 +564,7 @@ class VLMAgent:
             ],
             max_tokens=16,
             temperature=0.1,
-        )
-        raw = response.choices[0].message.content.strip()
+        ).strip()
 
         nums = [int(x) for x in re.findall(r"\d+", raw)]
         if nums and 1 <= nums[0] <= n:
@@ -608,7 +596,7 @@ class VLMAgent:
         scores = []
         for i, img in enumerate(images):
             b64 = _encode_image_b64(img)
-            response = self.client.chat.completions.create(
+            recognized = self._api_call(
                 model=self._model,
                 messages=[{"role": "user", "content": [
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
@@ -616,8 +604,7 @@ class VLMAgent:
                 ]}],
                 max_tokens=512,
                 temperature=0.0,
-            )
-            recognized = response.choices[0].message.content.strip()
+            ).strip()
             if (recognized.startswith('"') and recognized.endswith('"')) or \
                (recognized.startswith("'") and recognized.endswith("'")):
                 recognized = recognized[1:-1]
@@ -661,7 +648,7 @@ class VLMAgent:
 
         system_prompt = PROMPT_TEMPLATES["rank_images"].format(n=n)
 
-        response = self.client.chat.completions.create(
+        raw = self._api_call(
             model=self._model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -669,8 +656,7 @@ class VLMAgent:
             ],
             max_tokens=64,
             temperature=0.1,
-        )
-        raw = response.choices[0].message.content.strip()
+        ).strip()
 
         # 解析排名
         nums = [int(x) for x in re.findall(r"\d+", raw)]

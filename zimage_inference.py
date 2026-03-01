@@ -12,6 +12,7 @@ Z-Image 推理主入口
 """
 
 import os
+import re
 import sys
 import json
 from typing import Optional, Union
@@ -106,7 +107,7 @@ class ZImageInference:
         self._glyph_injector = None
         self._klein_generator = None
         self._qwenedit_generator = None
-        self._output_counter = 0
+        self._output_counter = self._scan_max_counter(self._CAT_IMG_DIR)
         self._current_tag = "000"
 
     # ---- 延迟加载属性 ----
@@ -801,6 +802,20 @@ class ZImageInference:
         }
 
     _CAT_IMG_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/logs/CAT_IMG"
+
+    @staticmethod
+    def _scan_max_counter(cat_img_dir: str) -> int:
+        """扫描目录中已有文件的最大数字前缀，返回该值作为起始 counter。
+        多 GPU 进程共享同一目录时可避免文件名覆盖。"""
+        if not os.path.isdir(cat_img_dir):
+            return 0
+        max_num = 0
+        _leading_num = re.compile(r"^(\d+)")
+        for fname in os.listdir(cat_img_dir):
+            m = _leading_num.match(fname)
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+        return max_num
 
     def _save_candidates_concat(self, candidates: dict[str, Image.Image]) -> None:
         """将所有候选图水平拼接，保存到 CAT_IMG 目录（始终启用，不受 debug 控制）。"""

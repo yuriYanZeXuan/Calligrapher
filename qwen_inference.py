@@ -14,6 +14,7 @@ QwenImage 推理主入口（对齐 zimage_inference 的 3-pass 架构）
 
 import inspect
 import os
+import re
 import sys
 import json
 import math
@@ -108,7 +109,7 @@ class QwenImageInference:
         self._vlm_agent = None
         self._glyph_injector = None
         self._klein_generator = None
-        self._output_counter = 0
+        self._output_counter = self._scan_max_counter(self._CAT_IMG_DIR)
         self._current_tag = "000"
 
     # ---- 延迟加载 ----
@@ -593,6 +594,20 @@ class QwenImageInference:
     # ---- 工具方法 ----
 
     _CAT_IMG_DIR = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/Calligrapher/logs/CAT_IMG_QWEN"
+
+    @staticmethod
+    def _scan_max_counter(cat_img_dir: str) -> int:
+        """扫描目录中已有文件的最大数字前缀，返回该值作为起始 counter。
+        多 GPU 进程共享同一目录时可避免文件名覆盖。"""
+        if not os.path.isdir(cat_img_dir):
+            return 0
+        max_num = 0
+        _leading_num = re.compile(r"^(\d+)")
+        for fname in os.listdir(cat_img_dir):
+            m = _leading_num.match(fname)
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+        return max_num
 
     def _save_candidates_concat(self, candidates):
         if not candidates:

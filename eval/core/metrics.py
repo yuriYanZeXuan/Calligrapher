@@ -343,16 +343,13 @@ class VLMMetrics:
         self.available = False
         self.model = None
         self.processor = None
-        self._api_client = None
-        self._fallback_client = None
+        self._api_clients = []
         self._api_model = None
 
         if model_path == "ApiCall":
             self._init_api_backend()
         else:
             self._init_local_backend(model_path, device)
-
-    _FALLBACK_API_KEY = "MAASace45968cdbf4afeb71d07ecef846c94"
 
     # ---- backend initialisation ----
 
@@ -361,17 +358,23 @@ class VLMMetrics:
         from dotenv import load_dotenv
         load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 
-        api_key = os.getenv("QST_API_KEY")
         base_url = os.getenv("QST_BASE_URL")
-        if not api_key or not base_url:
-            self.logger.error("QST_API_KEY / QST_BASE_URL not set – VLM ApiCall unavailable")
+        if not base_url:
+            self.logger.error("QST_BASE_URL not set – VLM ApiCall unavailable")
             return
 
-        self._api_client = OpenAI(api_key=api_key, base_url=base_url)
-        self._fallback_client = OpenAI(api_key=self._FALLBACK_API_KEY, base_url=base_url)
+        for key_name in ("QST_API_KEY", "QST_API_KEY2"):
+            key = os.getenv(key_name)
+            if key:
+                self._api_clients.append(OpenAI(api_key=key, base_url=base_url))
+
+        if not self._api_clients:
+            self.logger.error("QST_API_KEY / QST_API_KEY2 not set – VLM ApiCall unavailable")
+            return
+
         self._api_model = "qwen3-vl-235b-a22b-instruct"
         self.available = True
-        self.logger.info(f"VLM ApiCall backend ready (model={self._api_model})")
+        self.logger.info(f"VLM ApiCall backend ready (model={self._api_model}, keys={len(self._api_clients)})")
 
     def _init_local_backend(self, model_path: str, device: str):
         from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
@@ -397,7 +400,7 @@ class VLMMetrics:
 
     def _call_vlm(self, image: Image.Image, text_prompt: str, max_tokens: int = 512) -> str:
         """Unified VLM call: dispatches to API or local model."""
-        if self._api_client is not None:
+        if self._api_clients:
             return self._call_vlm_api(image, text_prompt, max_tokens)
         return self._call_vlm_local(image, text_prompt, max_tokens)
 
@@ -415,24 +418,16 @@ class VLMMetrics:
             model=self._api_model, messages=messages,
             stream=False, max_tokens=max_tokens, temperature=0.0,
         )
-        max_retries = 5
-        for attempt in range(max_retries + 1):
-            try:
-                resp = self._api_client.chat.completions.create(**call_kwargs)
-                return resp.choices[0].message.content.strip()
-            except Exception as e1:
-                self.logger.warning(f"VLM primary key failed (attempt {attempt + 1}/{max_retries}): {e1}")
-
-            if self._fallback_client is not None:
+        attempt = 0
+        while True:
+            for idx, cli in enumerate(self._api_clients):
                 try:
-                    resp = self._fallback_client.chat.completions.create(**call_kwargs)
+                    resp = cli.chat.completions.create(**call_kwargs)
                     return resp.choices[0].message.content.strip()
-                except Exception as e2:
-                    self.logger.warning(f"VLM fallback key also failed: {e2}")
-
-            if attempt == max_retries:
-                raise RuntimeError(f"VLM API: both keys failed after {max_retries} retries")
-            self.logger.info("VLM API: retrying in 30s...")
+                except Exception as e:
+                    self.logger.warning(f"VLM key{idx + 1} failed (round {attempt + 1}): {e}")
+            attempt += 1
+            self.logger.info(f"VLM API: all keys failed, retrying in 30s (round {attempt + 1})...")
             time.sleep(30)
 
     def _call_vlm_local(self, image: Image.Image, text_prompt: str, max_tokens: int) -> str:

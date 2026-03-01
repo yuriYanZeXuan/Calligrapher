@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 client = OpenAI(
-    api_key=os.getenv("QST_API_KEY"),
+    api_key="MAASace45968cdbf4afeb71d07ecef846c94",
     base_url=os.getenv("QST_BASE_URL")
 )
 

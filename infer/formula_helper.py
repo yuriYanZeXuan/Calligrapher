@@ -870,9 +870,9 @@ if __name__ == "__main__":
 
     test_cases = [
         # (名称, 公式文本, 是否强制latex)
-        ("25_bmatrix_jacobian",
-         r"$J = \begin{bmatrix} \frac{\partial f_1}{\partial x_1} & \cdots & \frac{\partial f_1}{\partial x_n} \\ \vdots & \ddots & \vdots \\ \frac{\partial f_m}{\partial x_1} & \cdots & \frac{\partial f_m}{\partial x_n} \end{bmatrix}$",
-         False),
+        ("e2",
+         r"$E^2=(pc)^2+(m_0c^2)^2$",
+         True),
     ]
 
     print(f"渲染 {len(test_cases)} 个测试用例到 {out_dir}")

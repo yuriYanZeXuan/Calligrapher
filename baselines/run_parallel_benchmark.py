@@ -407,6 +407,7 @@ class OursWrapper(ModelWrapper):
         no_refiner:      disable prompt refiner (use raw prompt directly)
         harmonizer_type: "klein" (default) or "qwenedit"
         freq_decompose:  enable frequency decomposition in glyph injection
+        no_attn:         disable attention enhancement during injection
     """
 
     KLEIN_MODEL_PATH = "/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/flux2-klein"
@@ -414,13 +415,15 @@ class OursWrapper(ModelWrapper):
 
     def __init__(self, device="cuda", model_path=None,
                  no_inject=False, no_harmonize=False, no_refiner=False,
-                 harmonizer_type="klein", freq_decompose=False, debug=False):
+                 harmonizer_type="klein", freq_decompose=False,
+                 no_attn=False, debug=False):
         super().__init__(device, model_path)
         self.no_inject = no_inject
         self.no_harmonize = no_harmonize
         self.no_refiner = no_refiner
         self.harmonizer_type = harmonizer_type
         self.freq_decompose = freq_decompose
+        self.no_attn = no_attn
 
         from zimage_inference import ZImageInference, GenerationConfig
         from infer.glyph_injector import InjectionConfig
@@ -442,6 +445,8 @@ class OursWrapper(ModelWrapper):
 
         injection_config = self._InjectionConfig(
             freq_decompose=self.freq_decompose,
+            attn_enhance_text_to_image=not self.no_attn,
+            attn_enhance_image_to_text=not self.no_attn,
         )
         config = self._GenerationConfig(
             seed=42,
@@ -472,13 +477,15 @@ class OursQwenBaseWrapper(ModelWrapper):
 
     def __init__(self, device="cuda", model_path=None,
                  no_inject=False, no_harmonize=False, no_refiner=False,
-                 harmonizer_type="klein", freq_decompose=False, debug=False):
+                 harmonizer_type="klein", freq_decompose=False,
+                 no_attn=False, debug=False):
         super().__init__(device, model_path)
         self.no_inject = no_inject
         self.no_harmonize = no_harmonize
         self.no_refiner = no_refiner
         self.harmonizer_type = harmonizer_type
         self.freq_decompose = freq_decompose
+        self.no_attn = no_attn
 
         from qwen_inference import QwenImageInference, QwenGenerationConfig
         from infer.glyph_injector import InjectionConfig
@@ -499,7 +506,11 @@ class OursQwenBaseWrapper(ModelWrapper):
         if isinstance(text, str):
             text = [text] if text.strip() else []
 
-        injection_config = self._InjectionConfig(freq_decompose=self.freq_decompose)
+        injection_config = self._InjectionConfig(
+            freq_decompose=self.freq_decompose,
+            attn_enhance_text_to_image=not self.no_attn,
+            attn_enhance_image_to_text=not self.no_attn,
+        )
         config = self._QwenGenerationConfig(
             seed=42,
             use_prompt_refiner=not self.no_refiner,
@@ -735,6 +746,7 @@ def worker_fn(rank, world_size, args, dataset, output_dir):
             'no_refiner': args.no_refiner,
             'harmonizer_type': args.harmonizer_type,
             'freq_decompose': args.freq_decompose,
+            'no_attn': args.no_attn,
             'debug': args.debug,
         }
     model = MODELS[args.model](device=device, model_path=args.model_path, **model_kwargs)
@@ -843,6 +855,8 @@ def main():
                        help="[ours] Pass 3 harmonizer: 'klein' (FluxKlein+mask) or 'qwenedit' (instruction edit)")
     parser.add_argument("--freq-decompose", action='store_true',
                        help="[ours] Enable frequency decomposition in glyph injection (only inject high-frequency components)")
+    parser.add_argument("--no-attn", action='store_true',
+                       help="[ours] Disable attention enhancement during glyph injection")
     args = parser.parse_args()
     
     # Setup

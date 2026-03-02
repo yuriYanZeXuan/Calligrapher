@@ -347,7 +347,11 @@ class QwenImageInference:
         self._save_candidates_concat(candidates)
 
         # VLM Style + Faithfulness 综合选优
-        selection_pool = [("pass1_reference", candidates["pass1_reference"])]
+        # 启用 harmonization 时，pass1 仅作排版参考，不参与选优
+        selection_pool = []
+        include_pass1 = not config.use_harmonization and "pass1_reference" in candidates
+        if include_pass1:
+            selection_pool.append(("pass1_reference", candidates["pass1_reference"]))
         selection_pool.append(("pass2_injection", pass2_image))
         selection_pool.extend(pass3_variants)
 

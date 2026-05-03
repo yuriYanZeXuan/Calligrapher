@@ -391,11 +391,8 @@ class ZImageInference:
         self._save_candidates_concat(candidates)
 
         # === OCR 评分选优 ===
-        # 启用 harmonization 时，pass1 仅作排版参考，不参与选优
-        selection_pool = []
-        include_pass1 = not config.use_harmonization and "pass1_reference" in candidates
-        if include_pass1:
-            selection_pool.append(("pass1_reference", candidates["pass1_reference"]))
+        # pool: [pass1, pass2, pass3_0, pass3_1, ...]
+        selection_pool = [("pass1_reference", candidates["pass1_reference"])]
         selection_pool.append(("pass2_injection", pass2_image))
         selection_pool.extend(pass3_variants)
 
@@ -403,7 +400,8 @@ class ZImageInference:
         names, images = zip(*selection_pool)
         scores = self.vlm_agent.ocr_score_images(list(images), prompt)
         best_score = max(scores)
-        if include_pass1 and scores[0] >= best_score:
+        # pass1 同分 → 选 pass1；否则选分最高中靠后的（画风更好）
+        if scores[0] >= best_score:
             best_idx = 0
         else:
             best_idx = max(

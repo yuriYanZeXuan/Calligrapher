@@ -31,6 +31,8 @@ sys.path.extend([
     os.path.join(BASE_DIR, 'qwenimage'),
     os.path.join(BASE_DIR, 'nanobanana'),
     os.path.join(BASE_DIR, 'FluxText'),
+    os.path.join(BASE_DIR, 'FreeText'),
+    os.path.join(BASE_DIR, 'textdiffuser2'),
 ])
 
 # Model paths configuration
@@ -46,6 +48,9 @@ MODEL_PATHS = {
     'z_image': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
     'qwenimage': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen-image-2512',
     'fluxtext': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/fluxtext_lora.safetensors',
+    'freetext_qwen': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/qwen-image-2512',
+    'textdiffuser2': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/textdiffuser2_inp',
+    'textdiffuser2_base': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/sdv1-5',
     'ours': '/mnt/tidalfs-bdsz01/usr/tusen/yanzexuan/weight/Z-Image',
 }
 
@@ -365,6 +370,53 @@ class QwenImageWrapper(ModelWrapper):
         )
         result.images[0].save(output_path)
 
+
+class FreeTextQwenWrapper(ModelWrapper):
+    """FreeText baseline implemented on top of Qwen-Image."""
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from inference_freetext_qwen import FreeTextQwenGenerator
+        import torch
+        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        self.generator = FreeTextQwenGenerator(
+            model_path=self.model_path or MODEL_PATHS['freetext_qwen'],
+            device=device,
+            dtype=dtype,
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        from inference_freetext_qwen import FreeTextConfig
+        config = FreeTextConfig(seed=42)
+        self.generator.generate(
+            prompt=prompt,
+            output_path=output_path,
+            text=kwargs.get('text', []),
+            config=config,
+        )
+
+
+class TextDiffuser2Wrapper(ModelWrapper):
+    """TextDiffuser-2 direct text-to-image benchmark wrapper."""
+    def __init__(self, device="cuda", model_path=None):
+        super().__init__(device, model_path)
+        from inference_textdiffuser2 import TextDiffuser2Inpainter
+        self.generator = TextDiffuser2Inpainter(
+            diffusion_model_path=self.model_path or MODEL_PATHS['textdiffuser2'],
+            base_model_path=os.environ.get('BASE_MODEL_PATH', MODEL_PATHS['textdiffuser2_base']),
+            device=device,
+        )
+
+    def generate(self, prompt, output_path, **kwargs):
+        self.generator.generate(
+            prompt=prompt,
+            output_path=output_path,
+            text=kwargs.get('text', []),
+            seed=42,
+            sample_steps=50,
+            image_size=512,
+            min_area=kwargs.get('min_area', 0.18),
+        )
+
 class NanoBananaWrapper(ModelWrapper):
     def __init__(self, device="cuda", model_path=None):
         super().__init__(device, model_path)
@@ -579,6 +631,8 @@ MODELS = {
     'glm_image': GlmImageWrapper,
     'z_image': ZImageWrapper,
     'qwenimage': QwenImageWrapper,
+    'freetext_qwen': FreeTextQwenWrapper,
+    'textdiffuser2': TextDiffuser2Wrapper,
     'nanobanana': NanoBananaWrapper,
     'fluxtext': FluxTextModelWrapper,
     'ours': OursWrapper,

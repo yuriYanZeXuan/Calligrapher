@@ -7,6 +7,7 @@ from transformers import CLIPTokenizer, CLIPTextModel
 import numpy as np
 from tqdm.auto import tqdm
 import string
+import re
 
 from diffusers.utils import load_image
 from torchvision.transforms.functional import to_pil_image, to_tensor
@@ -51,11 +52,38 @@ class TextDiffuser2Inpainter:
         
         print("Diffusion models loaded.")
 
+    @staticmethod
+    def extract_text(prompt, text=None):
+        if isinstance(text, list) and text:
+            return " ".join(str(t) for t in text if str(t).strip())
+        if isinstance(text, str) and text.strip():
+            return text
+        quoted = [m.group(1) for m in re.finditer(r'"([^"]+)"', prompt)]
+        if quoted:
+            return " ".join(quoted)
+        quoted = [m.group(1) for m in re.finditer(r"'([^']+)'", prompt)]
+        return " ".join(quoted) if quoted else prompt[:64]
+
+    @staticmethod
+    def make_text2image_condition(image_size=512, min_area=0.18):
+        """Create blank source and centered text-region mask for direct T2I use."""
+        source = Image.new("RGB", (image_size, image_size), "white")
+        mask = Image.new("L", (image_size, image_size), 0)
+        import PIL.ImageDraw as ImageDraw
+        draw = ImageDraw.Draw(mask)
+        box_w = int(image_size * 0.78)
+        box_h = int(image_size * max(min_area, 0.10))
+        x1 = (image_size - box_w) // 2
+        y1 = int(image_size * 0.42)
+        draw.rectangle([x1, y1, x1 + box_w, y1 + box_h], fill=255)
+        return source, mask
+
     def inpaint(
         self,
         prompt,
         source_img,
         mask_img,
+        caption=None,
         seed=42,
         cfg_scale=7.0,
         sample_steps=50,
@@ -104,8 +132,10 @@ class TextDiffuser2Inpainter:
         ocr_ids.extend(char_list)
         ocr_ids.append(self.tokenizer.eos_token)
         
-        # A generic caption is used in the demo for inpainting
-        caption_ids = self.tokenizer("a sign with text", truncation=True, return_tensors="pt").input_ids[0].tolist()
+        # Direct T2I uses the real scene prompt as caption; legacy inpainting
+        # calls can keep the generic caption by passing caption=None.
+        caption = caption or "a sign with text"
+        caption_ids = self.tokenizer(caption, truncation=True, return_tensors="pt").input_ids[0].tolist()
 
         try:
             encoded_ocr = self.tokenizer.convert_tokens_to_ids(ocr_ids)
@@ -166,14 +196,50 @@ class TextDiffuser2Inpainter:
 
         return image
 
+    def generate(
+        self,
+        prompt,
+        output_path,
+        text=None,
+        seed=42,
+        cfg_scale=7.0,
+        sample_steps=50,
+        image_size=512,
+        min_area=0.18,
+    ):
+        """Text-to-image wrapper for benchmark integration.
+
+        TextDiffuser-2 is an inpainting-style model, so this method creates a
+        blank canvas and a centered text mask automatically, then uses the input
+        prompt as the caption condition and the extracted quoted text as OCR
+        content.
+        """
+        target_text = self.extract_text(prompt, text)
+        source, mask = self.make_text2image_condition(image_size=image_size, min_area=min_area)
+        return self.inpaint(
+            prompt=target_text,
+            caption=prompt,
+            source_img=source,
+            mask_img=mask,
+            seed=seed,
+            cfg_scale=cfg_scale,
+            sample_steps=sample_steps,
+            image_size=image_size,
+            output_path=output_path,
+        )
+
 def main():
     parser = argparse.ArgumentParser(description="TextDiffuser-2 Inpainting Inference Script")
     parser.add_argument("--base_model_path", type=str, default="runwayml/stable-diffusion-v1-5", help="Path to the base Stable Diffusion v1.5 model.")
     parser.add_argument("--diffusion_model_path", type=str, required=True, help="Path to the fine-tuned inpainting model checkpoint.")
-    parser.add_argument("--prompt", type=str, required=True, help="The text to inpaint.")
-    parser.add_argument("--source_path", type=str, required=True, help="Path to the source image.")
-    parser.add_argument("--mask_path", type=str, required=True, help="Path to the mask image.")
+    parser.add_argument("--prompt", type=str, required=True, help="Scene prompt or text to render.")
+    parser.add_argument("--text", type=str, default="", help="Target text. If empty, quoted text is extracted from prompt.")
+    parser.add_argument("--source_path", type=str, default="", help="Optional source image for legacy inpainting.")
+    parser.add_argument("--mask_path", type=str, default="", help="Optional mask image for legacy inpainting.")
+    parser.add_argument("--text2image", action="store_true", help="Run direct text-to-image wrapper.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+    parser.add_argument("--sample_steps", type=int, default=50, help="Sampling steps.")
+    parser.add_argument("--image_size", type=int, default=512, help="Output image size.")
     parser.add_argument("--output_path", type=str, default="output/textdiffuser2_inpaint.png", help="Path to save the generated image.")
     args = parser.parse_args()
 
@@ -182,13 +248,26 @@ def main():
         base_model_path=args.base_model_path
     )
 
-    inpainter.inpaint(
-        prompt=args.prompt,
-        source_img=args.source_path,
-        mask_img=args.mask_path,
-        seed=args.seed,
-        output_path=args.output_path
-    )
+    if args.text2image or not (args.source_path and args.mask_path):
+        inpainter.generate(
+            prompt=args.prompt,
+            text=args.text,
+            seed=args.seed,
+            sample_steps=args.sample_steps,
+            image_size=args.image_size,
+            output_path=args.output_path,
+        )
+    else:
+        inpainter.inpaint(
+            prompt=args.text or args.prompt,
+            caption=args.prompt,
+            source_img=args.source_path,
+            mask_img=args.mask_path,
+            seed=args.seed,
+            sample_steps=args.sample_steps,
+            image_size=args.image_size,
+            output_path=args.output_path
+        )
 
 if __name__ == "__main__":
     main()

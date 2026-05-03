@@ -92,7 +92,7 @@ def main():
     injection_config = InjectionConfig(
         mask_strength=args.mask_strength,
         strength_schedule=args.strength_schedule,
-        attn_suppress_scale=args.attn_suppress,
+        attn_suppress_scale=args.attn_suppress_scale,
         attn_enhance_scale=args.attn_enhance,
     )
 

@@ -53,10 +53,12 @@ class FreeTextConfig:
     probe_steps: int = 16
     top_k_attention_maps: int = 12
     fallback_min_area: float = 0.18
-    sgmi_strength: float = 0.85
+    sgmi_strength: float = 0.55
     sgmi_window: tuple[float, float] = (0.20, 0.42)
     log_gabor_center: float = 0.36
     log_gabor_sigma: float = 0.55
+    stroke_mask_dilate: int = 3
+    stroke_mask_blur: int = 5
 
 
 def extract_target_text(prompt: str, text: Optional[list[str] | str] = None) -> list[str]:
@@ -277,6 +279,25 @@ def log_gabor_filter_like(x: torch.Tensor, center: float, sigma: float) -> torch
     return filtered.to(orig_dtype)
 
 
+def make_soft_stroke_mask(mask_latent: torch.Tensor, dilate: int = 3, blur: int = 5) -> torch.Tensor:
+    """Turn the rendered glyph stroke mask into a soft local injection mask.
+
+    The FreeText paper injects SGMI inside the localized writing region. In this
+    benchmark implementation the localization may fall back to a coarse box, so
+    using the full region as replacement support creates visible rectangular
+    patches. A softened stroke support keeps SGMI local to glyph structures and
+    avoids injecting the template background.
+    """
+    mask = mask_latent.detach().float().clamp(0, 1)
+    if dilate > 1:
+        pad = dilate // 2
+        mask = F.max_pool2d(mask, kernel_size=dilate, stride=1, padding=pad)
+    if blur > 1:
+        pad = blur // 2
+        mask = F.avg_pool2d(F.pad(mask, [pad] * 4, mode="reflect"), kernel_size=blur, stride=1)
+    return mask.clamp(0, 1).to(mask_latent.device)
+
+
 class FreeTextQwenGenerator:
     def __init__(self, model_path: str, device: str = "cuda", dtype: torch.dtype = torch.bfloat16):
         self.qwen = QwenImageInference(model_path=model_path, device=device, dtype=dtype)
@@ -372,13 +393,15 @@ class FreeTextQwenGenerator:
             plan, (config.width, config.height), noise.squeeze(1), timesteps,
         )
 
-        latent_h, latent_w = injection_data["mask_latent"].shape[-2:]
-        region_latent = cv2.resize(region_mask, (latent_w, latent_h), interpolation=cv2.INTER_AREA)
-        region_latent = (region_latent > 2).astype(np.float32)
-        injection_data["mask_latent"] = torch.from_numpy(region_latent).unsqueeze(0).unsqueeze(0).to(
-            self.qwen.primary_device
+        # Keep the attention/fallback region only for placing the glyph template.
+        # For latent replacement, use a softened glyph-stroke support instead of
+        # the full region; otherwise a coarse fallback box injects template
+        # background and appears as a hard rectangular patch.
+        injection_data["mask_latent"] = make_soft_stroke_mask(
+            injection_data["mask_latent"].to(self.qwen.primary_device),
+            dilate=config.stroke_mask_dilate,
+            blur=config.stroke_mask_blur,
         )
-        injection_data["full_mask"] = region_mask
 
         # SGMI: apply Log-Gabor modulation to every noise-aligned glyph latent.
         injection_data["latent_list"] = [

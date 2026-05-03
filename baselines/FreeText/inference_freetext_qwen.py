@@ -166,21 +166,32 @@ class _CaptureProcessor:
     ):
         self._collector.current_layer = self._layer_idx
         self._collector.maybe_record(attn, hidden_states, encoder_hidden_states)
+        candidate_kwargs = dict(kwargs)
+        candidate_kwargs["encoder_hidden_states"] = encoder_hidden_states
+        if attention_mask is not None:
+            candidate_kwargs["attention_mask"] = attention_mask
+        if temb is not None:
+            candidate_kwargs["temb"] = temb
         if image_rotary_emb is not None:
-            kwargs["image_rotary_emb"] = image_rotary_emb
+            candidate_kwargs["image_rotary_emb"] = image_rotary_emb
         if encoder_hidden_states_mask is not None:
-            kwargs["encoder_hidden_states_mask"] = encoder_hidden_states_mask
+            candidate_kwargs["encoder_hidden_states_mask"] = encoder_hidden_states_mask
         if image_emb is not None:
-            kwargs["image_emb"] = image_emb
-        return self._original(
-            attn,
-            hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-            attention_mask=attention_mask,
-            temb=temb,
-            *args,
-            **kwargs,
-        )
+            candidate_kwargs["image_emb"] = image_emb
+
+        # Diffusers ships several Qwen attention processors with slightly
+        # different call signatures. Forward only what the wrapped processor can
+        # accept, otherwise Python raises on harmless None/extra kwargs.
+        try:
+            sig = inspect.signature(self._original.__call__)
+            params = sig.parameters
+            has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            if not has_var_kw:
+                candidate_kwargs = {k: v for k, v in candidate_kwargs.items() if k in params}
+        except (TypeError, ValueError):
+            pass
+
+        return self._original(attn, hidden_states, *args, **candidate_kwargs)
 
 
 def topology_refine_attention_map(heat: np.ndarray, width: int, height: int) -> np.ndarray:

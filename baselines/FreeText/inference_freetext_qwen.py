@@ -149,13 +149,33 @@ class _CaptureProcessor:
     def __getattr__(self, name):
         return getattr(self._original, name)
 
-    def __call__(self, attn, hidden_states, encoder_hidden_states=None, *args, **kwargs):
+    def __call__(
+        self,
+        attn,
+        hidden_states,
+        encoder_hidden_states=None,
+        attention_mask=None,
+        temb=None,
+        image_rotary_emb=None,
+        encoder_hidden_states_mask=None,
+        image_emb=None,
+        *args,
+        **kwargs,
+    ):
         self._collector.current_layer = self._layer_idx
         self._collector.maybe_record(attn, hidden_states, encoder_hidden_states)
+        if image_rotary_emb is not None:
+            kwargs["image_rotary_emb"] = image_rotary_emb
+        if encoder_hidden_states_mask is not None:
+            kwargs["encoder_hidden_states_mask"] = encoder_hidden_states_mask
+        if image_emb is not None:
+            kwargs["image_emb"] = image_emb
         return self._original(
             attn,
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
+            attention_mask=attention_mask,
+            temb=temb,
             *args,
             **kwargs,
         )

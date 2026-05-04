@@ -54,8 +54,8 @@ class FreeTextConfig:
     probe_steps: int = 16
     top_k_attention_maps: int = 12
     fallback_min_area: float = 0.08
-    sgmi_strength: float = 0.28
-    sgmi_window: tuple[float, float] = (0.20, 0.42)
+    sgmi_strength: float = 0.16
+    sgmi_window: tuple[float, float] = (0.24, 0.34)
     log_gabor_center: float = 0.36
     log_gabor_sigma: float = 0.55
     stroke_mask_dilate: int = 3
@@ -63,6 +63,9 @@ class FreeTextConfig:
     max_font_size_ratio: float = 0.58
     max_region_width: float = 0.55
     max_region_height: float = 0.16
+    min_attention_peakiness: float = 0.08
+    max_attention_coverage: float = 0.35
+    attention_step_window: tuple[float, float] = (0.18, 0.62)
 
 
 def extract_target_text(prompt: str, text: Optional[list[str] | str] = None) -> list[str]:
@@ -91,7 +94,10 @@ class AttentionMapCollector:
         self.text_indices = text_indices or []
         self.max_maps = max_maps
         self.current_step = 0
+        self.total_steps = 1
         self.current_layer = 0
+        self.record_enabled = True
+        self.step_window = (0.0, 1.0)
         self.maps: list[tuple[float, torch.Tensor]] = []
         self._installed: dict[object, object] = {}
 
@@ -111,6 +117,11 @@ class AttentionMapCollector:
         self._installed.clear()
 
     def maybe_record(self, attn, hidden_states, encoder_hidden_states) -> None:
+        if not self.record_enabled:
+            return
+        step_ratio = self.current_step / max(self.total_steps, 1)
+        if not (self.step_window[0] <= step_ratio <= self.step_window[1]):
+            return
         if encoder_hidden_states is None:
             return
         if len(self.maps) >= self.max_maps:
@@ -142,12 +153,31 @@ class AttentionMapCollector:
         except Exception:
             return
 
-    def build_mask(self, height: int, width: int, top_k: int) -> Optional[np.ndarray]:
+    def build_mask(
+        self,
+        height: int,
+        width: int,
+        top_k: int,
+        min_peakiness: float,
+        max_coverage: float,
+    ) -> Optional[np.ndarray]:
         if not self.maps:
             return None
         selected = sorted(self.maps, key=lambda x: x[0], reverse=True)[:top_k]
         heat = torch.stack([m for _, m in selected], dim=0).mean(dim=0).numpy()
-        return topology_refine_attention_map(heat, width=width, height=height)
+        peakiness = float(heat.max() - heat.mean())
+        mask = topology_refine_attention_map(heat, width=width, height=height)
+        coverage = float((mask > 0).mean())
+        if peakiness < min_peakiness or coverage <= 0 or coverage > max_coverage:
+            return None
+        return mask
+
+    def build_attention_center_mask(self, height: int, width: int, top_k: int) -> Optional[np.ndarray]:
+        if not self.maps:
+            return None
+        selected = sorted(self.maps, key=lambda x: x[0], reverse=True)[:max(1, top_k)]
+        heat = torch.stack([m for _, m in selected], dim=0).mean(dim=0).numpy()
+        return center_mask_from_heatmap(heat, width=width, height=height)
 
 
 class _CaptureProcessor:
@@ -241,6 +271,32 @@ def fallback_text_mask(width: int, height: int, text_count: int, min_area: float
     if text_count > 1:
         box_h = min(int(height * 0.12 * text_count), int(height * 0.45))
         y1 = (height - box_h) // 2
+    cv2.rectangle(mask, (x1, y1), (x1 + box_w, y1 + box_h), 255, -1)
+    return mask
+
+
+def center_mask_from_heatmap(
+    heat: np.ndarray,
+    width: int,
+    height: int,
+    box_w_ratio: float = 0.34,
+    box_h_ratio: float = 0.10,
+) -> np.ndarray:
+    """Create a small region centered at the strongest attention response."""
+    heat = heat.astype(np.float32)
+    if heat.max() > heat.min():
+        heat = (heat - heat.min()) / (heat.max() - heat.min())
+    flat_idx = int(np.argmax(heat))
+    yy, xx = np.unravel_index(flat_idx, heat.shape)
+    cx = (xx + 0.5) / max(heat.shape[1], 1)
+    cy = (yy + 0.5) / max(heat.shape[0], 1)
+    box_w = int(width * box_w_ratio)
+    box_h = int(height * box_h_ratio)
+    x1 = int(cx * width - box_w / 2)
+    y1 = int(cy * height - box_h / 2)
+    x1 = max(0, min(width - box_w, x1))
+    y1 = max(0, min(height - box_h, y1))
+    mask = np.zeros((height, width), dtype=np.uint8)
     cv2.rectangle(mask, (x1, y1), (x1 + box_w, y1 + box_h), 255, -1)
     return mask
 
@@ -431,6 +487,7 @@ class FreeTextQwenGenerator:
         except Exception:
             text_indices = []
         collector = AttentionMapCollector(hp=hp, wp=wp, text_indices=text_indices)
+        collector.step_window = config.attention_step_window
         try:
             collector.install(pipe.transformer)
             self._run_denoising(
@@ -448,9 +505,21 @@ class FreeTextQwenGenerator:
         finally:
             collector.uninstall()
 
-        mask = collector.build_mask(config.height, config.width, config.top_k_attention_maps)
+        mask = collector.build_mask(
+            config.height,
+            config.width,
+            config.top_k_attention_maps,
+            min_peakiness=config.min_attention_peakiness,
+            max_coverage=config.max_attention_coverage,
+        )
         if mask is None or mask.max() == 0:
-            mask = fallback_text_mask(config.width, config.height, text_count, config.fallback_min_area)
+            mask = collector.build_attention_center_mask(
+                config.height,
+                config.width,
+                config.top_k_attention_maps,
+            )
+        if mask is None or mask.max() == 0:
+            raise RuntimeError("FreeText attention localization failed: no attention maps were collected.")
         return mask
 
     def _generate_with_sgmi(self, prompt: str, plan: dict, region_mask: np.ndarray, config: FreeTextConfig) -> Image.Image:
@@ -535,6 +604,7 @@ class FreeTextQwenGenerator:
         for step_idx, t in enumerate(timesteps):
             if collector is not None:
                 collector.current_step = step_idx
+                collector.total_steps = len(timesteps)
             timestep = t.expand(latent.shape[0]).to(latent.dtype)
             kwargs = dict(
                 hidden_states=latent.to(dtype),
@@ -551,7 +621,11 @@ class FreeTextQwenGenerator:
                 kwargs["encoder_hidden_states_mask"] = torch.ones(
                     prompt_embeds.shape[:2], dtype=torch.long, device=prompt_embeds.device
                 )
+            if collector is not None:
+                collector.record_enabled = True
             noise_pred = pipe.transformer(**kwargs)[0]
+            if collector is not None:
+                collector.record_enabled = False
             if true_cfg_scale > 1:
                 neg_kwargs = dict(kwargs)
                 neg_kwargs["encoder_hidden_states"] = neg_embeds
@@ -561,6 +635,8 @@ class FreeTextQwenGenerator:
                         neg_embeds.shape[:2], dtype=torch.long, device=neg_embeds.device
                     )
                 neg_pred = pipe.transformer(**neg_kwargs)[0]
+                if collector is not None:
+                    collector.record_enabled = True
                 comb = neg_pred + true_cfg_scale * (noise_pred - neg_pred)
                 noise_pred = comb * (torch.norm(noise_pred, dim=-1, keepdim=True) / torch.norm(comb, dim=-1, keepdim=True))
 

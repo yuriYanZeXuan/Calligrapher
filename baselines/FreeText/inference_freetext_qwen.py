@@ -40,6 +40,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from infer.glyph_injector import InjectionConfig  # noqa: E402
+from infer.attn_enhancement import find_quoted_token_indices  # noqa: E402
 from qwen_inference import QwenImageInference, _calculate_shift, _retrieve_timesteps  # noqa: E402
 
 
@@ -52,13 +53,16 @@ class FreeTextConfig:
     seed: int = 42
     probe_steps: int = 16
     top_k_attention_maps: int = 12
-    fallback_min_area: float = 0.18
-    sgmi_strength: float = 0.55
+    fallback_min_area: float = 0.08
+    sgmi_strength: float = 0.28
     sgmi_window: tuple[float, float] = (0.20, 0.42)
     log_gabor_center: float = 0.36
     log_gabor_sigma: float = 0.55
     stroke_mask_dilate: int = 3
-    stroke_mask_blur: int = 5
+    stroke_mask_blur: int = 7
+    max_font_size_ratio: float = 0.58
+    max_region_width: float = 0.55
+    max_region_height: float = 0.16
 
 
 def extract_target_text(prompt: str, text: Optional[list[str] | str] = None) -> list[str]:
@@ -81,9 +85,10 @@ class AttentionMapCollector:
     original attention processor.
     """
 
-    def __init__(self, hp: int, wp: int, max_maps: int = 256):
+    def __init__(self, hp: int, wp: int, text_indices: Optional[list[int]] = None, max_maps: int = 256):
         self.hp = hp
         self.wp = wp
+        self.text_indices = text_indices or []
         self.max_maps = max_maps
         self.current_step = 0
         self.current_layer = 0
@@ -118,9 +123,12 @@ class AttentionMapCollector:
             scale = getattr(attn, "scale", None) or (q.shape[-1] ** -0.5)
             logits = torch.bmm(q.float() * scale, k.float().transpose(1, 2))
             probs = logits.softmax(dim=-1)
-            # Average over heads and all non-padding text tokens. This is more
-            # robust than brittle token-subsequence matching across Qwen prompt
-            # templates, and still reads the endogenous I2T spatial plan.
+            if self.text_indices:
+                valid = [i for i in self.text_indices if 0 <= i < probs.shape[-1]]
+                if valid:
+                    probs = probs[:, :, valid]
+            # Average over heads and target text tokens to recover image-token
+            # attribution for the requested text span.
             spatial = probs.mean(dim=(0, 2))
             n = self.hp * self.wp
             if spatial.numel() < n:
@@ -226,10 +234,10 @@ def topology_refine_attention_map(heat: np.ndarray, width: int, height: int) -> 
 
 def fallback_text_mask(width: int, height: int, text_count: int, min_area: float) -> np.ndarray:
     mask = np.zeros((height, width), dtype=np.uint8)
-    box_w = int(width * 0.78)
+    box_w = int(width * 0.46)
     box_h = int(height * max(min_area, 0.10))
     x1 = (width - box_w) // 2
-    y1 = int(height * 0.42)
+    y1 = int(height * 0.36)
     if text_count > 1:
         box_h = min(int(height * 0.12 * text_count), int(height * 0.45))
         y1 = (height - box_h) // 2
@@ -237,7 +245,13 @@ def fallback_text_mask(width: int, height: int, text_count: int, min_area: float
     return mask
 
 
-def mask_to_plan(mask: np.ndarray, texts: list[str]) -> dict:
+def mask_to_plan(
+    mask: np.ndarray,
+    texts: list[str],
+    max_font_size_ratio: float = 0.58,
+    max_region_width: float = 0.55,
+    max_region_height: float = 0.16,
+) -> dict:
     rows = np.any(mask > 0, axis=1)
     cols = np.any(mask > 0, axis=0)
     h, w = mask.shape
@@ -253,6 +267,15 @@ def mask_to_plan(mask: np.ndarray, texts: list[str]) -> dict:
         y1 = max(int(yy[0]) - pad_y, 0) / h
         y2 = min(int(yy[-1]) + pad_y, h - 1) / h
 
+    # Attention maps can cover the carrier object rather than the text itself.
+    # Keep the glyph reference a plausible text span instead of filling a large
+    # object region, otherwise the encoded glyph prior becomes a giant template.
+    cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
+    bw = min(x2 - x1, max_region_width)
+    bh = min(y2 - y1, max_region_height * max(1, min(len(texts), 3)))
+    x1, x2 = max(cx - bw * 0.5, 0.02), min(cx + bw * 0.5, 0.98)
+    y1, y2 = max(cy - bh * 0.5, 0.02), min(cy + bh * 0.5, 0.98)
+
     texts = texts or [""]
     regions = []
     span = max(y2 - y1, 1e-3)
@@ -265,6 +288,7 @@ def mask_to_plan(mask: np.ndarray, texts: list[str]) -> dict:
             "font": "auto",
             "font_weight": "regular",
             "color": "white",
+            "font_size_ratio": max_font_size_ratio,
             "is_latex": any(ch in text for ch in "\\_^{}=$"),
             "alignment": "center",
             "rotation": 0,
@@ -309,6 +333,29 @@ def make_soft_stroke_mask(mask_latent: torch.Tensor, dilate: int = 3, blur: int 
     return mask.clamp(0, 1).to(mask_latent.device)
 
 
+def make_sgmi_residual(
+    reference_latent: torch.Tensor,
+    current_latent: torch.Tensor,
+    center: float,
+    sigma: float,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Build a zero-mean SGMI structural residual.
+
+    The paper's SGMI suppresses low-frequency background and irrelevant noise.
+    Directly replacing the denoising latent with the rendered template latent can
+    still impose the template's fixed white/gray appearance. This residual form
+    keeps only normalized band-pass glyph structure and lets the current latent
+    retain color/style statistics.
+    """
+    sgmi = log_gabor_filter_like(reference_latent, center, sigma).float()
+    dims = (-2, -1)
+    sgmi = sgmi - sgmi.mean(dim=dims, keepdim=True)
+    sgmi_std = sgmi.std(dim=dims, keepdim=True).clamp_min(eps)
+    cur_std = current_latent.float().std(dim=dims, keepdim=True).clamp_min(eps)
+    return (sgmi / sgmi_std * cur_std).to(current_latent.dtype)
+
+
 class FreeTextQwenGenerator:
     def __init__(self, model_path: str, device: str = "cuda", dtype: torch.dtype = torch.bfloat16):
         self.qwen = QwenImageInference(model_path=model_path, device=device, dtype=dtype)
@@ -340,7 +387,13 @@ class FreeTextQwenGenerator:
             return image
 
         mask = self._localize_text_region(prompt, config, len(texts))
-        plan = mask_to_plan(mask, texts)
+        plan = mask_to_plan(
+            mask,
+            texts,
+            max_font_size_ratio=config.max_font_size_ratio,
+            max_region_width=config.max_region_width,
+            max_region_height=config.max_region_height,
+        )
         image = self._generate_with_sgmi(prompt, plan, mask, config)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         image.save(output_path)
@@ -373,7 +426,11 @@ class FreeTextQwenGenerator:
         latent_h, latent_w = noise.shape[-2:]
         hp, wp = latent_h // 2, latent_w // 2
 
-        collector = AttentionMapCollector(hp=hp, wp=wp)
+        try:
+            text_indices = find_quoted_token_indices(pipe.tokenizer, prompt, max_seq_length=512)
+        except Exception:
+            text_indices = []
+        collector = AttentionMapCollector(hp=hp, wp=wp, text_indices=text_indices)
         try:
             collector.install(pipe.transformer)
             self._run_denoising(
@@ -414,11 +471,9 @@ class FreeTextQwenGenerator:
             blur=config.stroke_mask_blur,
         )
 
-        # SGMI: apply Log-Gabor modulation to every noise-aligned glyph latent.
-        injection_data["latent_list"] = [
-            log_gabor_filter_like(lat.to(self.qwen.primary_device), config.log_gabor_center, config.log_gabor_sigma)
-            for lat in injection_data["latent_list"]
-        ]
+        injection_data["sgmi_residual"] = True
+        injection_data["log_gabor_center"] = config.log_gabor_center
+        injection_data["log_gabor_sigma"] = config.log_gabor_sigma
 
         inject_cfg = InjectionConfig(
             mask_strength=config.sgmi_strength,
@@ -513,14 +568,47 @@ class FreeTextQwenGenerator:
             if injection_data is not None and injection_config is not None:
                 spatial = pipe._unpack_latents(latent, height, width, pipe.vae_scale_factor)
                 spatial_4d = spatial.squeeze(2)
-                spatial_4d = self.qwen.glyph_injector.inject_latent(
-                    spatial_4d, injection_data, step_idx + 1, config=injection_config,
-                )
+                if injection_data.get("sgmi_residual"):
+                    spatial_4d = self._inject_sgmi_residual(
+                        spatial_4d, injection_data, step_idx + 1, injection_config,
+                    )
+                else:
+                    spatial_4d = self.qwen.glyph_injector.inject_latent(
+                        spatial_4d, injection_data, step_idx + 1, config=injection_config,
+                    )
                 latent = pipe._pack_latents(spatial_4d.unsqueeze(2), 1, num_channels, latent_h, latent_w)
 
         if not decode:
             return None
         return self.qwen._decode_latent(latent, height, width)
+
+    def _inject_sgmi_residual(
+        self,
+        current_latent: torch.Tensor,
+        injection_data: dict,
+        step_idx: int,
+        config: InjectionConfig,
+    ) -> torch.Tensor:
+        total_steps = injection_data["total_steps"]
+        if not config.should_inject(step_idx, total_steps):
+            return current_latent
+        latent_list = injection_data.get("latent_list")
+        if not latent_list:
+            return current_latent
+
+        idx = min(step_idx, len(latent_list) - 1)
+        reference = latent_list[idx].to(device=current_latent.device, dtype=current_latent.dtype)
+        mask = injection_data["mask_latent"].to(device=current_latent.device, dtype=current_latent.dtype)
+        mask = mask.expand_as(current_latent)
+        strength = config.get_strength(step_idx, total_steps)
+
+        residual = make_sgmi_residual(
+            reference,
+            current_latent,
+            center=float(injection_data.get("log_gabor_center", 0.36)),
+            sigma=float(injection_data.get("log_gabor_sigma", 0.55)),
+        )
+        return current_latent + mask * strength * residual
 
 
 def main():

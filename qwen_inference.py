@@ -150,7 +150,11 @@ class QwenImageInference:
     @property
     def vlm_agent(self) -> VLMAgent:
         if self._vlm_agent is None:
-            self._vlm_agent = VLMAgent()
+            self._vlm_agent = VLMAgent(
+                api_key=os.getenv("GLYPH_PLANNER_VLM_API_KEY"),
+                base_url=os.getenv("GLYPH_PLANNER_VLM_BASE_URL"),
+                model=os.getenv("GLYPH_PLANNER_VLM_MODEL"),
+            )
         return self._vlm_agent
 
     @property

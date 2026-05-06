@@ -12,6 +12,7 @@ from tqdm import tqdm
 import glob
 import pandas as pd
 import math
+import random
 
 # Setup paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -889,6 +890,10 @@ def main():
                        help="Custom model path (overrides default)")
     parser.add_argument("--debug", action='store_true',
                        help="Debug mode (5 samples only)")
+    parser.add_argument("--sample-size", type=int, default=None,
+                       help="Randomly sample N benchmark items before generation/evaluation")
+    parser.add_argument("--sample-seed", type=int, default=42,
+                       help="Random seed used with --sample-size")
     parser.add_argument("--resume", action='store_true',
                        help="Skip already generated images and evaluate all existing results")
     parser.add_argument("--skip-eval", action='store_true',
@@ -921,6 +926,12 @@ def main():
     # Load dataset
     print(f"Loading {args.benchmark}...")
     dataset = load_dataset(args.benchmark, eval_dir)
+    if args.sample_size is not None:
+        rng = random.Random(args.sample_seed)
+        sample_n = min(args.sample_size, len(dataset))
+        dataset = rng.sample(dataset, sample_n)
+        dataset = sorted(dataset, key=lambda x: str(x.get('id', '')))
+        print(f"Sample mode: {sample_n} random samples (seed={args.sample_seed})")
     if args.debug:
         print("Debug mode: 5 samples only")
         dataset = dataset[:5]

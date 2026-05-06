@@ -298,13 +298,13 @@ class VLMAgent:
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model: str = "qwen3-vl-235b-a22b-instruct",
+        model: Optional[str] = None,
     ):
-        self._base_url = base_url or os.getenv("QST_BASE_URL")
-        self._model = model
+        self._base_url = base_url or os.getenv("GLYPH_VLM_BASE_URL") or os.getenv("QST_BASE_URL")
+        self._model = model or os.getenv("GLYPH_VLM_MODEL") or "qwen3-vl-235b-a22b-instruct"
 
-        key1 = api_key or os.getenv("QST_API_KEY")
-        key2 = os.getenv("QST_API_KEY2")
+        key1 = api_key or os.getenv("GLYPH_VLM_API_KEY") or os.getenv("QST_API_KEY")
+        key2 = os.getenv("GLYPH_VLM_API_KEY2") or os.getenv("QST_API_KEY2")
         self._clients: list[OpenAI] = []
         if key1:
             self._clients.append(OpenAI(api_key=key1, base_url=self._base_url))

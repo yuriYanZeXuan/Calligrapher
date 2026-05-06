@@ -358,12 +358,14 @@ class VLMMetrics:
         from dotenv import load_dotenv
         load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 
-        base_url = os.getenv("QST_BASE_URL")
+        base_url = os.getenv("GLYPH_EVAL_VLM_BASE_URL") or os.getenv("QST_BASE_URL")
         if not base_url:
             self.logger.error("QST_BASE_URL not set – VLM ApiCall unavailable")
             return
 
-        for key_name in ("QST_API_KEY", "QST_API_KEY2"):
+        eval_keys = ("GLYPH_EVAL_VLM_API_KEY", "GLYPH_EVAL_VLM_API_KEY2")
+        key_names = eval_keys if any(os.getenv(k) for k in eval_keys) else ("QST_API_KEY", "QST_API_KEY2")
+        for key_name in key_names:
             key = os.getenv(key_name)
             if key:
                 self._api_clients.append(OpenAI(api_key=key, base_url=base_url))
@@ -372,7 +374,7 @@ class VLMMetrics:
             self.logger.error("QST_API_KEY / QST_API_KEY2 not set – VLM ApiCall unavailable")
             return
 
-        self._api_model = "qwen3-vl-235b-a22b-instruct"
+        self._api_model = os.getenv("GLYPH_EVAL_VLM_MODEL") or "qwen3-vl-235b-a22b-instruct"
         self.available = True
         self.logger.info(f"VLM ApiCall backend ready (model={self._api_model}, keys={len(self._api_clients)})")
 
